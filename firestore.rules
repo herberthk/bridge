@@ -1,0 +1,141 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    /* ── Helpers ─────────────────────────────────────────────── */
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function role() {
+      return request.auth.token.role;
+    }
+    function isSuper() {
+      return isSignedIn() && role() == 'super_admin';
+    }
+    function isAdmin() {
+      return isSignedIn() && role() == 'admin';
+    }
+    function isStudent() {
+      return isSignedIn() && role() == 'student';
+    }
+    function mySchool() {
+      return request.auth.token.schoolId;
+    }
+    function sameSchool(docSchoolId) {
+      return isAdmin() && docSchoolId != null && docSchoolId == mySchool();
+    }
+
+    /* ── users ───────────────────────────────────────────────── */
+    match /users/{uid} {
+      function canRead(data) {
+        return isSuper()
+          || request.auth.uid == uid
+          || (isAdmin() && data.role == 'student' && sameSchool(data.schoolId))
+          // Standalone admins can see the students they created.
+          || (isAdmin() && mySchool() == null && data.createdBy == request.auth.uid);
+      }
+      allow get, list: if isSignedIn() && canRead(resource.data);
+
+      allow create: if false; // Admin SDK only
+      allow delete: if false; // Admin SDK only
+
+      // Users may edit their own profile name/photo only.
+      allow update: if isSuper()
+        || (isSignedIn() && request.auth.uid == uid
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['displayName', 'photoURL', 'updatedAt']))
+        // Admins may moderate students in their school.
+        || (isAdmin() && resource.data.role == 'student'
+            && (sameSchool(resource.data.schoolId)
+                || (mySchool() == null && resource.data.createdBy == request.auth.uid))
+            && !request.resource.data.diff(resource.data).affectedKeys()
+                 .hasAny(['role', 'schoolId', 'email', 'createdBy']));
+    }
+
+    /* ── schools ─────────────────────────────────────────────── */
+    match /schools/{schoolId} {
+      allow get, list: if isSuper() || (isSignedIn() && (mySchool() == schoolId || resource.data.ownerUid == request.auth.uid));
+      allow write: if false; // Admin SDK only
+    }
+
+    /* ── billing (server-written; readable by owners) ─────────── */
+    match /wallets/{walletId} {
+      allow get, list: if isSuper() || (isSignedIn() && walletId == mySchool()) || (isAdmin() && walletId == request.auth.uid);
+      allow write: if false;
+    }
+    match /transactions/{txId} {
+      allow get, list: if isSuper()
+        || (isSignedIn() && resource.data.ownerId == mySchool())
+        || (isSignedIn() && resource.data.ownerId == request.auth.uid);
+      allow write: if false;
+    }
+
+    /* ── exams ───────────────────────────────────────────────── */
+    match /exams/{examId} {
+      function canReadExam(data) {
+        return isSuper()
+          || sameSchool(data.schoolId)
+          || (isAdmin() && data.schoolId == null && data.createdBy == request.auth.uid)
+          || (isStudent() && data.schoolId != null && data.schoolId == mySchool());
+      }
+      allow get, list: if isSignedIn() && canReadExam(resource.data);
+      allow write: if false; // Server actions / Admin SDK only
+    }
+
+    match /source_documents/{docId} {
+      allow get, list: if isSuper() || (isSignedIn() && resource.data.ownerId == request.auth.uid) || (isSignedIn() && resource.data.schoolId == mySchool());
+      allow write: if false;
+    }
+
+    /* ── attempts ────────────────────────────────────────────── */
+    match /attempts/{attemptId} {
+      function canReadAttempt(data) {
+        return isSuper()
+          || (isStudent() && data.studentId == request.auth.uid)
+          || sameSchool(data.schoolId)
+          || (isAdmin() && data.schoolId == null && false);
+      }
+      allow get, list: if isSignedIn() && canReadAttempt(resource.data);
+
+      // Students submit their own answers / lifecycle updates while writing.
+      allow create, update: if false; // All attempt mutations flow through server APIs
+    }
+
+    /* ── proctoring events (client-created during exams) ──────── */
+    match /proctoring_events/{eventId} {
+      allow get, list: if isSuper()
+        || (isStudent() && resource.data.studentId == request.auth.uid)
+        || sameSchool(resource.data.schoolId);
+      allow create: if isStudent()
+        && request.resource.data.studentId == request.auth.uid
+        && request.resource.data.severity in ['info', 'low', 'medium', 'high', 'critical'];
+      allow update, delete: if false;
+    }
+    /* ── retake requests ─────────────────────────────────────── */
+    match /retake_requests/{requestId} {
+      allow get, list: if isSuper()
+        || (isStudent() && resource.data.studentId == request.auth.uid)
+        || sameSchool(resource.data.schoolId);
+      allow create: if isStudent() && request.resource.data.studentId == request.auth.uid
+        && request.resource.data.status == 'pending';
+      allow update, delete: if false; // Decided by admins server-side
+    }
+
+    /* ── audit logs & metrics (server-written) ────────────────── */
+    match /audit_logs/{logId} {
+      allow get, list: if isSuper();
+      allow write: if false;
+    }
+    match /metrics/{metricId} {
+      allow get, list: if isSuper() || isAdmin();
+      allow write: if false;
+    }
+
+    /* ── platform flags (public setup state only) ────────────── */
+    match /platform/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+  }
+}

@@ -1,18 +1,42 @@
 export const dynamic = "force-dynamic";
 
-import { requireRole } from "@/server/auth/session";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { FileClockIcon } from "lucide-react";
 
-export default async function StudentHomePage() {
-  const user = await requireRole("student");
+export default function StudentHomePage() {
   return (
-    <div className="bg-mesh flex min-h-dvh items-center justify-center p-8">
-      <div className="shadow-card rounded-xl border bg-card p-8">
-        <h1 className="text-xl font-semibold">Student dashboard</h1>
-        <p className="text-muted-foreground mt-2 text-sm">
-          Signed in as {user.displayName} ({user.email}). The full dashboard
-          arrives in the next milestone.
+    <div className="flex flex-col gap-6">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
+        <p className="text-muted-foreground mt-1 text-sm">
+          Your upcoming exams, recent scores, and feedback.
         </p>
       </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>Coming in the analytics milestone</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Empty>
+            <EmptyMedia variant="icon">
+              <FileClockIcon />
+            </EmptyMedia>
+            <EmptyHeader>
+              <EmptyTitle>No exams yet</EmptyTitle>
+              <EmptyDescription>
+                When your teacher assigns an exam, it will appear here.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        </CardContent>
+      </Card>
     </div>
   );
 }

@@ -8,6 +8,7 @@ import type {
   UserStatus,
   ExamStatus,
 } from "@/lib/constants";
+import type { FieldValue } from "firebase/firestore";
 
 /**
  * Firestore document types — the single source of truth for the database
@@ -27,6 +28,20 @@ export interface FirestoreTimestamp {
 }
 
 type Timestamp = FirestoreTimestamp;
+
+/**
+ * Write-side view of a document: every timestamp field also accepts
+ * `FieldValue.serverTimestamp()` sentinels.
+ */
+type MaybeTimestamp<T> = T extends Timestamp
+  ? T | FieldValue
+  : T extends Timestamp | null
+    ? T | FieldValue
+    : T;
+
+export type WriteModel<T> = {
+  [K in keyof T]: MaybeTimestamp<T[K]>;
+};
 
 /** A document plus its auto-generated id, as returned from reads. */
 export type WithId<T> = T & { id: string };
@@ -273,6 +288,8 @@ export interface ProctoringEventDoc {
   attemptId: string;
   examId: string;
   studentId: string;
+  /** Denormalized from the attempt for rule-scoped admin reads. */
+  schoolId: string | null;
   type: ProctoringEventType;
   severity: ProctoringSeverity;
   details: Record<string, unknown>;

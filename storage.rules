@@ -1,0 +1,45 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() { return request.auth != null; }
+    function role() { return request.auth.token.role; }
+    function isSuper() { return isSignedIn() && role() == 'super_admin'; }
+    function isAdmin() { return isSignedIn() && role() == 'admin'; }
+    function mySchool() { return request.auth.token.schoolId; }
+
+    /* Proctoring recordings: attempts/{attemptId}/camera.webm | screen.webm
+       Students upload their own; school admins + super review them. */
+    match /recordings/{attemptId}/{file} {
+      function attempt() {
+        return firestore.get(/databases/(default)/documents/attempts/$(attemptId));
+      }
+      allow read: if isSuper()
+        || (isAdmin() && attempt().data.schoolId == mySchool());
+      allow write: if isSignedIn()
+        && attempt().data.studentId == request.auth.uid
+        && request.resource.size < 500 * 1024 * 1024
+        && request.resource.contentType.matches('video/webm');
+    }
+
+    /* Uploaded source documents (past papers etc.): docs/{ownerId}/{docId}.pdf */
+    match /docs/{ownerId}/{file} {
+      allow read: if isSuper() || (isSignedIn() && request.auth.uid == ownerId);
+      allow write: if isAdmin()
+        && request.auth.uid == ownerId
+        && request.resource.size < 50 * 1024 * 1024
+        && (request.resource.contentType.matches('application/pdf')
+            || request.resource.contentType.matches('application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+            || request.resource.contentType.matches('text/plain'));
+    }
+
+    /* Avatars: avatars/{uid}/avatar.* */
+    match /avatars/{uid}/{file} {
+      allow read: if true;
+      allow write: if isSignedIn() && request.auth.uid == uid
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+  }
+}
