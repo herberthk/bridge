@@ -32,6 +32,16 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+
+# e2e / test artifacts
+/e2e/.auth
+/playwright-report
+/test-results
+
+# firebase
+.firebase
+firebase-debug.log
 
 # vercel
 .vercel
@@ -39,3 +49,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# serwist build output
+public/sw*
