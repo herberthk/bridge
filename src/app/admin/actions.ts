@@ -9,6 +9,7 @@ import {
   setUserStatus,
   UsersServiceError,
 } from "@/server/services/users";
+import { assignExam, ExamsServiceError } from "@/server/services/exams";
 
 export type ActionState = { ok: true } | { ok: false; error: string };
 
@@ -74,6 +75,43 @@ export async function setUserStatusAction(
         err instanceof UsersServiceError
           ? err.message
           : "Could not update the student. Try again.",
+    };
+  }
+}
+
+export async function assignExamAction(
+  _prev: ActionState | null,
+  formData: FormData,
+): Promise<ActionState> {
+  const actor = await apiUser("admin", "super_admin");
+  if (!actor) return { ok: false, error: "Not authorized." };
+
+  const examId = String(formData.get("examId") ?? "");
+  const studentIds = formData.getAll("studentIds").map(String).filter(Boolean);
+  const scheduledRaw = String(formData.get("scheduledFor") ?? "").trim();
+  const scheduledFor = scheduledRaw ? new Date(scheduledRaw).toISOString() : null;
+
+  if (!examId || studentIds.length === 0) {
+    return { ok: false, error: "Select at least one student." };
+  }
+  if (scheduledRaw && Number.isNaN(Date.parse(scheduledRaw))) {
+    return { ok: false, error: "Invalid schedule date." };
+  }
+
+  try {
+    const created = await assignExam(actor, { examId, studentIds, scheduledFor });
+    revalidatePath("/admin/exams");
+    revalidatePath("/admin");
+    return created > 0
+      ? { ok: true }
+      : { ok: false, error: "Those students already have this exam assigned." };
+  } catch (err) {
+    return {
+      ok: false,
+      error:
+        err instanceof ExamsServiceError
+          ? err.message
+          : "Assignment failed. Try again.",
     };
   }
 }
