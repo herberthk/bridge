@@ -1,0 +1,145 @@
+import React from "react";
+import {
+  Document,
+  Page,
+  StyleSheet,
+  Text,
+  View,
+  renderToBuffer,
+} from "@react-pdf/renderer";
+
+import type { WithId, AttemptDoc, ExamDoc, UserDoc } from "@/types/firestore";
+import { SUBJECT_LABELS } from "@/lib/constants";
+
+const styles = StyleSheet.create({
+  page: { padding: 36, fontSize: 10, fontFamily: "Helvetica" },
+  brandBar: { flexDirection: "row", alignItems: "center", marginBottom: 6 },
+  logo: { width: 26, height: 26, borderRadius: 6, backgroundColor: "#4f46e5" },
+  brandName: { fontSize: 16, fontWeight: 700, marginLeft: 8 },
+  title: { fontSize: 18, fontWeight: 700, margin: "12px 0 2px" },
+  subtitle: { color: "#6b6b76", marginBottom: 12 },
+  scoreRow: {
+    flexDirection: "row",
+    backgroundColor: "#eef2ff",
+    borderRadius: 8,
+    padding: 14,
+    marginBottom: 14,
+  },
+  scoreBig: { fontSize: 30, fontWeight: 700, color: "#4f46e5" },
+  scoreLabel: { color: "#6b6b76", fontSize: 9, marginTop: 2 },
+  scoreCell: { flex: 1, alignItems: "center" },
+  section: { marginTop: 10, marginBottom: 4, fontSize: 12, fontWeight: 700 },
+  row: { flexDirection: "row", paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: "#e8e8f0" },
+  cell: { flex: 1 },
+  muted: { color: "#6b6b76" },
+  footer: { position: "absolute", bottom: 24, left: 36, right: 36 },
+  footerText: { color: "#9a9aa6", fontSize: 8, textAlign: "center" },
+});
+
+function ReportPdf({
+  attempt,
+  exam,
+  student,
+}: {
+  attempt: WithId<AttemptDoc>;
+  exam: WithId<ExamDoc>;
+  student: Pick<UserDoc, "displayName" | "email">;
+}) {
+  const score = attempt.score;
+  const feedback = attempt.feedback;
+  const graded = attempt.answers.filter((a) => a.graded);
+
+  return (
+    <Document title={`${exam.title} — report`} author="Bridge">
+      <Page size="A4" style={styles.page}>
+        <View style={styles.brandBar} fixed>
+          <View style={styles.logo} />
+          <Text style={styles.brandName}>Bridge</Text>
+        </View>
+        <Text style={styles.title}>Exam performance report</Text>
+        <Text style={styles.subtitle}>
+          {exam.title} · {SUBJECT_LABELS[exam.params.subject as keyof typeof SUBJECT_LABELS] ?? exam.params.subject} ·{" "}
+          {exam.params.level === "primary" ? "Primary" : "Secondary"} {exam.params.classLevel}
+        </Text>
+
+        <View style={styles.scoreRow}>
+          <View style={styles.scoreCell}>
+            <Text style={styles.scoreBig}>{score ? `${score.percentage}%` : "—"}</Text>
+            <Text style={styles.scoreLabel}>OVERALL SCORE</Text>
+          </View>
+          <View style={styles.scoreCell}>
+            <Text style={styles.scoreBig}>
+              {score ? `${score.earned}/${score.possible}` : "—"}
+            </Text>
+            <Text style={styles.scoreLabel}>MARKS EARNED</Text>
+          </View>
+          <View style={styles.scoreCell}>
+            <Text style={styles.scoreBig}>{graded.filter((a) => a.graded!.correct).length}</Text>
+            <Text style={styles.scoreLabel}>CORRECT ANSWERS</Text>
+          </View>
+          <View style={styles.scoreCell}>
+            <Text style={styles.scoreBig}>{attempt.violationsCount}</Text>
+            <Text style={styles.scoreLabel}>PROCTORING EVENTS</Text>
+          </View>
+        </View>
+
+        <Text style={styles.section}>Student</Text>
+        <View style={styles.row}>
+          <Text style={styles.cell}>{student.displayName}</Text>
+          <Text style={[styles.cell, styles.muted]}>{student.email}</Text>
+        </View>
+
+        <Text style={styles.section}>Assessment summary</Text>
+        {graded.slice(0, 40).map((a, i) => {
+          const q = exam.questions.find((x) => x.id === a.questionId);
+          return (
+            <View key={a.questionId} style={styles.row}>
+              <Text style={[styles.cell, { flex: 0.4 }]}>Q{i + 1}</Text>
+              <Text style={[styles.cell, { flex: 4 }]}>
+                {q?.prompt.replace(/[#*$_`\\]/g, "").slice(0, 90)}
+              </Text>
+              <Text style={[styles.cell, { flex: 0.6, textAlign: "right" }]}>
+                {a.graded!.earned}/{a.graded!.possible}
+              </Text>
+            </View>
+          );
+        })}
+
+        {feedback && (
+          <View>
+            <Text style={styles.section}>Teacher&apos;s AI feedback</Text>
+            <Text>{feedback.overall.replace(/[#*`]/g, "").slice(0, 1200)}</Text>
+            {feedback.strengths.length > 0 && (
+              <Text style={{ marginTop: 6 }}>
+                {"\n"}Strengths: {feedback.strengths.join("; ")}
+              </Text>
+            )}
+            {feedback.improvements.length > 0 && (
+              <Text style={{ marginTop: 4 }}>
+                {"\n"}To improve: {feedback.improvements.join("; ")}
+              </Text>
+            )}
+          </View>
+        )}
+
+        <View style={styles.footer} fixed>
+          <Text style={styles.footerText}>
+            Generated by Bridge · {new Date().toLocaleDateString("en-GB")} ·{" "}
+            {attempt.autoSubmitted ? "Auto-submitted session" : "Session submitted by student"}
+          </Text>
+        </View>
+      </Page>
+    </Document>
+  );
+}
+
+/** Render a student's exam performance report as a PDF buffer. */
+export async function renderAttemptReport(
+  attempt: WithId<AttemptDoc>,
+  exam: WithId<ExamDoc>,
+  student: Pick<UserDoc, "displayName" | "email">,
+): Promise<Buffer> {
+  return renderToBuffer(
+    <ReportPdf attempt={attempt} exam={exam} student={student} />,
+  );
+}

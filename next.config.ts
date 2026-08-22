@@ -15,7 +15,7 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   // CJS server-only libs that must not be bundled.
-  serverExternalPackages: ["pdf-parse", "mammoth", "firebase-admin"],
+  serverExternalPackages: ["pdf-parse", "mammoth", "firebase-admin", "@react-pdf/renderer"],
   async headers() {
     return [
       { source: "/(.*)", headers: securityHeaders },

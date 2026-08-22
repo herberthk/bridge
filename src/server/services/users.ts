@@ -1,4 +1,5 @@
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import React from "react";
 
 import { adminAuth } from "@/server/firebase/admin";
 import {
@@ -7,6 +8,8 @@ import {
   usersCol,
 } from "@/server/firebase/collections";
 import { writeAudit } from "@/server/services/audit";
+import { appUrl, sendTemplateEmail } from "@/server/services/email";
+import { StudentInviteEmail, BanNoticeEmail } from "@/emails/templates";
 import type { SessionUser } from "@/server/auth/session";
 import type { WithId, UserDoc, WriteModel } from "@/types/firestore";
 import type { Role } from "@/lib/constants";
@@ -32,6 +35,8 @@ interface ProvisionInput {
   schoolId: string | null;
   level?: "primary" | "secondary" | null;
   classLevel?: number | null;
+  /** Skip the invite email (e.g. the temp password was shown in-UI only). */
+  suppressInviteEmail?: boolean;
 }
 
 /** Create the Auth user + profile doc + custom claims in one step. */
@@ -83,6 +88,19 @@ export async function provisionUser(
     targetId: created.uid,
     meta: { role: input.role, schoolId: input.schoolId },
   });
+
+  if (input.role === "student" && !input.suppressInviteEmail) {
+    void sendTemplateEmail({
+      to: input.email,
+      subject: "Your Bridge student account is ready",
+      template: React.createElement(StudentInviteEmail, {
+        displayName: input.displayName,
+        email: input.email,
+        temporaryPassword: input.password,
+        loginUrl: appUrl("/login"),
+      }),
+    });
+  }
 
   return {
     id: created.uid,
@@ -164,6 +182,18 @@ export async function setUserStatus(
     targetId: target.id,
     meta: { reason: input.reason ?? null },
   });
+
+  if (input.status === "banned") {
+    void sendTemplateEmail({
+      to: target.email,
+      subject: "Your Bridge account has been banned",
+      template: React.createElement(BanNoticeEmail, {
+        displayName: target.displayName,
+        reason: input.reason ?? "Exam integrity violation",
+        adminContact: actor.email ?? "your administrator",
+      }),
+    });
+  }
 }
 
 /** Students visible to an admin: same school, or all students for super admin. */

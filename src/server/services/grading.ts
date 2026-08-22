@@ -1,11 +1,14 @@
 import { FieldValue } from "firebase-admin/firestore";
 import { generateText, Output } from "ai";
 import { z } from "zod";
+import React from "react";
 
 import { textModel, modelIds } from "@/server/ai/provider";
-import { attemptDoc, examDoc } from "@/server/firebase/collections";
+import { attemptDoc, examDoc, userDoc } from "@/server/firebase/collections";
 import { writeAudit } from "@/server/services/audit";
 import { consumeTokens } from "@/server/services/billing";
+import { appUrl, sendTemplateEmail } from "@/server/services/email";
+import { ExamResultsEmail } from "@/emails/templates";
 import type {
   AttemptAnswer,
   AttemptDoc,
@@ -135,6 +138,36 @@ export async function gradeAttemptWithAi(attemptId: string): Promise<void> {
     targetType: "attempt",
     targetId: attemptId,
     meta: { tokensUsed, graded: output.grades.length },
+  });
+
+  // Notify the student their results are ready (best-effort).
+  void notifyStudentOfResults(attemptId).catch(() => undefined);
+}
+
+async function notifyStudentOfResults(attemptId: string): Promise<void> {
+  const [attemptSnap, userSnap] = await Promise.all([
+    attemptDoc(attemptId).get(),
+    attemptDoc(attemptId).get().then((snap) =>
+      snap.exists ? userDoc(snap.data()!.studentId).get() : null,
+    ),
+  ]);
+  const attempt = attemptSnap.exists ? attemptSnap.data()! : null;
+  if (!attempt?.score) return;
+  const user = userSnap?.exists ? userSnap.data()! : null;
+  if (!user?.email) return;
+
+  const examSnap = await examDoc(attempt.examId).get().catch(() => null);
+  const title = examSnap?.exists ? examSnap.data()!.title : "Your exam";
+
+  await sendTemplateEmail({
+    to: user.email,
+    subject: `Your results for ${title} are ready`,
+    template: React.createElement(ExamResultsEmail, {
+      displayName: user.displayName,
+      examTitle: title,
+      score: attempt.score,
+      resultUrl: appUrl(`/student/results/${attemptId}`),
+    }),
   });
 }
 

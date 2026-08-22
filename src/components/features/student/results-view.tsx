@@ -7,6 +7,7 @@ import {
   ArrowLeftIcon,
   CheckCircle2Icon,
   ClockIcon,
+  FileDownIcon,
   RotateCcwIcon,
   SparklesIcon,
   TargetIcon,
@@ -134,7 +135,15 @@ export function ResultsView({
             </p>
           </div>
         </div>
-        {!pending && !flagged && <RetakeDialog attemptId={attempt.id} />}
+        {!pending && !flagged && (
+          <div className="flex gap-2">
+            <Button variant="outline" render={<a href={`/api/reports/attempt/${attempt.id}`} target="_blank" rel="noopener noreferrer" />}>
+              <FileDownIcon data-icon="inline-start" />
+              Download PDF
+            </Button>
+            <RetakeDialog attemptId={attempt.id} />
+          </div>
+        )}
       </div>
 
       {pending && (
