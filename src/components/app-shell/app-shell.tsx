@@ -65,6 +65,7 @@ const NAV: Record<Role, { groups: { label: string; items: NavItem[] }[] }> = {
           { href: "/admin/students", label: "Students", icon: UserRoundPlusIcon },
           { href: "/admin/generate", label: "Generate Exam", icon: SparklesIcon },
           { href: "/admin/exams", label: "Exam Library", icon: BookOpenCheckIcon },
+          { href: "/admin/requests", label: "Retake Requests", icon: FileClockIcon },
           { href: "/admin/voice", label: "Voice Builder", icon: MicIcon },
         ],
       },

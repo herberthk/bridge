@@ -10,6 +10,7 @@ import {
   UsersServiceError,
 } from "@/server/services/users";
 import { assignExam, ExamsServiceError } from "@/server/services/exams";
+import { decideRetake, RetakesServiceError } from "@/server/services/retakes";
 
 export type ActionState = { ok: true } | { ok: false; error: string };
 
@@ -112,6 +113,32 @@ export async function assignExamAction(
         err instanceof ExamsServiceError
           ? err.message
           : "Assignment failed. Try again.",
+    };
+  }
+}
+
+export async function decideRetakeAction(
+  _prev: ActionState | null,
+  formData: FormData,
+): Promise<ActionState> {
+  const actor = await apiUser("admin", "super_admin");
+  if (!actor) return { ok: false, error: "Not authorized." };
+
+  const requestId = String(formData.get("requestId") ?? "");
+  const approve = formData.get("approve") === "true";
+  if (!requestId) return { ok: false, error: "Missing request." };
+
+  try {
+    await decideRetake(actor, requestId, approve);
+    revalidatePath("/admin/requests");
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error:
+        err instanceof RetakesServiceError
+          ? err.message
+          : "Could not decide the request. Try again.",
     };
   }
 }
