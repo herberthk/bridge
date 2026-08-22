@@ -6,6 +6,7 @@ import { z } from "zod";
 import { adminAuth } from "@/server/firebase/admin";
 import { userDoc } from "@/server/firebase/collections";
 import { writeAudit } from "@/server/services/audit";
+import { recordLoginMetrics } from "@/server/services/analytics";
 import {
   SESSION_COOKIE,
   requestContext,
@@ -72,6 +73,7 @@ export async function POST(request: NextRequest) {
     action: "auth.login",
     context,
   });
+  void recordLoginMetrics(context.browser, context.device);
 
   return NextResponse.json({ ok: true, role: user.role, home: roleHome(user.role) });
 }
