@@ -52,3 +52,6 @@ next-env.d.ts
 
 # serwist build output
 public/sw*
+
+# Firebase service account
+bridge-service.json
