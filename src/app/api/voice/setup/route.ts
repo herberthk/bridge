@@ -21,14 +21,25 @@ export async function POST() {
         subject: z.enum([
           "mathematics", "english", "science", "social_studies", "physics",
           "chemistry", "biology", "geography", "history", "computer_studies",
+          "commerce", "agriculture", "cre", "ire", "literature_in_english",
+          "economics_entrepreneurship",
         ]),
       }),
     }),
     setLevel: tool({
-      description: "Set the school level and class (e.g. secondary class 3).",
+      description:
+        "Set the school level, class, and (for secondary) the sub-level. O level is S1-S4, A level is S5-S6.",
       inputSchema: z.object({
         level: z.enum(["primary", "secondary"]),
+        subLevel: z.enum(["o_level", "a_level"]).nullable().optional(),
         classLevel: z.number().int().min(1).max(7),
+      }),
+    }),
+    setSubsidiary: tool({
+      description:
+        "For History, set the branch: european_history or african_history.",
+      inputSchema: z.object({
+        subsidiary: z.enum(["european_history", "african_history"]),
       }),
     }),
     setTopic: tool({

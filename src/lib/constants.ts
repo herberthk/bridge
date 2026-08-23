@@ -11,6 +11,10 @@ export type Country = (typeof COUNTRIES)[number];
 export const SCHOOL_LEVELS = ["primary", "secondary"] as const;
 export type SchoolLevel = (typeof SCHOOL_LEVELS)[number];
 
+/** Secondary sub-levels per the Ugandan curriculum: O level (S1–S4) and A level (S5–S6). */
+export const SECONDARY_SUB_LEVELS = ["o_level", "a_level"] as const;
+export type SecondarySubLevel = (typeof SECONDARY_SUB_LEVELS)[number];
+
 export const PRIMARY_SUBJECTS = [
   "mathematics",
   "english",
@@ -19,17 +23,41 @@ export const PRIMARY_SUBJECTS = [
 ] as const;
 export type PrimarySubject = (typeof PRIMARY_SUBJECTS)[number];
 
-export const SECONDARY_SUBJECTS = [
+/** Uganda Ordinary level (S1–S4). */
+export const O_LEVEL_SUBJECTS = [
+  "english",
   "mathematics",
+  "biology",
+  "chemistry",
+  "physics",
+  "geography",
+  "history",
+  "commerce",
+  "computer_studies",
+  "agriculture",
+  "cre",
+  "ire",
+  "literature_in_english",
+] as const;
+
+/** Uganda Advanced level (S5–S6). */
+export const A_LEVEL_SUBJECTS = [
   "physics",
   "chemistry",
   "biology",
-  "english",
+  "mathematics",
+  "literature_in_english",
   "geography",
+  "economics_entrepreneurship",
   "history",
-  "computer_studies",
+  "agriculture",
+  "cre",
+  "ire",
 ] as const;
-export type SecondarySubject = (typeof SECONDARY_SUBJECTS)[number];
+
+export type SecondarySubject =
+  | (typeof O_LEVEL_SUBJECTS)[number]
+  | (typeof A_LEVEL_SUBJECTS)[number];
 
 export type Subject =
   | PrimarySubject
@@ -42,13 +70,46 @@ export const COUNTRY_CURRICULA: Record<
 > = {
   UG: {
     primary: PRIMARY_SUBJECTS,
-    secondary: SECONDARY_SUBJECTS,
+    secondary: [...new Set<Subject>([...O_LEVEL_SUBJECTS, ...A_LEVEL_SUBJECTS])],
   },
+};
+
+/** Secondary subjects per sub-level. */
+export const SECONDARY_SUBJECTS_BY_SUB_LEVEL: Record<
+  SecondarySubLevel,
+  readonly SecondarySubject[]
+> = {
+  o_level: O_LEVEL_SUBJECTS,
+  a_level: A_LEVEL_SUBJECTS,
+};
+
+/**
+ * Subsidiary (paper/branch) choices for subjects that need one. History
+ * requires European vs African; CRE and IRE are selected directly as
+ * subjects; Literature in English has no subsidiaries.
+ */
+export const SUBJECT_SUBSIDIARIES: Partial<
+  Record<Subject, { label: string; options: readonly string[] }>
+> = {
+  history: {
+    label: "History branch",
+    options: ["european_history", "african_history"],
+  },
+};
+
+export const SUBSIDIARY_LABELS: Record<string, string> = {
+  european_history: "European History",
+  african_history: "African History",
+};
+
+export const SUB_LEVEL_LABELS: Record<SecondarySubLevel, string> = {
+  o_level: "O Level (S1–S4)",
+  a_level: "A Level (S5–S6)",
 };
 
 export const SUBJECT_LABELS: Record<Subject, string> = {
   mathematics: "Mathematics",
-  english: "English",
+  english: "English Language",
   science: "Science",
   social_studies: "Social Studies",
   physics: "Physics",
@@ -57,11 +118,26 @@ export const SUBJECT_LABELS: Record<Subject, string> = {
   geography: "Geography",
   history: "History",
   computer_studies: "Computer Studies",
+  commerce: "Commerce",
+  agriculture: "Agriculture",
+  cre: "Christian Religious Education (CRE)",
+  ire: "Islamic Religious Education (IRE)",
+  literature_in_english: "Literature in English",
+  economics_entrepreneurship: "Economics & Entrepreneurship",
 };
 
 /** Uganda: Primary 1–7, Secondary 1–6. */
 export const PRIMARY_CLASSES = [1, 2, 3, 4, 5, 6, 7] as const;
-export const SECONDARY_CLASSES = [1, 2, 3, 4, 5, 6] as const;
+/** S1–S4 (Ordinary level). */
+export const O_LEVEL_CLASSES = [1, 2, 3, 4] as const;
+/** S5–S6 (Advanced level). */
+export const A_LEVEL_CLASSES = [5, 6] as const;
+export const SECONDARY_CLASSES = [...O_LEVEL_CLASSES, ...A_LEVEL_CLASSES] as const;
+
+/** Derive the secondary sub-level from a Senior class number. */
+export function subLevelForClass(classLevel: number): SecondarySubLevel {
+  return classLevel >= 5 ? "a_level" : "o_level";
+}
 
 export const DIFFICULTIES = ["easy", "medium", "hard", "very_hard"] as const;
 export type Difficulty = (typeof DIFFICULTIES)[number];

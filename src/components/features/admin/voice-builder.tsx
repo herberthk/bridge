@@ -30,6 +30,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 interface DraftSpec {
   subject?: Subject;
   level?: "primary" | "secondary";
+  secondarySubLevel?: "o_level" | "a_level" | null;
+  subsidiary?: string;
   classLevel?: number;
   topic?: string;
   difficulty?: Difficulty;
@@ -67,9 +69,21 @@ export function VoiceBuilder() {
           setSpec((s) => ({
             ...s,
             level: args.level as "primary" | "secondary",
+            secondarySubLevel:
+              args.level === "secondary"
+                ? ((args.subLevel as "o_level" | "a_level" | undefined) ??
+                  (s.secondarySubLevel ?? "o_level"))
+                : null,
             classLevel: args.classLevel as number,
           }));
-          return ack(`Set to ${args.level} class ${args.classLevel}`);
+          return ack(
+            `Set to ${args.level}${args.level === "secondary" ? ` (${args.subLevel === "a_level" ? "A level" : "O level"})` : ""} class ${args.classLevel}`,
+          );
+        case "setSubsidiary":
+          setSpec((s) => ({ ...s, subsidiary: args.subsidiary as string }));
+          return ack(
+            args.subsidiary === "african_history" ? "African History" : "European History",
+          );
         case "setTopic":
           setSpec((s) => ({ ...s, topic: args.topic as string }));
           return ack(args.topic as string);
@@ -165,7 +179,13 @@ export function VoiceBuilder() {
     )
     .filter(Boolean);
 
-  const specReady = Boolean(spec.subject && spec.level && spec.topic && spec.questionCount);
+  const specReady = Boolean(
+    spec.subject &&
+      spec.level &&
+      spec.topic &&
+      spec.questionCount &&
+      (spec.subject !== "history" || spec.subsidiary),
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -248,10 +268,22 @@ export function VoiceBuilder() {
                 label="Class"
                 value={
                   spec.level
-                    ? `${spec.level === "primary" ? "Primary" : "Secondary"} ${spec.classLevel ?? "?"}`
+                    ? `${spec.level === "primary" ? "Primary" : `Senior ${spec.classLevel ?? "?"}${spec.secondarySubLevel === "a_level" ? " (A level)" : spec.level === "secondary" ? " (O level)" : ""}`}`
                     : null
                 }
               />
+              {spec.subject === "history" && (
+                <SpecRow
+                  label="History branch"
+                  value={
+                    spec.subsidiary === "african_history"
+                      ? "African History"
+                      : spec.subsidiary === "european_history"
+                        ? "European History"
+                        : null
+                  }
+                />
+              )}
               <SpecRow label="Topic" value={spec.topic ?? null} />
               <SpecRow
                 label="Difficulty"
@@ -292,7 +324,9 @@ export function VoiceBuilder() {
                 const params = new URLSearchParams({
                   subject: spec.subject!,
                   level: spec.level!,
-                  classLevel: String(spec.classLevel ?? 2),
+                  sublevel: spec.level === "secondary" ? (spec.secondarySubLevel ?? "o_level") : "",
+                  subsidiary: spec.subject === "history" ? (spec.subsidiary ?? "african_history") : "",
+                  classLevel: String(spec.classLevel ?? (spec.secondarySubLevel === "a_level" ? 5 : 2)),
                   topic: spec.topic!,
                   difficulty: spec.difficulty ?? "medium",
                   duration: String(spec.durationMinutes ?? 45),

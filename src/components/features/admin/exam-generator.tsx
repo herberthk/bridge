@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import type { ReadonlyURLSearchParams } from "next/navigation";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useDropzone } from "react-dropzone";
@@ -25,10 +26,14 @@ import {
   PRIMARY_CLASSES,
   QUESTION_TYPES,
   QUESTION_TYPE_LABELS,
-  SECONDARY_CLASSES,
+  SECONDARY_SUBJECTS_BY_SUB_LEVEL,
+  SUB_LEVEL_LABELS,
   SUBJECT_LABELS,
+  SUBJECT_SUBSIDIARIES,
+  SUBSIDIARY_LABELS,
   type Subject,
 } from "@/lib/constants";
+import { classLevelOptions } from "@/lib/schemas/users";
 import {
   estimateGenerationTokens,
   formatUgx,
@@ -73,10 +78,14 @@ interface UploadedDoc {
   uploading: boolean;
 }
 
-type FormValues = ExamParamsInput;
+import type { z } from "zod";
+
+/** Form shape before zod applies defaults. */
+type FormValues = z.input<typeof examParamsSchema>;
 
 export function ExamGenerator() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [docs, setDocs] = useState<UploadedDoc[]>([]);
   const [generating, setGenerating] = useState(false);
   const [result, setResult] = useState<{
@@ -86,17 +95,22 @@ export function ExamGenerator() {
     tokensUsed: number;
   } | null>(null);
 
-  const form = useForm<FormValues>({
+  // Prefill from the voice builder's "Continue to generator" hand-off.
+  const voice = readVoiceParams(searchParams);
+
+  const form = useForm<FormValues, unknown, ExamParamsInput>({
     resolver: zodResolver(examParamsSchema),
     defaultValues: {
-      subject: "mathematics",
-      level: "secondary",
-      classLevel: 2,
-      topic: "",
-      difficulty: "medium",
-      durationMinutes: 45,
-      questionCount: 20,
-      questionTypes: ["multiple_choice", "short_answer"],
+      subject: voice.subject,
+      level: voice.level,
+      secondarySubLevel: voice.level === "secondary" ? voice.subLevel : null,
+      classLevel: voice.classLevel,
+      topic: voice.topic,
+      subsidiary: voice.subsidiary,
+      difficulty: voice.difficulty,
+      durationMinutes: voice.durationMinutes,
+      questionCount: voice.questionCount,
+      questionTypes: voice.questionTypes,
       includeHints: true,
       includeExplanations: true,
       includeWorkedExamples: false,
@@ -105,9 +119,16 @@ export function ExamGenerator() {
   });
 
   const level = form.watch("level");
+  const subLevel = form.watch("secondarySubLevel") ?? "o_level";
+  const subject = form.watch("subject");
   const questionCount = form.watch("questionCount");
-  const subjects = COUNTRY_CURRICULA.UG[level];
-  const classes = level === "primary" ? PRIMARY_CLASSES : SECONDARY_CLASSES;
+  const subjects =
+    level === "primary"
+      ? COUNTRY_CURRICULA.UG.primary
+      : SECONDARY_SUBJECTS_BY_SUB_LEVEL[subLevel];
+  const needsSubsidiary = Boolean(
+    SUBJECT_SUBSIDIARIES[subject as keyof typeof SUBJECT_SUBSIDIARIES],
+  );
 
   const estimate = useMemo(
     () => estimateGenerationTokens(questionCount, docs.some((d) => !d.uploading)),
@@ -221,10 +242,35 @@ export function ExamGenerator() {
                             const next = v[0] as "primary" | "secondary" | undefined;
                             if (!next) return;
                             field.onChange(next);
-                            if (!COUNTRY_CURRICULA.UG[next].includes(form.getValues("subject") as Subject)) {
-                              form.setValue("subject", COUNTRY_CURRICULA.UG[next][0]);
+                            if (next === "primary") {
+                              form.setValue("secondarySubLevel", null);
+                              form.setValue("subsidiary", null);
+                              form.setValue("classLevel", 5);
+                              if (
+                                !(
+                                  COUNTRY_CURRICULA.UG.primary as readonly string[]
+                                ).includes(form.getValues("subject"))
+                              ) {
+                                form.setValue("subject", COUNTRY_CURRICULA.UG.primary[0]);
+                              }
+                            } else {
+                              const sub =
+                                form.getValues("secondarySubLevel") === "a_level"
+                                  ? "a_level"
+                                  : "o_level";
+                              form.setValue("secondarySubLevel", sub);
+                              form.setValue("classLevel", sub === "a_level" ? 5 : 2);
+                              if (
+                                !(
+                                  SECONDARY_SUBJECTS_BY_SUB_LEVEL[sub] as readonly string[]
+                                ).includes(form.getValues("subject"))
+                              ) {
+                                form.setValue(
+                                  "subject",
+                                  SECONDARY_SUBJECTS_BY_SUB_LEVEL[sub][0] as FormValues["subject"],
+                                );
+                              }
                             }
-                            form.setValue("classLevel", next === "primary" ? 5 : 2);
                           }}
                           className="flex"
                         >
@@ -252,9 +298,9 @@ export function ExamGenerator() {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {classes.map((c) => (
-                              <SelectItem key={c} value={String(c)}>
-                                {level === "primary" ? `Primary ${c}` : `Secondary ${c}`}
+                            {classLevelOptions(level, subLevel).map((opt) => (
+                              <SelectItem key={opt.value} value={String(opt.value)}>
+                                {opt.label}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -264,6 +310,46 @@ export function ExamGenerator() {
                   </Field>
                 </div>
 
+                {level === "secondary" && (
+                  <Controller
+                    control={form.control}
+                    name="secondarySubLevel"
+                    render={({ field }) => (
+                      <Field>
+                        <FieldLabel>Secondary sub-level</FieldLabel>
+                        <ToggleGroup
+                          value={[field.value ?? "o_level"]}
+                          onValueChange={(v: readonly string[]) => {
+                            const next = v[0] as "o_level" | "a_level" | undefined;
+                            if (!next) return;
+                            field.onChange(next);
+                            // Snap the class into the new band and re-filter subjects.
+                            form.setValue("classLevel", next === "a_level" ? 5 : 2);
+                            if (
+                              !(
+                                SECONDARY_SUBJECTS_BY_SUB_LEVEL[next] as readonly string[]
+                              ).includes(form.getValues("subject"))
+                            ) {
+                              form.setValue(
+                                "subject",
+                                SECONDARY_SUBJECTS_BY_SUB_LEVEL.o_level[0] as FormValues["subject"],
+                              );
+                            }
+                          }}
+                          className="flex"
+                        >
+                          <ToggleGroupItem value="o_level" className="flex-1">
+                            {SUB_LEVEL_LABELS.o_level}
+                          </ToggleGroupItem>
+                          <ToggleGroupItem value="a_level" className="flex-1">
+                            {SUB_LEVEL_LABELS.a_level}
+                          </ToggleGroupItem>
+                        </ToggleGroup>
+                      </Field>
+                    )}
+                  />
+                )}
+
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Field data-invalid={form.formState.errors.subject ? true : undefined}>
                     <FieldLabel htmlFor="subject">Subject</FieldLabel>
@@ -271,7 +357,14 @@ export function ExamGenerator() {
                       control={form.control}
                       name="subject"
                       render={({ field }) => (
-                        <Select value={field.value} onValueChange={field.onChange}>
+                        <Select
+                          value={field.value}
+                          onValueChange={(v) => {
+                            field.onChange(v);
+                            const subs = SUBJECT_SUBSIDIARIES[v as keyof typeof SUBJECT_SUBSIDIARIES];
+                            if (!subs) form.setValue("subsidiary", null);
+                          }}
+                        >
                           <SelectTrigger id="subject">
                             <SelectValue />
                           </SelectTrigger>
@@ -302,6 +395,46 @@ export function ExamGenerator() {
                     )}
                   </Field>
                 </div>
+
+                {needsSubsidiary && (
+                  <Field data-invalid={form.formState.errors.subsidiary ? true : undefined}>
+                    <FieldLabel htmlFor="subsidiary">
+                      {SUBJECT_SUBSIDIARIES[subject as keyof typeof SUBJECT_SUBSIDIARIES]?.label}
+                    </FieldLabel>
+                    <Controller
+                      control={form.control}
+                      name="subsidiary"
+                      render={({ field }) => (
+                        <Select
+                          value={field.value ?? ""}
+                          onValueChange={field.onChange}
+                        >
+                          <SelectTrigger id="subsidiary">
+                            <SelectValue placeholder="Choose the branch" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {SUBJECT_SUBSIDIARIES[
+                              subject as keyof typeof SUBJECT_SUBSIDIARIES
+                            ]!.options.map((opt) => (
+                              <SelectItem key={opt} value={opt}>
+                                {SUBSIDIARY_LABELS[opt] ?? opt}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    />
+                    {form.formState.errors.subsidiary ? (
+                      <FieldError>
+                        {form.formState.errors.subsidiary.message}
+                      </FieldError>
+                    ) : (
+                      <FieldDescription>
+                        Questions will focus strictly on the chosen branch.
+                      </FieldDescription>
+                    )}
+                  </Field>
+                )}
               </FieldGroup>
             </CardContent>
           </Card>
@@ -613,4 +746,28 @@ export function ExamGenerator() {
       </div>
     </form>
   );
+}
+
+/** Parse the voice builder's query-param hand-off. */
+function readVoiceParams(sp: ReadonlyURLSearchParams) {
+  const level = (sp.get("level") as "primary" | "secondary" | null) ?? "secondary";
+  const subLevel =
+    level === "secondary"
+      ? ((sp.get("sublevel") as "o_level" | "a_level" | null) ?? "o_level")
+      : null;
+  const types = sp.get("types")?.split(",").filter(Boolean);
+  return {
+    level,
+    subLevel,
+    subject: (sp.get("subject") as FormValues["subject"] | null) ?? "mathematics",
+    classLevel: Number(sp.get("classLevel")) || (subLevel === "a_level" ? 5 : level === "primary" ? 5 : 2),
+    topic: sp.get("topic") ?? "",
+    subsidiary: sp.get("subsidiary") || null,
+    difficulty: (sp.get("difficulty") as FormValues["difficulty"] | null) ?? "medium",
+    durationMinutes: Number(sp.get("duration")) || 45,
+    questionCount: Number(sp.get("count")) || 20,
+    questionTypes: (types?.length
+      ? types
+      : ["multiple_choice", "short_answer"]) as FormValues["questionTypes"],
+  };
 }

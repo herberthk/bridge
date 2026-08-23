@@ -75,6 +75,7 @@ export async function POST(request: NextRequest) {
     status: "active",
     classLevel: null,
     level: null,
+    secondarySubLevel: null,
     createdBy: null,
     banReason: null,
     suspendedUntil: null,

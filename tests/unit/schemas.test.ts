@@ -5,6 +5,8 @@ import { setupSchema, loginSchema } from "@/lib/schemas/auth";
 import { parseUserAgent } from "@/lib/user-agent";
 import {
   COUNTRY_CURRICULA,
+  O_LEVEL_SUBJECTS,
+  A_LEVEL_SUBJECTS,
   PROCTORING,
   DIFFICULTIES,
   QUESTION_TYPES,
@@ -14,7 +16,9 @@ import {
 const validParams = {
   subject: "physics",
   level: "secondary" as const,
+  secondarySubLevel: "o_level" as const,
   classLevel: 3,
+  subsidiary: null,
   topic: "Electromagnetism",
   difficulty: "hard" as const,
   durationMinutes: 60,
@@ -36,21 +40,23 @@ describe("exam params schema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects primary class 5 with level secondary", () => {
+  it("maps primary params without a sub-level", () => {
     const result = examParamsSchema.safeParse({
+      ...validParams,
+      level: "primary",
+      secondarySubLevel: null,
+      classLevel: 5,
+      subject: "science",
+    });
+    expect(result.success).toBe(true);
+    // Primary must not carry a secondary sub-level.
+    const withSubLevel = examParamsSchema.safeParse({
       ...validParams,
       level: "primary",
       classLevel: 5,
       subject: "science",
     });
-    expect(result.success).toBe(true); // P5 with a primary subject is valid
-    const bad = examParamsSchema.safeParse({
-      ...validParams,
-      level: "primary",
-      classLevel: 5,
-      subject: "physics", // physics isn't a primary subject… schema allows; UI restricts
-    });
-    expect(bad.success).toBe(true); // schema-level: subject is a free string; curriculum check happens in UI
+    expect(withSubLevel.success).toBe(false);
   });
 
   it("enforces duration and question bounds", () => {
@@ -116,10 +122,18 @@ describe("user-agent parsing", () => {
 describe("domain constants", () => {
   it("curriculum covers the required subjects per level", () => {
     expect(COUNTRY_CURRICULA.UG.primary).toHaveLength(4);
-    expect(COUNTRY_CURRICULA.UG.secondary).toHaveLength(8);
-    for (const s of COUNTRY_CURRICULA.UG.secondary) {
+    // Uganda O level (S1–S4): 13 subjects; A level (S5–S6): 11 subjects.
+    expect(O_LEVEL_SUBJECTS).toHaveLength(13);
+    expect(A_LEVEL_SUBJECTS).toHaveLength(11);
+    for (const s of [...O_LEVEL_SUBJECTS, ...A_LEVEL_SUBJECTS]) {
       expect(SUBJECT_LABELS[s]).toBeTruthy();
     }
+    // O/A specific subjects.
+    expect(O_LEVEL_SUBJECTS).toContain("commerce");
+    expect(O_LEVEL_SUBJECTS).toContain("literature_in_english");
+    expect(A_LEVEL_SUBJECTS).toContain("economics_entrepreneurship");
+    expect(A_LEVEL_SUBJECTS).not.toContain("commerce");
+    expect(A_LEVEL_SUBJECTS).not.toContain("computer_studies");
   });
 
   it("proctoring policy gives exactly two warnings", () => {

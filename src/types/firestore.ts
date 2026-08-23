@@ -4,6 +4,7 @@ import type {
   QuestionType,
   Role,
   SchoolLevel,
+  SecondarySubLevel,
   Subject,
   UserStatus,
   ExamStatus,
@@ -66,6 +67,8 @@ export interface UserDoc {
   classLevel: number | null;
   /** Students only: which level's curriculum they follow. */
   level: SchoolLevel | null;
+  /** Students only: O level vs A level (null for primary). */
+  secondarySubLevel: SecondarySubLevel | null;
   createdBy: string | null;
   banReason: string | null;
   suspendedUntil: Timestamp | null;
@@ -130,8 +133,12 @@ export interface TransactionDoc {
 export interface ExamParams {
   subject: Subject;
   level: SchoolLevel;
+  /** O level vs A level for secondary exams; null for primary. */
+  secondarySubLevel: SecondarySubLevel | null;
   classLevel: number;
   topic: string;
+  /** Paper/branch for subjects that need one (e.g. History: European/African). */
+  subsidiary: string | null;
   difficulty: Difficulty;
   durationMinutes: number;
   questionCount: number;

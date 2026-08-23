@@ -204,8 +204,9 @@ export function ExamLibrary({
                   </TableCell>
                   <TableCell>{SUBJECT_LABELS[e.params.subject as Subject] ?? e.params.subject}</TableCell>
                   <TableCell>
-                    {e.params.level === "primary" ? "P" : "S"}
-                    {e.params.classLevel}
+                    {e.params.level === "primary"
+                      ? `P${e.params.classLevel}`
+                      : `S${e.params.classLevel} · ${e.params.secondarySubLevel === "a_level" ? "A" : "O"}`}
                   </TableCell>
                   <TableCell className="tabular-nums">{e.questions.length}</TableCell>
                   <TableCell className="tabular-nums">{e.params.durationMinutes} min</TableCell>

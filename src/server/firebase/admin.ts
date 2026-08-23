@@ -11,8 +11,10 @@ import { getStorage } from "firebase-admin/storage";
 
 function parseServiceAccount(): ServiceAccount | undefined {
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY?.trim();
-  if (!raw) return undefined;
+  if (!raw) return fromIndividualFields();
   try {
+    // Accept: raw JSON (single line or multi-line after whitespace squash),
+    // or the same JSON base64-encoded.
     const json = raw.startsWith("{")
       ? raw
       : Buffer.from(raw, "base64").toString("utf8");
@@ -22,10 +24,21 @@ function parseServiceAccount(): ServiceAccount | undefined {
     }
     return parsed;
   } catch (err) {
+    const hint =
+      err instanceof Error ? err.message : String(err);
     throw new Error(
-      `Invalid FIREBASE_SERVICE_ACCOUNT_KEY: ${err instanceof Error ? err.message : err}`,
+      `Invalid FIREBASE_SERVICE_ACCOUNT_KEY (${hint}). Paste the service-account JSON on ONE line, wrap the whole multi-line JSON in single quotes, or base64-encode it — see .env.example.`,
     );
   }
+}
+
+/** Fallback: individual fields (FIREBASE_PROJECT_ID / CLIENT_EMAIL / PRIVATE_KEY). */
+function fromIndividualFields(): ServiceAccount | undefined {
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+  if (!projectId || !clientEmail || !privateKey) return undefined;
+  return { projectId, clientEmail, privateKey };
 }
 
 export function getAdminApp(): App {

@@ -4,12 +4,15 @@ import {
   DIFFICULTIES,
   QUESTION_TYPES,
   SCHOOL_LEVELS,
+  SECONDARY_SUB_LEVELS,
+  SUBJECT_SUBSIDIARIES,
   EXAM_DURATION_MAX,
   EXAM_DURATION_MIN,
   EXAM_QUESTIONS_MAX,
   EXAM_QUESTIONS_MIN,
   PRIMARY_CLASSES,
-  SECONDARY_CLASSES,
+  O_LEVEL_CLASSES,
+  A_LEVEL_CLASSES,
 } from "@/lib/constants";
 
 /** Exam parameters — shared by generation form, voice builder, and storage. */
@@ -17,8 +20,12 @@ export const examParamsSchema = z
   .object({
     subject: z.string().min(1),
     level: z.enum(SCHOOL_LEVELS),
+    /** Required for secondary; must be null for primary. */
+    secondarySubLevel: z.enum(SECONDARY_SUB_LEVELS).nullable().default(null),
     classLevel: z.number().int(),
     topic: z.string().trim().min(2, "Describe the topic or theme").max(200),
+    /** Required when the subject has subsidiaries (e.g. History). */
+    subsidiary: z.string().trim().min(1).nullable().default(null),
     difficulty: z.enum(DIFFICULTIES),
     durationMinutes: z
       .number()
@@ -36,13 +43,55 @@ export const examParamsSchema = z
     includeWorkedExamples: z.boolean(),
     instructions: z.string().trim().max(2000).nullable(),
   })
-  .refine(
-    (p) =>
-      p.level === "primary"
-        ? (PRIMARY_CLASSES as readonly number[]).includes(p.classLevel)
-        : (SECONDARY_CLASSES as readonly number[]).includes(p.classLevel),
-    { message: "Class doesn't match the selected level", path: ["classLevel"] },
-  );
+  .superRefine((p, ctx) => {
+    if (p.level === "primary") {
+      if (!(PRIMARY_CLASSES as readonly number[]).includes(p.classLevel)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["classLevel"],
+          message: "Primary classes are P1–P7",
+        });
+      }
+      if (p.secondarySubLevel !== null) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["secondarySubLevel"],
+          message: "Sub-level only applies to secondary",
+        });
+      }
+      return;
+    }
+    // Secondary: sub-level drives valid classes (O: S1–S4, A: S5–S6).
+    if (!p.secondarySubLevel) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["secondarySubLevel"],
+        message: "Choose O level or A level",
+      });
+      return;
+    }
+    const valid =
+      p.secondarySubLevel === "o_level" ? O_LEVEL_CLASSES : A_LEVEL_CLASSES;
+    if (!(valid as readonly number[]).includes(p.classLevel)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["classLevel"],
+        message:
+          p.secondarySubLevel === "o_level"
+            ? "O level classes are S1–S4"
+            : "A level classes are S5–S6",
+      });
+    }
+    // Subjects with subsidiaries require a choice.
+    const subsidiary = SUBJECT_SUBSIDIARIES[p.subject as keyof typeof SUBJECT_SUBSIDIARIES];
+    if (subsidiary && !subsidiary.options.includes(p.subsidiary ?? "")) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["subsidiary"],
+        message: `Choose a branch for ${subsidiary.label}`,
+      });
+    }
+  });
 export type ExamParamsInput = z.infer<typeof examParamsSchema>;
 
 export const generateExamSchema = z.object({

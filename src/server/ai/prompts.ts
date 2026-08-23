@@ -2,6 +2,8 @@ import {
   DIFFICULTY_LABELS,
   QUESTION_TYPE_LABELS,
   SUBJECT_LABELS,
+  SUBSIDIARY_LABELS,
+  SUB_LEVEL_LABELS,
   type Difficulty,
   type QuestionType,
   type Subject,
@@ -25,10 +27,26 @@ export function examGenerationInstructions(params: ExamParamsInput): string {
       "Matching: exactly 4 pairs mapping left items to right items; shuffle is handled by the app.",
   };
 
+  const learnerLine =
+    params.level === "primary"
+      ? `Learner level: Primary class ${params.classLevel} (Uganda).`
+      : `Learner level: ${SUB_LEVEL_LABELS[params.secondarySubLevel ?? "o_level"]}, Senior ${params.classLevel} (Uganda).`;
+  const depthLine =
+    params.level === "secondary" && params.secondarySubLevel === "a_level"
+      ? "Calibrate to UACE (A level) depth: analytical, essay-oriented, multi-step problems where appropriate."
+      : params.level === "secondary"
+        ? "Calibrate to UCE (O level) depth: clear, curriculum-anchored questions."
+        : "Calibrate language and depth to young primary learners.";
+  const subsidiaryLine = params.subsidiary
+    ? `Subject branch: ${SUBSIDIARY_LABELS[params.subsidiary] ?? params.subsidiary} — restrict questions strictly to this branch.`
+    : null;
+
   return [
     "You are an expert Ugandan-curriculum examiner creating assessment content for Bridge.",
     `Subject: ${SUBJECT_LABELS[params.subject as Subject] ?? params.subject}.`,
-    `Learner level: ${params.level === "primary" ? "Primary" : "Secondary"} class ${params.classLevel} (Uganda).`,
+    learnerLine,
+    depthLine,
+    subsidiaryLine,
     `Topic/theme: ${params.topic}.`,
     `Difficulty: ${DIFFICULTY_LABELS[params.difficulty as Difficulty] ?? params.difficulty} — calibrate language, depth, and distractors to this band.`,
     `Produce exactly ${params.questionCount} questions distributed across these types: ${params.questionTypes.map((t) => QUESTION_TYPE_LABELS[t]).join(", ")}.`,

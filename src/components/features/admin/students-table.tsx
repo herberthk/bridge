@@ -71,6 +71,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 const STATUS_BADGE: Record<
   UserStatus,
@@ -84,6 +85,7 @@ const STATUS_BADGE: Record<
 function CreateStudentDialog() {
   const [open, setOpen] = useState(false);
   const [level, setLevel] = useState<"primary" | "secondary">("secondary");
+  const [subLevel, setSubLevel] = useState<"o_level" | "a_level">("o_level");
   const [state, formAction, pending] = useActionState<ActionState | null, FormData>(
     createStudentAction,
     null,
@@ -170,12 +172,16 @@ function CreateStudentDialog() {
               </Field>
               <Field>
                 <FieldLabel htmlFor="classLevel">Class</FieldLabel>
-                <Select name="classLevel" defaultValue="2" key={level}>
+                <Select
+                  name="classLevel"
+                  defaultValue={subLevel === "a_level" ? "5" : "2"}
+                  key={`${level}-${subLevel}`}
+                >
                   <SelectTrigger id="classLevel">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {classLevelOptions(level).map((opt) => (
+                    {classLevelOptions(level, subLevel).map((opt) => (
                       <SelectItem key={opt.value} value={String(opt.value)}>
                         {opt.label}
                       </SelectItem>
@@ -184,6 +190,27 @@ function CreateStudentDialog() {
                 </Select>
               </Field>
             </div>
+            {level === "secondary" && (
+              <Field>
+                <FieldLabel>Secondary sub-level</FieldLabel>
+                <input type="hidden" name="secondarySubLevel" value={subLevel} />
+                <ToggleGroup
+                  value={[subLevel]}
+                  onValueChange={(v: readonly string[]) => {
+                    const next = v[0] as "o_level" | "a_level" | undefined;
+                    if (next) setSubLevel(next);
+                  }}
+                  className="flex"
+                >
+                  <ToggleGroupItem value="o_level" className="flex-1">
+                    O Level (S1–S4)
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="a_level" className="flex-1">
+                    A Level (S5–S6)
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              </Field>
+            )}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>
                 Cancel
@@ -343,7 +370,7 @@ export function StudentsTable({
                     {s.level === "primary"
                       ? `P${s.classLevel ?? "–"}`
                       : s.level === "secondary"
-                        ? `S${s.classLevel ?? "–"}`
+                        ? `S${s.classLevel ?? "–"} · ${s.secondarySubLevel === "a_level" ? "A" : "O"}`
                         : "–"}
                   </TableCell>
                   <TableCell>

@@ -34,6 +34,7 @@ interface ProvisionInput {
   role: Role;
   schoolId: string | null;
   level?: "primary" | "secondary" | null;
+  secondarySubLevel?: "o_level" | "a_level" | null;
   classLevel?: number | null;
   /** Skip the invite email (e.g. the temp password was shown in-UI only). */
   suppressInviteEmail?: boolean;
@@ -71,6 +72,7 @@ export async function provisionUser(
     status: "active",
     classLevel: input.classLevel ?? null,
     level: input.level ?? null,
+    secondarySubLevel: input.secondarySubLevel ?? null,
     createdBy: actor.uid,
     banReason: null,
     suspendedUntil: null,
@@ -124,6 +126,7 @@ export async function createStudent(
     role: "student",
     schoolId,
     level: input.level,
+    secondarySubLevel: input.secondarySubLevel,
     classLevel: input.classLevel,
   });
 

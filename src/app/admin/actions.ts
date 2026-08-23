@@ -21,11 +21,15 @@ export async function createStudentAction(
   const actor = await apiUser("admin", "super_admin");
   if (!actor) return { ok: false, error: "Not authorized." };
 
+  const rawSubLevel = formData.get("secondarySubLevel");
+  const level = (formData.get("level") as "primary" | "secondary" | null) ?? "secondary";
   const parsed = createStudentSchema.safeParse({
     displayName: formData.get("displayName"),
     email: formData.get("email"),
     password: formData.get("password"),
-    level: formData.get("level") ?? undefined,
+    level,
+    secondarySubLevel:
+      level === "secondary" ? ((typeof rawSubLevel === "string" && rawSubLevel) || null) : null,
     classLevel: Number(formData.get("classLevel")),
   });
   if (!parsed.success) {
