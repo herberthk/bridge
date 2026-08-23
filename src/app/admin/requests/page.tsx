@@ -4,6 +4,7 @@ import { usersCol, examDoc } from "@/server/firebase/collections";
 import { requireRole } from "@/server/auth/session";
 import { listPendingRetakeRequests } from "@/server/services/retakes";
 import { RetakeRequests } from "@/components/features/admin/retake-requests";
+import { serializeDocs } from "@/lib/serialize";
 
 export default async function AdminRequestsPage() {
   const actor = await requireRole("admin");
@@ -36,7 +37,7 @@ export default async function AdminRequestsPage() {
 
   return (
     <RetakeRequests
-      requests={requests}
+      requests={serializeDocs(requests)}
       studentNames={studentNames}
       examTitles={examTitles}
     />

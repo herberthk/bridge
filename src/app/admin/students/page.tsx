@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import { requireRole } from "@/server/auth/session";
 import { listStudents } from "@/server/services/users";
 import { StudentsTable } from "@/components/features/admin/students-table";
+import { serializeDocs } from "@/lib/serialize";
 
 export default async function AdminStudentsPage() {
   const actor = await requireRole("admin");
@@ -12,5 +13,5 @@ export default async function AdminStudentsPage() {
   } catch (err) {
     console.error("[students] list failed", err);
   }
-  return <StudentsTable students={students} viewerRole={actor.role} />;
+  return <StudentsTable students={serializeDocs(students)} viewerRole={actor.role} />;
 }

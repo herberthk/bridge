@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import { requireRole } from "@/server/auth/session";
 import { getAttemptDetail, AttemptsServiceError } from "@/server/services/attempts";
 import { ResultsView } from "@/components/features/student/results-view";
+import { serializeDoc } from "@/lib/serialize";
 import type { WithId, AttemptDoc, ExamDoc } from "@/types/firestore";
 
 export const metadata = { title: "Results" };
@@ -27,5 +28,10 @@ export default async function ResultsPage({
     throw err;
   }
 
-  return <ResultsView attempt={data.attempt} exam={data.exam} />;
+  return (
+    <ResultsView
+      attempt={serializeDoc(data.attempt)}
+      exam={data.exam ? serializeDoc(data.exam) : null}
+    />
+  );
 }

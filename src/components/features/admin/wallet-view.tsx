@@ -4,7 +4,8 @@ import { format } from "date-fns";
 import { ArrowDownIcon, ArrowUpIcon, CoinsIcon, InfoIcon } from "lucide-react";
 
 import { formatUgx, formatUsd } from "@/lib/pricing";
-import type { WithId, TransactionDoc, WalletDoc } from "@/types/firestore";
+import type { TransactionDoc, WalletDoc } from "@/types/firestore";
+import { parseDate, type SerializedWithId } from "@/lib/serialize";
 import { AnimatedCounter } from "@/components/motion";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -23,8 +24,8 @@ export function WalletView({
   transactions,
   ownerLabel,
 }: {
-  wallet: WithId<WalletDoc> | null;
-  transactions: WithId<TransactionDoc>[];
+  wallet: SerializedWithId<WalletDoc> | null;
+  transactions: SerializedWithId<TransactionDoc>[];
   ownerLabel: string;
 }) {
   return (
@@ -112,7 +113,8 @@ export function WalletView({
             {transactions.map((t) => (
               <TableRow key={t.id}>
                 <TableCell className="text-muted-foreground text-sm">
-                  {t.createdAt ? format(t.createdAt.toDate(), "d MMM yyyy, HH:mm") : "–"}
+                  {t.createdAt.toString()}
+                  {/* {t.createdAt ? format(parseDate(t.createdAt)!, "d MMM yyyy, HH:mm") : "–"} */}
                 </TableCell>
                 <TableCell className="max-w-72 truncate">{t.description}</TableCell>
                 <TableCell className="flex items-center gap-1 tabular-nums">

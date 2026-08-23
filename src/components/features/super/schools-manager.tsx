@@ -10,7 +10,8 @@ import {
   createStandaloneAdminAction,
 } from "@/app/super/actions";
 import type { ActionState } from "@/app/admin/actions";
-import type { WithId, SchoolDoc, UserDoc } from "@/types/firestore";
+import type { SchoolDoc, UserDoc } from "@/types/firestore";
+import { parseDate, type SerializedWithId } from "@/lib/serialize";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -168,8 +169,8 @@ export function SchoolsManager({
   schools,
   standaloneAdmins,
 }: {
-  schools: WithId<SchoolDoc>[];
-  standaloneAdmins: WithId<UserDoc>[];
+  schools: SerializedWithId<SchoolDoc>[];
+  standaloneAdmins: SerializedWithId<UserDoc>[];
 }) {
   const totalStudents = schools.reduce((n, s) => n + (s.studentCount ?? 0), 0);
 
@@ -219,7 +220,8 @@ export function SchoolsManager({
                   <TableCell>{s.adminCount}</TableCell>
                   <TableCell>{s.studentCount}</TableCell>
                   <TableCell className="text-muted-foreground text-sm">
-                    {s.createdAt ? format(s.createdAt.toDate(), "d MMM yyyy") : "–"}
+                  {s.createdAt.toString()}
+                    {/* {s.createdAt ? format(parseDate(s.createdAt)!, "d MMM yyyy") : "–"} */}
                   </TableCell>
                 </TableRow>
               ))}

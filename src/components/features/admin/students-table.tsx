@@ -19,7 +19,8 @@ import {
 } from "@/app/admin/actions";
 import { classLevelOptions } from "@/lib/schemas/users";
 import type { Role, UserStatus } from "@/lib/constants";
-import type { WithId, UserDoc } from "@/types/firestore";
+import type { UserDoc } from "@/types/firestore";
+import { parseDate, type SerializedWithId } from "@/lib/serialize";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -226,7 +227,7 @@ function CreateStudentDialog() {
   );
 }
 
-function StudentRowActions({ student }: { student: WithId<UserDoc> }) {
+function StudentRowActions({ student }: { student: SerializedWithId<UserDoc> }) {
   const [banOpen, setBanOpen] = useState(false);
   const [state, formAction] = useActionState<ActionState | null, FormData>(
     setUserStatusAction,
@@ -318,7 +319,7 @@ export function StudentsTable({
   students,
   viewerRole,
 }: {
-  students: WithId<UserDoc>[];
+  students: SerializedWithId<UserDoc>[];
   viewerRole: Role;
 }) {
   return (
@@ -380,7 +381,7 @@ export function StudentsTable({
                   </TableCell>
                   <TableCell className="text-muted-foreground text-sm">
                     {s.lastLoginAt
-                      ? format(s.lastLoginAt.toDate(), "d MMM yyyy, HH:mm")
+                      ? format(parseDate(s.lastLoginAt)!, "d MMM yyyy, HH:mm")
                       : "Never"}
                   </TableCell>
                   <TableCell>
