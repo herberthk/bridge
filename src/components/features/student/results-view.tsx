@@ -136,7 +136,7 @@ export function ResultsView({
         </div>
         {!pending && !flagged && (
           <div className="flex gap-2">
-            <Button variant="outline" render={<a href={`/api/reports/attempt/${attempt.id}`} target="_blank" rel="noopener noreferrer" />}>
+            <Button variant="outline" nativeButton={false} render={<a href={`/api/reports/attempt/${attempt.id}`} target="_blank" rel="noopener noreferrer" />}>
               <FileDownIcon data-icon="inline-start" />
               Download PDF
             </Button>

@@ -55,7 +55,7 @@ export default async function StudentHomePage() {
               {nextExam.exam?.durationMinutes ?? "–"} min · AI proctored
             </p>
           </div>
-          <Button className="shadow-glow" render={<Link href={`/exam/${nextExam.attempt.id}`} />}>
+          <Button className="shadow-glow" nativeButton={false} render={<Link href={`/exam/${nextExam.attempt.id}`} />}>
             Start when ready
             <ArrowRightIcon data-icon="inline-end" />
           </Button>

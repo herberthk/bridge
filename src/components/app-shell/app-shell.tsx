@@ -236,7 +236,7 @@ export function AppShell({
           </Badge>
           <div className="flex-1" />
           <ThemeToggle />
-          <Button variant="ghost" size="sm" render={<Link href="/" />}>
+          <Button variant="ghost" size="sm" nativeButton={false} render={<Link href="/" />}>
             Home
           </Button>
         </header>

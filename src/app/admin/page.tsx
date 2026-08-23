@@ -32,7 +32,7 @@ export default async function AdminHomePage() {
             {actor.schoolId ? "Your school at a glance." : "Your students at a glance."}
           </p>
         </div>
-        <Button className="shadow-glow" render={<Link href="/admin/generate" />}>
+        <Button className="shadow-glow" nativeButton={false} render={<Link href="/admin/generate" />}>
           <SparklesIcon data-icon="inline-start" />
           New exam
           <ArrowRightIcon data-icon="inline-end" />

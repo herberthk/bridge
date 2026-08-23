@@ -17,7 +17,7 @@ export default function OfflinePage() {
         Bridge needs an internet connection for exams and AI features. Reconnect
         and try again — your progress is saved where possible.
       </p>
-      <Button render={<Link href="/" />}>Retry</Button>
+      <Button nativeButton={false} render={<Link href="/" />}>Retry</Button>
     </div>
   );
 }

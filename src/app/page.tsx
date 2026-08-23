@@ -101,10 +101,10 @@ export default function HomePage() {
             </a>
           </nav>
           <div className="flex items-center gap-2">
-            <Button variant="ghost" render={<Link href="/login" />}>
+            <Button variant="ghost" nativeButton={false} render={<Link href="/login" />}>
               Sign in
             </Button>
-            <Button className="shadow-glow" render={<Link href="/setup" />}>
+            <Button className="shadow-glow" nativeButton={false} render={<Link href="/setup" />}>
               Get started
             </Button>
           </div>
@@ -134,13 +134,14 @@ export default function HomePage() {
             </p>
           </FadeIn>
           <FadeIn delay={0.24} className="flex flex-col gap-3 sm:flex-row">
-            <Button size="lg" className="shadow-glow h-11 px-6" render={<Link href="/setup" />}>
+            <Button size="lg" className="shadow-glow h-11 px-6" nativeButton={false} render={<Link href="/setup" />}>
               Create your first exam
             </Button>
             <Button
               size="lg"
               variant="outline"
               className="h-11 px-6"
+              nativeButton={false}
               render={<Link href="/login" />}
             >
               Sign in to Bridge
@@ -287,6 +288,7 @@ export default function HomePage() {
                   size="lg"
                   variant="secondary"
                   className="h-11 px-6"
+                  nativeButton={false}
                   render={<Link href="/setup" />}
                 >
                   Start free setup

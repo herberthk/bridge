@@ -101,6 +101,7 @@ export function StudentExamsList({ items }: { items: AttemptWithExam[] }) {
               {attempt.status === "pending" ? (
                 <Button
                   className="shadow-glow mt-4 w-full"
+                  nativeButton={false}
                   render={<Link href={`/exam/${attempt.id}`} />}
                 >
                   Start exam
@@ -110,6 +111,7 @@ export function StudentExamsList({ items }: { items: AttemptWithExam[] }) {
                 <Button
                   variant="outline"
                   className="mt-4 w-full"
+                  nativeButton={false}
                   render={<Link href={`/exam/${attempt.id}`} />}
                 >
                   Continue exam
