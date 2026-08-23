@@ -95,6 +95,7 @@ async function main() {
   };
   schoolIdCache = school.id;
   ownerIdCache = owner.id;
+  ownerEmailCache = owner.email;
   ok("School + owner admin created", true, `school=${school.id}`);
 
   const student = await createStudent(adminSession, {
@@ -114,6 +115,7 @@ async function main() {
     status: "active",
   };
   studentIdCache = student.id;
+  studentEmailCache = student.email;
   ok(
     "A-level student created",
     student.level === "secondary" && student.secondarySubLevel === "a_level",
@@ -237,6 +239,8 @@ async function main() {
   );
   ok("PDF report rendered", pdf.length > 1_000 && pdf.subarray(0, 4).toString() === "%PDF", `${Math.round(pdf.length / 1024)} KB`);
 
+  await httpAuthChecks();
+
   console.log(`\nAll ${passed} integration checks passed ✅`);
 }
 
@@ -281,6 +285,85 @@ async function cleanup() {
 let schoolIdCache = "";
 let ownerIdCache = "";
 let studentIdCache = "";
+let ownerEmailCache = "";
+let studentEmailCache = "";
+
+/**
+ * Real HTTP authentication checks: spins up `next dev`, signs in the test
+ * admin + student through Firebase's REST API (same endpoint the browser SDK
+ * uses), exchanges the ID token for the session cookie, and verifies
+ * role-based access + unauthenticated redirects.
+ */
+async function httpAuthChecks() {
+  const { spawn } = await import("node:child_process");
+  const base = "http://127.0.0.1:3199";
+  console.log("\n── HTTP auth + RBAC checks (live dev server) ──");
+  const proc = spawn("bun", ["run", "dev"], {
+    env: { ...process.env, PORT: "3199", BROWSER: "none" },
+    shell: true,
+    stdio: "ignore",
+  });
+  try {
+    let up = false;
+    for (let i = 0; i < 90; i++) {
+      try {
+        const res = await fetch(base, { redirect: "manual" });
+        if (res.status < 500) { up = true; break; }
+      } catch { /* not ready */ }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    ok("Dev server started", up);
+
+    const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY!;
+    const signIn = async (email: string) => {
+      const res = await fetch(
+        `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password: "E2eTestPass123", returnSecureToken: true }),
+        },
+      );
+      ok(`Email/password sign-in works (${email.startsWith("bridge-e2e-owner") ? "admin" : "student"})`, res.ok);
+      return ((await res.json()) as { idToken: string }).idToken;
+    };
+
+    const openSession = async (idToken: string) => {
+      const res = await fetch(`${base}/api/auth/session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken }),
+      });
+      const cookies = res.headers.getSetCookie?.() ?? [];
+      const cookie = cookies.find((c) => c.startsWith("bridge-session="))?.split(";")[0];
+      const data = (await res.json()) as { home?: string };
+      return { res, cookie, data };
+    };
+
+    // Student
+    const studentToken = await signIn(studentEmailCache);
+    const s1 = await openSession(studentToken);
+    ok("Session cookie issued (student)", s1.res.ok && !!s1.cookie, `home=${s1.data.home}`);
+    ok("Student role resolves to /student", s1.data.home === "/student");
+    const dash = await fetch(`${base}/student`, { headers: { cookie: s1.cookie! }, redirect: "manual" });
+    ok("Student dashboard renders with session", dash.status === 200);
+    const cross = await fetch(`${base}/admin`, { headers: { cookie: s1.cookie! }, redirect: "manual" });
+    ok("Role guard: student bounced from /admin", cross.status >= 300 && cross.status < 400);
+
+    // Admin
+    const ownerToken = await signIn(ownerEmailCache);
+    const s2 = await openSession(ownerToken);
+    ok("Admin role resolves to /admin", s2.data.home === "/admin");
+    const adminDash = await fetch(`${base}/admin`, { headers: { cookie: s2.cookie! }, redirect: "manual" });
+    ok("Admin dashboard renders with session", adminDash.status === 200);
+
+    // Anonymous
+    const anon = await fetch(`${base}/admin`, { redirect: "manual" });
+    ok("Unauthenticated request redirects to /login", anon.status >= 300 && anon.status < 400);
+  } finally {
+    spawn("taskkill", ["/PID", String(proc.pid), "/T", "/F"], { shell: true, stdio: "ignore" });
+  }
+}
 
 main()
   .catch((err) => {
