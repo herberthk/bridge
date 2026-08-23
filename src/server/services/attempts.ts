@@ -1,7 +1,6 @@
-import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { FieldValue } from "firebase-admin/firestore";
 
 import {
-  attemptDoc,
   attemptsCol,
   examDoc,
   proctoringEventsCol,
@@ -156,7 +155,6 @@ export async function submitAttempt(
   const answers = gradeAnswers(exam.questions, input.answers);
   const objective = answers.filter((a) => a.graded !== null);
   const earned = objective.reduce((n, a) => n + (a.graded?.earned ?? 0), 0);
-  const possibleObjective = objective.reduce((n, a) => n + (a.graded?.possible ?? 0), 0);
   const possibleTotal = exam.questions.reduce((n, q) => n + q.points, 0);
   const needsAiGrading = answers.some(
     (a) => a.graded === null && a.response !== null,

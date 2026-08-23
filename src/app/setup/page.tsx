@@ -9,12 +9,27 @@ export const metadata: Metadata = { title: "Platform setup" };
 export const dynamic = "force-dynamic";
 
 export default async function SetupPage() {
+  // Without Firebase credentials there is nothing to check — show the form
+  // (the API route re-validates authoritatively) instead of hanging on a
+  // Firestore call that can never succeed.
+  const firebaseConfigured = Boolean(
+    process.env.FIREBASE_SERVICE_ACCOUNT_KEY ||
+      process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  );
   let completed = true;
-  try {
-    const flags = await platformFlagsDoc().get();
-    completed = flags.exists && (flags.data()?.setupCompleted ?? false);
-  } catch {
-    // Firebase not configured yet — allow the form; the API route re-checks.
+  if (firebaseConfigured) {
+    try {
+      // Bound the check — an unreachable Firestore must never hang the page.
+      const snap = await Promise.race([
+        platformFlagsDoc().get(),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 4000)),
+      ]);
+      completed = snap ? snap.exists && (snap.data()?.setupCompleted ?? false) : false;
+    } catch {
+      // Firebase reachable-check failed — allow the form; the API re-checks.
+      completed = false;
+    }
+  } else {
     completed = false;
   }
   if (completed) redirect("/login");

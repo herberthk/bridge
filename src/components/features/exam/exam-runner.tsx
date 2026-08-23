@@ -263,7 +263,7 @@ export function ExamRunner({
   const rig = useProctoring(attemptId, {
     onWarning: (count, violation) =>
       setWarning({ count, reason: violation.reason ?? violation.type.replace(/_/g, " ") }),
-    onTerminate: (violation) => {
+    onTerminate: () => {
       setPhase("terminated");
       void doSubmitRef.current?.(true);
     },

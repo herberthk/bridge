@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 import { experimental_getRealtimeToolDefinitions, tool } from "ai";
 import { z } from "zod";
 
@@ -10,7 +10,7 @@ import { apiUser } from "@/server/auth/session";
  * returns the tool definitions the session should expose. Tool calls are
  * executed client-side (they build the draft exam spec).
  */
-export async function POST(_request: NextRequest) {
+export async function POST() {
   const actor = await apiUser("admin", "super_admin");
   if (!actor) return NextResponse.json({ error: "Not authorized." }, { status: 401 });
 

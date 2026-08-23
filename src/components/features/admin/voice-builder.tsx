@@ -11,7 +11,6 @@ import {
   CheckCircle2Icon,
   Loader2Icon,
   MicIcon,
-  MicOffIcon,
   PhoneOffIcon,
   SparklesIcon,
 } from "lucide-react";

@@ -11,7 +11,7 @@ import {
   walletsCol,
 } from "@/server/firebase/collections";
 import type { SessionUser } from "@/server/auth/session";
-import type { WithId, AttemptDoc, DailyMetricDoc } from "@/types/firestore";
+import type { WithId, DailyMetricDoc } from "@/types/firestore";
 import { SUBJECT_LABELS, type Subject } from "@/lib/constants";
 
 /* ─────────────────────────── Student ─────────────────────────── */
