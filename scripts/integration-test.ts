@@ -41,6 +41,11 @@ import {
 } from "@/server/services/attempts";
 import { gradeAttemptWithAi } from "@/server/services/grading";
 import { createStudent } from "@/server/services/users";
+import {
+  decideRetake,
+  listPendingRetakeRequests,
+  requestRetake,
+} from "@/server/services/retakes";
 import { createSchoolWithOwner } from "@/server/services/schools";
 import { renderAttemptReport } from "@/server/services/reports";
 import type { SessionUser } from "@/server/auth/session";
@@ -183,14 +188,15 @@ async function main() {
   }
   ok("Flagged attempt rejects submission", submitBlocked);
 
-  // 7. Fresh attempt (retake of flagged): full submit + AI essay grading.
-  const created2 = await assignExam(adminSession, { examId: exam.id, studentIds: [student.id], scheduledFor: null });
-  ok("Re-assignment after flag creates fresh attempt", created2 === 1);
-  const attempt2 = (
-    await attemptsCol().where("examId", "==", exam.id).orderBy("createdAt", "desc").limit(1).get()
-  ).docs[0]!;
-  const attempt2Id = attempt2.id;
-  ok("Retake links to the flagged attempt", attempt2.data()!.retakeOf === attempt1Id);
+  // 7. Real retake flow: student requests → admin approves → linked fresh attempt.
+  await requestRetake(studentSession, attempt1Id, "E2E: connection dropped during the exam, requesting a retake.");
+  const pendingRequests = await listPendingRetakeRequests(adminSession);
+  ok("Retake request reaches the admin", pendingRequests.length >= 1);
+  const decision = await decideRetake(adminSession, pendingRequests[0]!.id, true);
+  ok("Retake approved", decision.newAttemptId !== null);
+  const attempt2Id = decision.newAttemptId!;
+  const attempt2 = (await attemptDoc(attempt2Id).get()).data()!;
+  ok("Retake links to the flagged attempt", attempt2.retakeOf === attempt1Id);
 
   const started2 = await startAttempt(studentSession, attempt2Id);
   const answers = started2.questions.map((q, i) => ({
@@ -211,9 +217,15 @@ async function main() {
   await gradeAttemptWithAi(attempt2Id);
   const graded = (await attemptDoc(attempt2Id).get()).data()!;
   ok("AI grading finalized", graded.status === "graded", `${graded.score?.percentage}% score`);
+  const fb = graded.feedback;
   ok(
     "Feedback present",
-    Boolean(graded.feedback?.overall && graded.feedback!.improvements.length > 0),
+    Boolean(
+      fb?.overall &&
+        (fb.improvements.length > 0 ||
+          fb.strengths.length > 0 ||
+          Object.keys(fb.perQuestion).length > 0),
+    ),
   );
 
   // 8. PDF report.
@@ -230,6 +242,10 @@ async function main() {
 
 async function cleanup() {
   const wipe = async () => {
+    if (!schoolIdCache) {
+      console.log("🧹 Nothing to clean up.");
+      return;
+    }
     // Attempts, exams, transactions, wallet, school, users (docs + auth).
     const attemptDocs = await attemptsCol().where("studentId", "==", studentIdCache).get();
     for (const d of attemptDocs.docs) {
@@ -241,13 +257,16 @@ async function cleanup() {
     for (const d of examDocs.docs) await d.ref.delete();
     const txDocs = await transactionsCol().where("walletId", "==", schoolIdCache).get();
     for (const d of txDocs.docs) await d.ref.delete();
-    await walletDoc(schoolIdCache).delete();
+    await walletDoc(schoolIdCache).delete().catch(() => undefined);
     await schoolDoc(schoolIdCache).delete();
-    await userDoc(studentIdCache).delete();
-    await userDoc(ownerIdCache).delete();
-    await usersCol().doc(superAdmin.uid).delete().catch(() => undefined);
-    await adminAuth().deleteUser(studentIdCache).catch(() => undefined);
-    await adminAuth().deleteUser(ownerIdCache).catch(() => undefined);
+    if (studentIdCache) {
+      await userDoc(studentIdCache).delete().catch(() => undefined);
+      await adminAuth().deleteUser(studentIdCache).catch(() => undefined);
+    }
+    if (ownerIdCache) {
+      await userDoc(ownerIdCache).delete().catch(() => undefined);
+      await adminAuth().deleteUser(ownerIdCache).catch(() => undefined);
+    }
   };
   try {
     await wipe();

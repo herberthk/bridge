@@ -2,6 +2,7 @@ import { getApps, initializeApp, cert, type App, type ServiceAccount } from "fir
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
+import { readFileSync } from "node:fs";
 
 /**
  * Admin SDK singletons. Prefer the exported accessor functions over importing
@@ -13,21 +14,29 @@ function parseServiceAccount(): ServiceAccount | undefined {
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY?.trim();
   if (!raw) return fromIndividualFields();
   try {
-    // Accept: raw JSON (single line or multi-line after whitespace squash),
-    // or the same JSON base64-encoded.
-    const json = raw.startsWith("{")
-      ? raw
-      : Buffer.from(raw, "base64").toString("utf8");
-    const parsed = JSON.parse(json) as ServiceAccount;
-    if (!parsed.projectId || !parsed.clientEmail || !parsed.privateKey) {
+    // Accept: a path to a service-account JSON file (e.g. bridge-service.json),
+    // inline JSON, or base64-encoded JSON.
+    let json: string;
+    if (!raw.startsWith("{") && !raw.includes("\n") && /\.json$/i.test(raw)) {
+      json = readFileSync(raw, "utf8");
+    } else if (raw.startsWith("{")) {
+      json = raw;
+    } else {
+      json = Buffer.from(raw, "base64").toString("utf8");
+    }
+    const parsed = JSON.parse(json) as Record<string, unknown>;
+    // Google emits snake_case keys; normalize to the camelCase ServiceAccount.
+    const projectId = (parsed.projectId ?? parsed.project_id) as string | undefined;
+    const clientEmail = (parsed.clientEmail ?? parsed.client_email) as string | undefined;
+    const privateKey = (parsed.privateKey ?? parsed.private_key) as string | undefined;
+    if (!projectId || !clientEmail || !privateKey) {
       throw new Error("missing projectId/clientEmail/privateKey");
     }
-    return parsed;
+    return { projectId, clientEmail, privateKey };
   } catch (err) {
-    const hint =
-      err instanceof Error ? err.message : String(err);
+    const hint = err instanceof Error ? err.message : String(err);
     throw new Error(
-      `Invalid FIREBASE_SERVICE_ACCOUNT_KEY (${hint}). Paste the service-account JSON on ONE line, wrap the whole multi-line JSON in single quotes, or base64-encode it — see .env.example.`,
+      `Invalid FIREBASE_SERVICE_ACCOUNT_KEY (${hint}). Set it to the path of the service-account JSON file (e.g. bridge-service.json), paste the JSON on one line / single-quoted, or base64-encode it — see .env.example.`,
     );
   }
 }

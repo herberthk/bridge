@@ -70,7 +70,9 @@ export async function generateExam(
         excerpts.map((d) => ({ name: d.name, text: chunkDocumentText(d.text) })),
       ),
       output: Output.object({ schema: examOutputSchema }),
-      maxOutputTokens: Math.min(16_384, 800 + input.params.questionCount * 420),
+      // Gemini 3.x reasons inside the output budget — keep it generous or
+      // structured output arrives truncated/empty.
+      maxOutputTokens: Math.min(60_000, 4_000 + input.params.questionCount * 800),
       temperature: 0.7,
     });
     output = result.output;
