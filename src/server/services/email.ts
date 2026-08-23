@@ -31,6 +31,9 @@ export async function sendTemplateEmail(options: {
       port: Number(process.env.SMTP_PORT ?? 587),
       secure: Number(process.env.SMTP_PORT) === 465,
       auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD },
+       tls: {
+          rejectUnauthorized: false,
+        },
     });
     const html = await render(options.template);
     await transporter.sendMail({

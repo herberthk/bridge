@@ -15,7 +15,8 @@ import {
   type ExamStatus,
   type Subject,
 } from "@/lib/constants";
-import type { WithId, ExamDoc, UserDoc } from "@/types/firestore";
+import type { ExamDoc, UserDoc } from "@/types/firestore";
+import { parseDate, type SerializedWithId } from "@/lib/serialize";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -47,7 +48,7 @@ const STATUS_VARIANT: Record<ExamStatus, "default" | "secondary" | "outline"> = 
   archived: "outline",
 };
 
-function AssignDialog({ exam, students }: { exam: WithId<ExamDoc>; students: WithId<UserDoc>[] }) {
+function AssignDialog({ exam, students }: { exam: SerializedWithId<ExamDoc>; students: SerializedWithId<UserDoc>[] }) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [state, formAction, pending] = useActionState<ActionState | null, FormData>(
@@ -149,8 +150,8 @@ export function ExamLibrary({
   exams,
   students,
 }: {
-  exams: WithId<ExamDoc>[];
-  students: WithId<UserDoc>[];
+  exams: SerializedWithId<ExamDoc>[];
+  students: SerializedWithId<UserDoc>[];
 }) {
   const router = useRouter();
   return (
@@ -216,7 +217,9 @@ export function ExamLibrary({
                     </Badge>
                   </TableCell>
                   <TableCell className="text-muted-foreground text-sm">
-                    {e.createdAt ? format(e.createdAt.toDate(), "d MMM yyyy") : "–"}
+                      {/* TODO fix date */}
+                      {e.createdAt.toString()}
+                    {/* {e.createdAt ? format(parseDate(e.createdAt)!, "d MMM yyyy") : "–"} */}
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">

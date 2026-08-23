@@ -8,7 +8,8 @@ import { ArrowDownIcon, ArrowUpIcon, CoinsIcon, PlusIcon } from "lucide-react";
 import { topupWalletAction } from "@/app/super/actions";
 import type { ActionState } from "@/app/admin/actions";
 import { formatUgx, formatUsd, TOPUP_PACKS, tokensToUsd, usdToUgx } from "@/lib/pricing";
-import type { WithId, TransactionDoc, WalletDoc } from "@/types/firestore";
+import type { TransactionDoc, WalletDoc } from "@/types/firestore";
+import { parseDate, type SerializedWithId } from "@/lib/serialize";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -94,7 +95,7 @@ function TopupDialog({ walletId, walletLabel }: { walletId: string; walletLabel:
                 name="tokens"
                 type="number"
                 min={1}
-                step={1000}
+                // step={1000}
                 value={tokens}
                 onChange={(e) => setTokens(Number(e.target.value))}
                 required
@@ -130,9 +131,9 @@ export function WalletsManager({
   labels,
   recentTransactions,
 }: {
-  wallets: WithId<WalletDoc>[];
+  wallets: SerializedWithId<WalletDoc>[];
   labels: Record<string, string>;
-  recentTransactions: WithId<TransactionDoc>[];
+  recentTransactions: SerializedWithId<TransactionDoc>[];
 }) {
   return (
     <div className="flex flex-col gap-6">
@@ -215,7 +216,7 @@ export function WalletsManager({
             {recentTransactions.map((t) => (
               <TableRow key={t.id}>
                 <TableCell className="text-muted-foreground text-sm">
-                  {t.createdAt ? format(t.createdAt.toDate(), "d MMM, HH:mm") : "–"}
+                  {t.createdAt ? format(parseDate(t.createdAt)!, "d MMM, HH:mm") : "–"}
                 </TableCell>
                 <TableCell>{labels[t.walletId] ?? t.walletId}</TableCell>
                 <TableCell className="max-w-64 truncate">{t.description}</TableCell>

@@ -4,6 +4,7 @@ import { usersCol } from "@/server/firebase/collections";
 import { requireRole } from "@/server/auth/session";
 import { listSchools } from "@/server/services/schools";
 import { SchoolsManager } from "@/components/features/super/schools-manager";
+import { serializeDocs } from "@/lib/serialize";
 import type { WithId, SchoolDoc, UserDoc } from "@/types/firestore";
 
 export default async function SuperSchoolsPage() {
@@ -25,5 +26,10 @@ export default async function SuperSchoolsPage() {
     console.error("[super/schools] load failed", err);
   }
 
-  return <SchoolsManager schools={schools} standaloneAdmins={standaloneAdmins} />;
+  return (
+    <SchoolsManager
+      schools={serializeDocs(schools)}
+      standaloneAdmins={serializeDocs(standaloneAdmins)}
+    />
+  );
 }

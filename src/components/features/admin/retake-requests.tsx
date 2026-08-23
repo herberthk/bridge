@@ -6,7 +6,8 @@ import { CheckIcon, InboxIcon, XIcon } from "lucide-react";
 
 import { decideRetakeAction } from "@/app/admin/actions";
 import type { ActionState } from "@/app/admin/actions";
-import type { WithId, RetakeRequestDoc } from "@/types/firestore";
+import type { RetakeRequestDoc } from "@/types/firestore";
+import type { SerializedWithId } from "@/lib/serialize";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
@@ -15,7 +16,7 @@ export function RetakeRequests({
   studentNames,
   examTitles,
 }: {
-  requests: WithId<RetakeRequestDoc>[];
+  requests: SerializedWithId<RetakeRequestDoc>[];
   studentNames: Record<string, string>;
   examTitles: Record<string, string>;
 }) {

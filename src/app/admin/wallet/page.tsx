@@ -6,6 +6,7 @@ import {
   listTransactions,
 } from "@/server/services/billing";
 import { WalletView } from "@/components/features/admin/wallet-view";
+import { serializeDoc, serializeDocs } from "@/lib/serialize";
 
 export default async function AdminWalletPage() {
   const actor = await requireRole("admin");
@@ -22,8 +23,8 @@ export default async function AdminWalletPage() {
 
   return (
     <WalletView
-      wallet={wallet}
-      transactions={transactions}
+      wallet={wallet ? serializeDoc(wallet) : null}
+      transactions={serializeDocs(transactions)}
       ownerLabel={actor.schoolId ? "your school" : "your account"}
     />
   );

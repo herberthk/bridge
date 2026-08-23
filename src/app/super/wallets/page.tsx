@@ -4,6 +4,7 @@ import { schoolsCol } from "@/server/firebase/collections";
 import { requireRole } from "@/server/auth/session";
 import { listAllWallets, listTransactions } from "@/server/services/billing";
 import { WalletsManager } from "@/components/features/super/wallets-manager";
+import { serializeDocs } from "@/lib/serialize";
 import type { WithId, SchoolDoc, TransactionDoc, WalletDoc } from "@/types/firestore";
 
 export default async function SuperWalletsPage() {
@@ -36,9 +37,9 @@ export default async function SuperWalletsPage() {
 
   return (
     <WalletsManager
-      wallets={wallets}
+      wallets={serializeDocs(wallets)}
       labels={labels}
-      recentTransactions={recentTransactions}
+      recentTransactions={serializeDocs(recentTransactions)}
     />
   );
 }

@@ -15,7 +15,8 @@ import {
 
 import { requestRetakeAction } from "@/app/student/actions";
 import { Markdown } from "@/components/markdown";
-import type { WithId, AttemptDoc, ExamDoc } from "@/types/firestore";
+import type { AttemptDoc, ExamDoc } from "@/types/firestore";
+import type { SerializedWithId } from "@/lib/serialize";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -107,8 +108,8 @@ export function ResultsView({
   attempt,
   exam,
 }: {
-  attempt: WithId<AttemptDoc>;
-  exam: WithId<ExamDoc> | null;
+  attempt: SerializedWithId<AttemptDoc>;
+  exam: SerializedWithId<ExamDoc> | null;
 }) {
   const score = attempt.score;
   const feedback = attempt.feedback;

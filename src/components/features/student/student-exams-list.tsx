@@ -11,14 +11,15 @@ import {
 } from "lucide-react";
 
 import { SUBJECT_LABELS, type Subject } from "@/lib/constants";
-import type { WithId, AttemptDoc } from "@/types/firestore";
+import type { AttemptDoc } from "@/types/firestore";
+import { parseDate, type SerializedWithId } from "@/lib/serialize";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export interface AttemptWithExam {
-  attempt: WithId<AttemptDoc>;
+  attempt: SerializedWithId<AttemptDoc>;
   exam: {
     id: string;
     title: string;
@@ -94,7 +95,7 @@ export function StudentExamsList({ items }: { items: AttemptWithExam[] }) {
                 {attempt.scheduledFor && (
                   <span className="flex items-center gap-1">
                     <ClockIcon className="size-3.5" />
-                    {format(attempt.scheduledFor.toDate(), "d MMM, HH:mm")}
+                    {format(parseDate(attempt.scheduledFor)!, "d MMM, HH:mm")}
                   </span>
                 )}
               </div>
@@ -138,7 +139,7 @@ export function StudentExamsList({ items }: { items: AttemptWithExam[] }) {
                   <p className="truncate text-sm font-medium">{exam?.title ?? "Exam"}</p>
                   <p className="text-muted-foreground text-xs">
                     {attempt.submittedAt
-                      ? format(attempt.submittedAt.toDate(), "d MMM yyyy, HH:mm")
+                      ? format(parseDate(attempt.submittedAt)!, "d MMM yyyy, HH:mm")
                       : "—"}
                   </p>
                 </div>
