@@ -235,7 +235,7 @@ export function SchoolsManager({
           <h1 className="text-2xl font-semibold tracking-tight">Schools &amp; admins</h1>
           <p className="text-muted-foreground mt-1 text-sm">
             {totals.schools} school{totals.schools === 1 ? "" : "s"} ·{" "}
-            {totalStudents} students · {totals.standaloneAdmins} standalone admin
+            {totalStudents} {totals.schoolsTruncated ? "students in displayed schools" : "students"} · {totals.standaloneAdmins} standalone admin
             {totals.standaloneAdmins === 1 ? "" : "s"}
           </p>
           {(totals.schoolsTruncated || totals.adminsTruncated) && (

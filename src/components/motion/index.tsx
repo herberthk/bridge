@@ -85,6 +85,7 @@ export function AnimatedCounter({
   const inView = useInView(ref, { once: true, margin: "-20px" });
   const reduce = useReducedMotion();
   const [display, setDisplay] = useState(() => format(reduce ? value : 0));
+  const currentValueRef = useRef(reduce ? value : 0);
 
   // `format` defaults to a fresh closure every render, so listing it as an
   // effect dependency restarted (and re-rendered) the animation forever.
@@ -92,6 +93,8 @@ export function AnimatedCounter({
   const formatRef = useRef(format);
   useEffect(() => {
     formatRef.current = format;
+    // Reformat the current value when format changes.
+    setDisplay(formatRef.current(currentValueRef.current));
   }, [format]);
 
   useEffect(() => {
@@ -99,7 +102,10 @@ export function AnimatedCounter({
     const controls = animate(0, value, {
       duration,
       ease: [0.16, 1, 0.3, 1],
-      onUpdate: (v) => setDisplay(formatRef.current(v)),
+      onUpdate: (v) => {
+        currentValueRef.current = v;
+        setDisplay(formatRef.current(v));
+      },
     });
     return () => controls.stop();
   }, [inView, value, duration, reduce]);

@@ -96,7 +96,7 @@ service cloud.firestore {
           || sameSchool(data.schoolId)
           // Standalone admins read attempts of the students they created.
           || (isAdmin() && data.schoolId == null
-              && firestore.get(/databases/(default)/documents/users/$(data.studentId)).data.createdBy == request.auth.uid);
+              && get(/databases/$(database)/documents/users/$(data.studentId)).data.createdBy == request.auth.uid);
       }
       allow get, list: if isSignedIn() && canReadAttempt(resource.data);
 

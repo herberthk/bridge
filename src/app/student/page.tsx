@@ -30,6 +30,24 @@ export default async function StudentHomePage() {
     loadFailed = true;
   }
 
+  if (loadFailed) {
+    return (
+      <div className="flex flex-col gap-6">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Hi {actor.displayName.split(" ")[0]} 👋
+          </h1>
+          <p className="text-muted-foreground mt-1 text-sm">
+            Here&apos;s how your learning is going.
+          </p>
+        </div>
+        <p className="text-destructive rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
+          Your progress could not be loaded. Try refreshing the page.
+        </p>
+      </div>
+    );
+  }
+
   const nextExam = upcoming.find(
     (u) => u.attempt.status === "pending" || u.attempt.status === "in_progress",
   );
@@ -44,13 +62,6 @@ export default async function StudentHomePage() {
           Here&apos;s how your learning is going.
         </p>
       </div>
-
-      {loadFailed && (
-        <p className="text-destructive rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
-          Your progress could not be loaded — figures below may be stale. Try
-          refreshing the page.
-        </p>
-      )}
 
       {nextExam && (
         <div className="gradient-border shadow-lifted flex flex-wrap items-center justify-between gap-4 rounded-xl p-5">

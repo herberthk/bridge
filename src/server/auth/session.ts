@@ -78,7 +78,7 @@ export const getCurrentUser = cache(async (): Promise<SessionUser | null> => {
 
   let decoded;
   try {
-    decoded = await adminAuth().verifySessionCookie(token);
+    decoded = await adminAuth().verifySessionCookie(token, true);
   } catch {
     // Invalid/stale cookie — treat as signed out.
     return null;

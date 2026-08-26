@@ -20,6 +20,7 @@ export default async function SuperWalletsPage() {
   let standaloneAdmins: WithId<UserDoc>[] = [];
   let transactions: WithId<TransactionDoc>[] = [];
   let totalWallets = 0;
+  let loadFailed = false;
   try {
     [wallets, schools, standaloneAdmins, transactions, totalWallets] = await Promise.all([
       listAllWallets(WALLET_CAP),
@@ -35,6 +36,7 @@ export default async function SuperWalletsPage() {
     ]);
   } catch (err) {
     console.error("[super/wallets] load failed", err);
+    loadFailed = true;
   }
 
   const labels: Record<string, string> = {};
@@ -56,6 +58,7 @@ export default async function SuperWalletsPage() {
         wallets: totalWallets,
         truncated: totalWallets > wallets.length,
       }}
+      loadFailed={loadFailed}
     />
   );
 }

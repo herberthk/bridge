@@ -189,6 +189,9 @@ export interface SuperDashboardData {
 
 export async function superDashboard(): Promise<SuperDashboardData> {
   const weekAgo = Timestamp.fromMillis(Date.now() - 7 * 86400_000);
+  const oneYearAgo = new Date();
+  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+  const oneYearAgoCutoff = oneYearAgo.toISOString().slice(0, 10);
   const [totalStudents, totalAdmins, totalSchools, totalExams, totalAttempts, activeUsers7d, metricsSnap] =
     await Promise.all([
       countQuery(usersCol().where("role", "==", "student")),
@@ -199,7 +202,7 @@ export async function superDashboard(): Promise<SuperDashboardData> {
       countQuery(usersCol().where("lastLoginAt", ">", weekAgo)),
       // Daily aggregates are the single source of truth for revenue and
       // consumption — no need to deserialize thousands of transaction docs.
-      metricsCol().orderBy("__name__", "desc").limit(366).get(),
+      metricsCol().where("date", ">=", oneYearAgoCutoff).orderBy("__name__", "desc").limit(366).get(),
     ]);
 
   const metrics: WithId<DailyMetricDoc>[] = metricsSnap.docs.map((d) => ({

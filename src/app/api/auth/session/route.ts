@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
   let sessionCookieValue: string;
   try {
     sessionCookieValue = await adminAuth().createSessionCookie(parsed.data.idToken, {
-      expiresIn: SESSION_MAX_AGE_SECONDS,
+      expiresIn: SESSION_MAX_AGE_SECONDS * 1000,
     });
   } catch {
     return NextResponse.json({ error: "Could not establish a session." }, { status: 401 });

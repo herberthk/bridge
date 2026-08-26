@@ -55,7 +55,7 @@ export function LoginForm({ nextPath }: { nextPath?: string }) {
       }
       toast.success("Welcome back!");
       const safeNext =
-        nextPath && nextPath.startsWith("/") && !nextPath.startsWith("//") ? nextPath : data.home;
+        nextPath && nextPath.startsWith("/") && !nextPath.startsWith("//") && !nextPath.startsWith("/\\") ? nextPath : data.home;
       router.replace(safeNext);
     } catch (err) {
       const code = (err as { code?: string })?.code ?? "";

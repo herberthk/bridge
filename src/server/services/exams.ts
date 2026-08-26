@@ -88,8 +88,9 @@ export async function generateExam(
         temperature: 0.7,
       });
       const usage = result.usage;
-      tokensUsed =
+      const attemptTokens =
         usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+      tokensUsed += attemptTokens;
 
       const candidate = result.output;
       const count = candidate.questions.length;
@@ -106,7 +107,7 @@ export async function generateExam(
       }
       output = candidate;
     } catch (err) {
-      console.error(`[exams] generation attempt ${attempt}/${maxAttempts} failed`);
+      console.error(`[exams] generation attempt ${attempt}/${maxAttempts} failed`, err);
       lastFailure =
         err instanceof ExamsServiceError
           ? err
@@ -203,6 +204,7 @@ export async function assignExam(
   // Enforce that every referenced student actually belongs to this admin
   // (same school / standalone household). Prevents assigning exams to
   // arbitrary student ids across the platform.
+  // Firestore "in" queries accept max 10 values (was 30 in older SDKs).
   const CHUNK = 10;
   const allowedIds = new Set<string>();
   for (let i = 0; i < input.studentIds.length; i += CHUNK) {
@@ -225,9 +227,14 @@ export async function assignExam(
   }
 
   const now = FieldValue.serverTimestamp();
-  const scheduledAt = input.scheduledFor
-    ? Timestamp.fromMillis(Date.parse(input.scheduledFor))
-    : null;
+  let scheduledAt: Timestamp | null = null;
+  if (input.scheduledFor) {
+    const parsedMs = Date.parse(input.scheduledFor);
+    if (isNaN(parsedMs)) {
+      throw new ExamsServiceError("Invalid scheduledFor date.", 400);
+    }
+    scheduledAt = Timestamp.fromMillis(parsedMs);
+  }
   const base: WriteModel<AttemptDoc> = {
     examId: input.examId,
     studentId: "",

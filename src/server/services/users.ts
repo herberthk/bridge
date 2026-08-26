@@ -57,10 +57,6 @@ export async function provisionUser(
     password: input.password,
     displayName: input.displayName,
   });
-  await adminAuth().setCustomUserClaims(created.uid, {
-    role: input.role,
-    schoolId: input.schoolId,
-  });
 
   const now = FieldValue.serverTimestamp();
   const doc: WriteModel<UserDoc> = {
@@ -81,15 +77,28 @@ export async function provisionUser(
     lastLoginAt: null,
     lastLoginMeta: null,
   };
-  await userDoc(created.uid).set(doc);
-  await writeAudit({
-    actorId: actor.uid,
-    actorRole: actor.role,
-    action: "user.created",
-    targetType: "user",
-    targetId: created.uid,
-    meta: { role: input.role, schoolId: input.schoolId },
-  });
+
+  try {
+    await adminAuth().setCustomUserClaims(created.uid, {
+      role: input.role,
+      schoolId: input.schoolId,
+    });
+
+    await userDoc(created.uid).set(doc);
+    await writeAudit({
+      actorId: actor.uid,
+      actorRole: actor.role,
+      action: "user.created",
+      targetType: "user",
+      targetId: created.uid,
+      meta: { role: input.role, schoolId: input.schoolId },
+    });
+  } catch (err) {
+    // Roll back: delete the Auth user and any created Firestore doc.
+    await adminAuth().deleteUser(created.uid).catch(() => undefined);
+    await userDoc(created.uid).delete().catch(() => undefined);
+    throw err;
+  }
 
   if (input.role === "student" && !input.suppressInviteEmail) {
     void sendTemplateEmail({

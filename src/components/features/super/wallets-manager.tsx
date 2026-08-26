@@ -125,12 +125,27 @@ export function WalletsManager({
   labels,
   recentTransactions,
   totals,
+  loadFailed = false,
 }: {
   wallets: SerializedWithId<WalletDoc>[];
   labels: Record<string, string>;
   recentTransactions: SerializedWithId<TransactionDoc>[];
   totals: { wallets: number; truncated: boolean };
+  loadFailed?: boolean;
 }) {
+  if (loadFailed) {
+    return (
+      <div className="flex flex-col gap-6">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Wallets &amp; billing</h1>
+        </div>
+        <p className="text-destructive rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
+          Wallet data could not be loaded. Try refreshing the page.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div>

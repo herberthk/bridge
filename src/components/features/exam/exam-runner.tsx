@@ -416,7 +416,7 @@ export function ExamRunner({
   /** Answers-only POST — deadline-critical path. Recordings follow later so a
    *  slow video upload can never push a student past the server deadline. */
   const submitAnswers = useCallback(
-    async (auto: boolean): Promise<boolean> => {
+    async (auto: boolean): Promise<{ ok: boolean; status?: number; message?: string }> => {
       const state = useExamSession.getState();
       const answers = Object.entries(state.answers).map(([questionId, response]) => ({
         questionId,
@@ -431,7 +431,12 @@ export function ExamRunner({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ answers, autoSubmitted: auto, timeSpentSeconds }),
       });
-      return res.ok;
+      const data = await res.json().catch(() => null) as { error?: string } | null;
+      return {
+        ok: res.ok,
+        status: res.status,
+        message: data && "error" in data ? data.error : undefined,
+      };
     },
     [attemptId],
   );
@@ -445,8 +450,19 @@ export function ExamRunner({
 
       try {
         // 1) Answers first — this is what the server deadline judges.
-        const ok = await submitAnswers(auto);
-        if (!ok) throw new Error("rejected");
+        const result = await submitAnswers(auto);
+        if (!result.ok) {
+          // Terminal states (409 conflict, 410 gone) stay submitted.
+          if (result.status === 409 || result.status === 410) {
+            const errorMsg = result.message || "This exam has already been submitted.";
+            toast.error(errorMsg);
+            if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
+            router.replace(`/student/results/${attemptId}`);
+            return;
+          }
+          // Other errors: allow retry
+          throw new Error(result.message || "rejected");
+        }
 
         try {
           sessionStorage.removeItem(draftKey(attemptId));
@@ -457,20 +473,21 @@ export function ExamRunner({
           description: "Your recordings are uploading in the background.",
         });
         router.replace(`/student/results/${attemptId}`);
-      } catch {
+
+        // 2) Recordings after — only stop capture after successful submission.
+        void (async () => {
+          const { cameraBlob, screenBlob } = await rig.stopEverything();
+          await uploadRecordings(cameraBlob, screenBlob);
+        })();
+      } catch (err) {
         // Recoverable: unblock and let the student retry (or the worker's
         // expiry tick re-fire). Keep the phase on exam so the UI is usable.
         submittedRef.current = false;
         setPhase("exam");
-        toast.error("Submission failed — check your connection and try again.");
+        clockRef.current?.postMessage({ type: "resume" });
+        const errorMsg = err instanceof Error ? err.message : "Submission failed — check your connection and try again.";
+        toast.error(errorMsg);
       }
-
-      // 2) Recordings after — failures here must not block or mislead:
-      //    stop capture first, then upload whatever we got.
-      void (async () => {
-        const { cameraBlob, screenBlob } = await rig.stopEverything();
-        await uploadRecordings(cameraBlob, screenBlob);
-      })();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [attemptId, rig.stopEverything, uploadRecordings, submitAnswers, router],

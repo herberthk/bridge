@@ -183,11 +183,12 @@ export async function submitAttempt(
 
   // Transactional write with an in_progress guard: a concurrent proctoring
   // termination (flag) must win over a late manual submit, never the reverse.
-  const committed = await adminDb().runTransaction(async (tx) => {
+  const result = await adminDb().runTransaction(async (tx) => {
     const snap = await tx.get(attemptRef(attemptId));
     if (!snap.exists) throw new AttemptsServiceError("Attempt not found.", 404);
-    if (snap.data()!.status !== "in_progress") {
-      return false;
+    const currentStatus = snap.data()!.status;
+    if (currentStatus !== "in_progress") {
+      return { committed: false, currentStatus };
     }
     const ts = FieldValue.serverTimestamp();
     tx.update(attemptRef(attemptId), {
@@ -209,11 +210,11 @@ export async function submitAttempt(
           : null,
       updatedAt: ts,
     });
-    return true;
+    return { committed: true, currentStatus: "submitted" };
   });
 
-  if (!committed) {
-    return { status: "flagged", needsAiGrading: false };
+  if (!result.committed) {
+    return { status: result.currentStatus, needsAiGrading: false };
   }
 
   await writeAudit({

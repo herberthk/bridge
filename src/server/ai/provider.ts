@@ -20,19 +20,19 @@ export function google(): GoogleProvider {
   return cached;
 }
 
+/** Model id used for a call — recorded on docs for transparency. */
+export const modelIds = {
+  text: () => process.env.BRIDGE_MODEL_TEXT ?? "gemini-3.6-flash",
+  textPro: () => process.env.BRIDGE_MODEL_TEXT_PRO ?? "gemini-3.1-pro-preview",
+  live: () => process.env.BRIDGE_MODEL_LIVE ?? "gemini-live-2.5-flash-native-audio",
+};
+
 /** Fast, balanced default for generation + grading. */
 export function textModel() {
-  return google()(process.env.BRIDGE_MODEL_TEXT ?? "gemini-3.6-flash");
+  return google()(modelIds.text());
 }
 
 /** Pro model for harder tasks (optional, switch per call). */
 export function textProModel() {
   return google()(process.env.BRIDGE_MODEL_TEXT_PRO ?? "gemini-3.1-pro-preview");
 }
-
-/** Model id used for a call — recorded on docs for transparency. */
-export const modelIds = {
-  text: () => process.env.BRIDGE_MODEL_TEXT ?? "gemini-3.7-flash",
-  textPro: () => process.env.BRIDGE_MODEL_TEXT_PRO ?? "gemini-3.1-pro-preview",
-  live: () => process.env.BRIDGE_MODEL_LIVE ?? "gemini-live-2.5-flash-native-audio",
-};

@@ -17,22 +17,34 @@ export default async function SuperSchoolsPage() {
   let standaloneAdmins: WithId<UserDoc>[] = [];
   let totalSchools = 0;
   let totalStandaloneAdmins = 0;
+
+  const [schoolsData, adminsData] = await Promise.all([
+    listSchools(SCHOOLS_CAP),
+    usersCol()
+      .where("role", "==", "admin")
+      .where("schoolId", "==", null)
+      .limit(ADMINS_CAP)
+      .get()
+      .then((snap) => snap.docs.map((d) => ({ id: d.id, ...d.data()! }))),
+  ]);
+
+  schools = schoolsData;
+  standaloneAdmins = adminsData;
+
   try {
-    [schools, standaloneAdmins, totalSchools, totalStandaloneAdmins] = await Promise.all([
-      listSchools(SCHOOLS_CAP),
-      usersCol()
-        .where("role", "==", "admin")
-        .where("schoolId", "==", null)
-        .limit(ADMINS_CAP)
-        .get()
-        .then((snap) => snap.docs.map((d) => ({ id: d.id, ...d.data()! }))),
-      countSchools(),
-      countQuery(
-        usersCol().where("role", "==", "admin").where("schoolId", "==", null),
-      ),
-    ]);
+    totalSchools = await countSchools();
   } catch (err) {
-    console.error("[super/schools] load failed", err);
+    console.error("[super/schools] countSchools failed", err);
+    totalSchools = schools.length;
+  }
+
+  try {
+    totalStandaloneAdmins = await countQuery(
+      usersCol().where("role", "==", "admin").where("schoolId", "==", null),
+    );
+  } catch (err) {
+    console.error("[super/schools] countQuery standaloneAdmins failed", err);
+    totalStandaloneAdmins = standaloneAdmins.length;
   }
 
   return (
