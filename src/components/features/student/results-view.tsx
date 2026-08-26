@@ -1,7 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
-import { toast } from "sonner";
+import { useActionState, useCallback, useState } from "react";
 import {
   ArrowLeftIcon,
   CheckCircle2Icon,
@@ -15,6 +14,7 @@ import {
 
 import { requestRetakeAction } from "@/app/student/actions";
 import { Markdown } from "@/components/markdown";
+import { useActionToast } from "@/components/features/super/schools-manager";
 import type { AttemptDoc, ExamDoc } from "@/types/firestore";
 import type { SerializedWithId } from "@/lib/serialize";
 import { Badge } from "@/components/ui/badge";
@@ -40,6 +40,7 @@ import { Textarea } from "@/components/ui/textarea";
 
 function gradeColor(pct: number): string {
   if (pct >= 80) return "text-emerald-600 dark:text-emerald-400";
+  if (pct >= 65) return "text-lime-600 dark:text-lime-400";
   if (pct >= 50) return "text-amber-600 dark:text-amber-400";
   return "text-destructive";
 }
@@ -50,17 +51,9 @@ function RetakeDialog({ attemptId }: { attemptId: string }) {
     { ok: boolean; error?: string } | null,
     FormData
   >(requestRetakeAction, null);
-  const [handled, setHandled] = useState<typeof state>(null);
-
-  if (state && state !== handled) {
-    setHandled(state);
-    if (state.ok) {
-      setOpen(false);
-      toast.success("Retake requested", { description: "Your teacher will review it." });
-    } else {
-      toast.error(state.error ?? "Could not send the request.");
-    }
-  }
+  // setSelected/setOpen are stable React setters, so this callback is stable.
+  const closeDialog = useCallback(() => setOpen(false), []);
+  useActionToast(state, closeDialog, "Retake requested — your teacher will review it.");
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

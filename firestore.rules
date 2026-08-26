@@ -94,7 +94,9 @@ service cloud.firestore {
         return isSuper()
           || (isStudent() && data.studentId == request.auth.uid)
           || sameSchool(data.schoolId)
-          || (isAdmin() && data.schoolId == null && false);
+          // Standalone admins read attempts of the students they created.
+          || (isAdmin() && data.schoolId == null
+              && get(/databases/$(database)/documents/users/$(data.studentId)).data.createdBy == request.auth.uid);
       }
       allow get, list: if isSignedIn() && canReadAttempt(resource.data);
 
@@ -102,23 +104,21 @@ service cloud.firestore {
       allow create, update: if false; // All attempt mutations flow through server APIs
     }
 
-    /* ── proctoring events (client-created during exams) ──────── */
+    /* ── proctoring events (server-written during exams) ─────── */
     match /proctoring_events/{eventId} {
       allow get, list: if isSuper()
         || (isStudent() && resource.data.studentId == request.auth.uid)
         || sameSchool(resource.data.schoolId);
-      allow create: if isStudent()
-        && request.resource.data.studentId == request.auth.uid
-        && request.resource.data.severity in ['info', 'low', 'medium', 'high', 'critical'];
+      allow create: if false; // Events flow through the proctor API only —
+                              // direct writes would allow forged evidence.
       allow update, delete: if false;
     }
-    /* ── retake requests ─────────────────────────────────────── */
+    /* ── retake requests (server-written via student actions) ── */
     match /retake_requests/{requestId} {
       allow get, list: if isSuper()
         || (isStudent() && resource.data.studentId == request.auth.uid)
         || sameSchool(resource.data.schoolId);
-      allow create: if isStudent() && request.resource.data.studentId == request.auth.uid
-        && request.resource.data.status == 'pending';
+      allow create: if false; // Requests flow through the retake API only.
       allow update, delete: if false; // Decided by admins server-side
     }
 

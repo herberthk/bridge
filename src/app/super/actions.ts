@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import {
   createSchoolSchema,
   createStandaloneAdminSchema,
+  topupWalletSchema,
 } from "@/lib/schemas/users";
 import { apiUser } from "@/server/auth/session";
 import {
@@ -35,6 +36,7 @@ export async function createSchoolAction(
   try {
     await createSchoolWithOwner(actor, parsed.data);
     revalidatePath("/super/schools");
+    revalidatePath("/super/wallets");
     revalidatePath("/super");
     return { ok: true };
   } catch (err) {
@@ -67,6 +69,7 @@ export async function createStandaloneAdminAction(
   try {
     await createStandaloneAdmin(actor, parsed.data);
     revalidatePath("/super/schools");
+    revalidatePath("/super/wallets");
     return { ok: true };
   } catch (err) {
     return {
@@ -86,15 +89,17 @@ export async function topupWalletAction(
   const actor = await apiUser("super_admin");
   if (!actor) return { ok: false, error: "Not authorized." };
 
-  const walletId = String(formData.get("walletId") ?? "");
-  const tokens = Number(formData.get("tokens"));
-  const description = String(formData.get("description") || "").trim() || undefined;
-  if (!walletId || !Number.isFinite(tokens) || tokens <= 0) {
-    return { ok: false, error: "Enter a valid token amount." };
+  const parsed = topupWalletSchema.safeParse({
+    walletId: formData.get("walletId"),
+    tokens: formData.get("tokens"),
+    description: formData.get("description") || undefined,
+  });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
   }
 
   try {
-    await topupWallet(actor, { walletId, tokens, description });
+    await topupWallet(actor, parsed.data);
     revalidatePath("/super/wallets");
     return { ok: true };
   } catch (err) {

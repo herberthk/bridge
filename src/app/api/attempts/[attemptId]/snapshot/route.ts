@@ -4,7 +4,11 @@ import { z } from "zod";
 
 import { google } from "@/server/ai/provider";
 import { apiUser } from "@/server/auth/session";
-import { logProctorEvent, AttemptsServiceError } from "@/server/services/attempts";
+import {
+  assertAttemptOwner,
+  logProctorEvent,
+  AttemptsServiceError,
+} from "@/server/services/attempts";
 import { consumeTokens } from "@/server/services/billing";
 
 const bodySchema = z.object({
@@ -30,6 +34,17 @@ export async function POST(
     return NextResponse.json({ error: "Invalid snapshot." }, { status: 400 });
   }
   const { attemptId } = await ctx.params;
+
+  // Ownership gate BEFORE the paid AI call — prevents burning wallet tokens
+  // by posting snapshots against another student's attempt id.
+  try {
+    await assertAttemptOwner(actor, attemptId);
+  } catch (err) {
+    const status = err instanceof AttemptsServiceError ? err.status : 500;
+    const message =
+      err instanceof AttemptsServiceError ? err.message : "Not allowed.";
+    return NextResponse.json({ error: message }, { status });
+  }
 
   let verdict: z.infer<typeof verdictSchema>;
   let tokensUsed = 0;
@@ -88,10 +103,11 @@ export async function POST(
     }
   }
 
-  // Bill snapshot tokens to the school wallet (proctoring overhead).
-  if (tokensUsed > 0 && actor.schoolId) {
+  // Bill snapshot tokens to the owning wallet (proctoring overhead).
+  const billTo = actor.schoolId ?? actor.uid; // school or standalone household
+  if (tokensUsed > 0) {
     void consumeTokens({
-      walletId: actor.schoolId,
+      walletId: billTo,
       tokens: tokensUsed,
       category: "text_generation",
       description: "Proctoring snapshot analysis",

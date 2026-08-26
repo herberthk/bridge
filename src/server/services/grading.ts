@@ -146,12 +146,10 @@ export async function gradeAttemptWithAi(attemptId: string): Promise<void> {
 }
 
 async function notifyStudentOfResults(attemptId: string): Promise<void> {
-  const [attemptSnap, userSnap] = await Promise.all([
-    attemptDoc(attemptId).get(),
-    attemptDoc(attemptId).get().then((snap) =>
-      snap.exists ? userDoc(snap.data()!.studentId).get() : null,
-    ),
-  ]);
+  const attemptSnap = await attemptDoc(attemptId).get();
+  const userSnap = attemptSnap.exists
+    ? await userDoc(attemptSnap.data()!.studentId).get().catch(() => null)
+    : null;
   const attempt = attemptSnap.exists ? attemptSnap.data()! : null;
   if (!attempt?.score) return;
   const user = userSnap?.exists ? userSnap.data()! : null;

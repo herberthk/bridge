@@ -46,7 +46,45 @@ export function serializeDocs<T extends object>(docs: WithId<T>[]): SerializedWi
   return docs.map(serializeDoc);
 }
 
-/** Client-side: ISO string (or null) → Date for date-fns/format. */
+/**
+ * Convert any plausible timestamp representation to a `Date`. Accepts
+ * Firestore Timestamps (and their serialized `{ seconds }` form), JS Dates,
+ * ISO strings, and epoch millis/seconds numbers. Returns null for missing or
+ * unparseable values so callers can fall back instead of crashing — guards
+ * against legacy documents that store timestamps as strings/numbers.
+ */
+export function timestampToDate(value: unknown): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value;
+  }
+  if (typeof value === "object") {
+    const ts = value as Partial<FirestoreTimestamp>;
+    if (typeof ts.toDate === "function") {
+      try {
+        return ts.toDate();
+      } catch {
+        return null;
+      }
+    }
+    if (typeof ts.seconds === "number") {
+      return new Date(ts.seconds * 1000);
+    }
+    return null;
+  }
+  if (typeof value === "string") return parseDate(value);
+  if (typeof value === "number") {
+    // Epoch seconds (< 1e11) vs epoch millis.
+    return new Date(value < 1e11 ? value * 1000 : value);
+  }
+  return null;
+}
+
+/** Client-side: ISO string (or null) → Date for date-fns/format.
+ *  Returns null for missing OR unparseable values so callers can fall back
+ *  instead of crashing date-fns `format` with an Invalid Date. */
 export function parseDate(value: string | null | undefined): Date | null {
-  return value ? new Date(value) : null;
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
 }

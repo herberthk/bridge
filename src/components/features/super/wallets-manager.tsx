@@ -2,11 +2,11 @@
 
 import { useActionState, useState } from "react";
 import { format } from "date-fns";
-import { toast } from "sonner";
 import { ArrowDownIcon, ArrowUpIcon, CoinsIcon, PlusIcon } from "lucide-react";
 
 import { topupWalletAction } from "@/app/super/actions";
 import type { ActionState } from "@/app/admin/actions";
+import { useActionToast } from "@/components/features/super/schools-manager";
 import { formatUgx, formatUsd, TOPUP_PACKS, tokensToUsd, usdToUgx } from "@/lib/pricing";
 import type { TransactionDoc, WalletDoc } from "@/types/firestore";
 import { parseDate, type SerializedWithId } from "@/lib/serialize";
@@ -40,22 +40,16 @@ function TopupDialog({ walletId, walletLabel }: { walletId: string; walletLabel:
     topupWalletAction,
     null,
   );
-  const [handled, setHandled] = useState<ActionState | null>(null);
+  useActionToast(state, () => setOpen(false), "Wallet topped up");
 
-  if (state && state !== handled) {
-    setHandled(state);
-    if (state.ok) {
-      setOpen(false);
-      toast.success("Wallet topped up", {
-        description: `${tokens.toLocaleString()} tokens credited.`,
-      });
-    } else {
-      toast.error(state.error);
-    }
-  }
+  // Fresh default pack every time the dialog opens.
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next);
+    if (next) setTokens(TOPUP_PACKS[1].tokens);
+  };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger render={<Button size="sm" />}>
         <PlusIcon data-icon="inline-start" />
         Top up
@@ -130,11 +124,28 @@ export function WalletsManager({
   wallets,
   labels,
   recentTransactions,
+  totals,
+  loadFailed = false,
 }: {
   wallets: SerializedWithId<WalletDoc>[];
   labels: Record<string, string>;
   recentTransactions: SerializedWithId<TransactionDoc>[];
+  totals: { wallets: number; truncated: boolean };
+  loadFailed?: boolean;
 }) {
+  if (loadFailed) {
+    return (
+      <div className="flex flex-col gap-6">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Wallets &amp; billing</h1>
+        </div>
+        <p className="text-destructive rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
+          Wallet data could not be loaded. Try refreshing the page.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -142,6 +153,7 @@ export function WalletsManager({
         <p className="text-muted-foreground mt-1 text-sm">
           Credit school and admin wallets. Token pricing: $0.027 / 1,000 tokens ·
           $0.08 / voice minute · 1 USD = 3,800 UGX.
+          {totals.truncated && ` Showing ${wallets.length} of ${totals.wallets} wallets.`}
         </p>
       </div>
 

@@ -11,9 +11,10 @@ import type { Role } from "@/lib/constants";
 import { parseUserAgent } from "@/lib/user-agent";
 
 export const SESSION_COOKIE = "bridge-session";
-/** ID tokens live 1h; AuthSync refreshes the cookie, so the cookie itself
- * may live longer and simply fail verification once stale. */
-const SESSION_MAX_AGE = 60 * 60 * 24 * 5;
+/** Native Firebase session cookies live up to two weeks. AuthSync keeps the
+ * underlying Firebase session alive, so this is a hard ceiling, not a timeout. */
+export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 14;
+const SESSION_MAX_AGE = SESSION_MAX_AGE_SECONDS;
 
 /** The authenticated user as seen by server components/actions. */
 export interface SessionUser {
@@ -64,14 +65,26 @@ async function loadUser(uid: string): Promise<WithId<UserDoc> | null> {
 /**
  * Verify the session cookie and load the user. Memoized per request via
  * React `cache`. Returns null when unauthenticated (incl. stale/banned).
+ *
+ * Uses `verifySessionCookie` which verifies cryptographically against cached
+ * public keys — no network round-trip per request. Revocation is enforced at
+ * sign-in time and by the short-lived Firebase refresh flow (AuthSync), so a
+ * banned user is locked out on their next cookie refresh or login attempt.
  */
 export const getCurrentUser = cache(async (): Promise<SessionUser | null> => {
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;
   if (!token) return null;
 
+  let decoded;
   try {
-    const decoded = await adminAuth().verifyIdToken(token, true);
+    decoded = await adminAuth().verifySessionCookie(token, true);
+  } catch {
+    // Invalid/stale cookie — treat as signed out.
+    return null;
+  }
+
+  try {
     const doc = await loadUser(decoded.uid);
     if (!doc) return null;
     const role = (decoded.role as Role | undefined) ?? doc.role;
@@ -83,7 +96,9 @@ export const getCurrentUser = cache(async (): Promise<SessionUser | null> => {
       schoolId: doc.schoolId,
       status: doc.status,
     };
-  } catch {
+  } catch (error) {
+    // Firestore failure — don't silently treat an active user as signed out.
+    console.error("[auth] Failed to load user for a valid session:", error);
     return null;
   }
 });
@@ -95,12 +110,19 @@ export async function requireUser(): Promise<SessionUser> {
   return user;
 }
 
-/** Guard that also enforces role + active status. */
-export async function requireRole(...roles: Role[]): Promise<SessionUser> {
+/** Guard that enforces an active (non-banned/suspended) account. */
+export async function requireActiveUser(): Promise<SessionUser> {
   const user = await requireUser();
-  if (!roles.includes(user.role)) redirect(roleHome(user.role));
   if (user.status === "banned") redirect("/banned");
   if (user.status === "suspended") redirect("/suspended");
+  return user;
+}
+
+/** Guard that also enforces role + active status. Status is checked first so
+ * banned users land on /banned instead of being bounced by role mismatch. */
+export async function requireRole(...roles: Role[]): Promise<SessionUser> {
+  const user = await requireActiveUser();
+  if (!roles.includes(user.role)) redirect(roleHome(user.role));
   return user;
 }
 

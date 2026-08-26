@@ -99,8 +99,6 @@ export async function decideRetake(
 
   let newAttemptId: string | null = null;
   if (approve) {
-    const originSnap = await attemptDoc(request.attemptId).get();
-    const origin = originSnap.exists ? originSnap.data()! : null;
     const now = FieldValue.serverTimestamp();
     const attempt: WriteModel<import("@/types/firestore").AttemptDoc> = {
       examId: request.examId,
@@ -124,7 +122,6 @@ export async function decideRetake(
       createdAt: now,
       updatedAt: now,
     };
-    void origin;
     const ref = await attemptsCol().add(attempt);
     newAttemptId = ref.id;
   }

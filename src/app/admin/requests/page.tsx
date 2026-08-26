@@ -16,22 +16,31 @@ export default async function AdminRequestsPage() {
     console.error("[admin/requests] load failed", err);
   }
 
-  // Resolve display names/titles for the request list.
+  // Resolve display names/titles for the request list. Chunked `in` queries
+  // so lists beyond 30 requests still resolve names.
   const studentIds = [...new Set(requests.map((r) => r.studentId))];
   const examIds = [...new Set(requests.map((r) => r.examId))];
-  const [studentsSnap, ...examSnaps] = await Promise.all([
-    studentIds.length
-      ? usersCol().where("__name__", "in", studentIds.slice(0, 30)).get().catch(() => null)
-      : Promise.resolve(null),
-    ...examIds.slice(0, 30).map((id) => examDoc(id).get().catch(() => null)),
-  ]);
+  const CHUNK = 30;
+  const studentNamesArr = await Promise.all(
+    Array.from({ length: Math.ceil(studentIds.length / CHUNK) }, (_, i) =>
+      usersCol()
+        .where("__name__", "in", studentIds.slice(i * CHUNK, (i + 1) * CHUNK))
+        .get()
+        .catch(() => null),
+    ),
+  );
+  const examTitlesArr = await Promise.all(
+    examIds.map((id) => examDoc(id).get().catch(() => null)),
+  );
 
   const studentNames: Record<string, string> = {};
-  studentsSnap?.forEach((d) => {
-    studentNames[d.id] = d.data().displayName;
-  });
+  studentNamesArr.forEach((snap) =>
+    snap?.forEach((d) => {
+      studentNames[d.id] = d.data().displayName;
+    }),
+  );
   const examTitles: Record<string, string> = {};
-  examSnaps.forEach((snap, i) => {
+  examTitlesArr.forEach((snap, i) => {
     if (snap?.exists) examTitles[examIds[i]] = snap.data()!.title;
   });
 

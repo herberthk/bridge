@@ -1,20 +1,14 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
-import { toast } from "sonner";
 import { CalendarClockIcon, FileStackIcon, SendIcon } from "lucide-react";
 
 import { assignExamAction } from "@/app/admin/actions";
 import type { ActionState } from "@/app/admin/actions";
-import {
-  DIFFICULTY_LABELS,
-  EXAM_STATUSES,
-  SUBJECT_LABELS,
-  type ExamStatus,
-  type Subject,
-} from "@/lib/constants";
+import { useActionToast } from "@/components/features/super/schools-manager";
+import { SUBJECT_LABELS, type ExamStatus, type Subject } from "@/lib/constants";
 import type { ExamDoc, UserDoc } from "@/types/firestore";
 import { parseDate, type SerializedWithId } from "@/lib/serialize";
 import { Badge } from "@/components/ui/badge";
@@ -55,20 +49,19 @@ function AssignDialog({ exam, students }: { exam: SerializedWithId<ExamDoc>; stu
     assignExamAction,
     null,
   );
-  const [handled, setHandled] = useState<ActionState | null>(null);
-
-  if (state && state !== handled) {
-    setHandled(state);
-    if (state.ok) {
-      setOpen(false);
-      setSelected([]);
-      toast.success("Exam assigned", { description: "Students can see it on their dashboard." });
-    } else {
-      toast.error(state.error);
-    }
-  }
+  // setSelected/setOpen are stable React setters, so this callback is stable
+  // too — safe to pass straight to useActionToast without a ref.
+  const closeAndReset = useCallback(() => {
+    setOpen(false);
+    setSelected([]);
+  }, []);
+  useActionToast(state, closeAndReset, "Exam assigned");
 
   const active = students.filter((s) => s.status === "active");
+  // Flag students whose class doesn't match the exam — assigning a P4 exam to
+  // a P7 student is possible but almost always a mistake.
+  const matchesExamClass = (s: SerializedWithId<UserDoc>) =>
+    s.level === exam.params.level && s.classLevel === exam.params.classLevel;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -115,7 +108,14 @@ function AssignDialog({ exam, students }: { exam: SerializedWithId<ExamDoc>; stu
                         }
                       />
                       <span className="flex min-w-0 flex-1 flex-col">
-                        <span className="truncate text-sm font-medium">{s.displayName}</span>
+                        <span className="flex items-center gap-2">
+                          <span className="truncate text-sm font-medium">{s.displayName}</span>
+                          {!matchesExamClass(s) && (
+                            <Badge variant="outline" className="text-amber-600 shrink-0">
+                              {s.level === "primary" ? `P${s.classLevel}` : `S${s.classLevel}`}
+                            </Badge>
+                          )}
+                        </span>
                         <span className="text-muted-foreground truncate text-xs">
                           {s.level === "primary" ? `P${s.classLevel}` : `S${s.classLevel}`} ·{" "}
                           {s.email}
@@ -193,7 +193,11 @@ export function ExamLibrary({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {exams.map((e) => (
+              {exams.map((e) => {
+                // Legacy/imported docs may carry an unparseable createdAt —
+                // fall back to “–” rather than letting format() throw.
+                const created = parseDate(e.createdAt);
+                return (
                 <TableRow key={e.id}>
                   <TableCell className="max-w-64">
                     <div className="flex flex-col">
@@ -217,9 +221,7 @@ export function ExamLibrary({
                     </Badge>
                   </TableCell>
                   <TableCell className="text-muted-foreground text-sm">
-                      {/* TODO fix date */}
-                      {e.createdAt.toString()}
-                    {/* {e.createdAt ? format(parseDate(e.createdAt)!, "d MMM yyyy") : "–"} */}
+                    {created ? format(created, "d MMM yyyy") : "–"}
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1">
@@ -229,19 +231,17 @@ export function ExamLibrary({
                     </div>
                   </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
         )}
       </div>
 
-      {EXAM_STATUSES.length > 0 && (
-        <p className="text-muted-foreground flex items-center gap-1.5 text-xs">
-          <CalendarClockIcon className="size-3.5" />
-          Scheduled exams unlock for students at their scheduled time.
-          Difficulty shown per exam: {DIFFICULTY_LABELS.medium} is the default.
-        </p>
-      )}
+      <p className="text-muted-foreground flex items-center gap-1.5 text-xs">
+        <CalendarClockIcon className="size-3.5" />
+        Scheduled exams unlock for students at their scheduled time.
+      </p>
     </div>
   );
 }

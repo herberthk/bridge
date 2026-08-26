@@ -18,6 +18,8 @@ export interface ExamSessionState {
     examTitle: string;
     questions: SafeQuestion[];
     deadlineMs: number;
+    /** Restored draft answers, if any (refresh-recovery). */
+    answers?: Record<string, string | string[] | number | boolean>;
   }): void;
   setAnswer(questionId: string, value: string | string[] | number | boolean): void;
   setCurrent(index: number): void;
@@ -42,7 +44,7 @@ export const useExamSession = create<ExamSessionState>((set, get) => ({
   hydrate: (payload) =>
     set({
       ...payload,
-      answers: {},
+      answers: payload.answers ?? {},
       current: 0,
       flagged: new Set(),
       warnings: 0,

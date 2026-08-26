@@ -1,7 +1,9 @@
-import { FieldValue, Timestamp } from "firebase-admin/firestore";
+import { FieldValue } from "firebase-admin/firestore";
 
 import { adminDb } from "@/server/firebase/admin";
 import {
+  COLLECTIONS,
+  createConverter,
   dailyMetricDoc,
   todayMetricId,
   transactionsCol,
@@ -37,31 +39,10 @@ export class InsufficientTokensError extends BillingError {
   }
 }
 
-/** Ensure a wallet exists (lazily creates one for standalone admins). */
-export async function getOrCreateWallet(
-  ownerId: string,
-  ownerType: "admin" | "school",
-): Promise<WithId<WalletDoc>> {
-  const ref = walletDoc(ownerId);
-  const snap = await ref.get();
-  if (snap.exists) return { id: snap.id, ...snap.data()! };
-  const now = FieldValue.serverTimestamp();
-  const doc: WriteModel<WalletDoc> = {
-    ownerId,
-    ownerType,
-    balanceTokens: 0,
-    totalTopupTokens: 0,
-    totalConsumedTokens: 0,
-    createdAt: now,
-    updatedAt: now,
-  };
-  await ref.set(doc);
-  return {
-    id: ownerId,
-    ...(doc as WalletDoc),
-    createdAt: Timestamp.now(),
-    updatedAt: Timestamp.now(),
-  };
+/** Read a wallet without creating it. Returns null when missing. */
+export async function getWallet(ownerId: string): Promise<WithId<WalletDoc> | null> {
+  const snap = await walletDoc(ownerId).get();
+  return snap.exists ? { id: snap.id, ...snap.data()! } : null;
 }
 
 interface ConsumeInput {
@@ -221,8 +202,25 @@ export async function listTransactions(
   return snap.docs.map((d) => ({ id: d.id, ...d.data()! }));
 }
 
+/** Total number of wallets (cheap aggregate for truncation indicators). */
+export async function countWallets(): Promise<number> {
+  const snap = await walletsCol().count().get();
+  return snap.data().count;
+}
+
 export async function listAllWallets(limit = 200): Promise<WithId<WalletDoc>[]> {
   const snap = await walletsCol().orderBy("updatedAt", "desc").limit(limit).get();
+  return snap.docs.map((d) => ({ id: d.id, ...d.data()! }));
+}
+
+/** Most recent ledger entries across ALL wallets (single indexed query). */
+export async function recentTransactions(limit = 15): Promise<WithId<TransactionDoc>[]> {
+  const snap = await adminDb()
+    .collectionGroup(COLLECTIONS.transactions)
+    .withConverter(createConverter<TransactionDoc>())
+    .orderBy("createdAt", "desc")
+    .limit(limit)
+    .get();
   return snap.docs.map((d) => ({ id: d.id, ...d.data()! }));
 }
 

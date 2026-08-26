@@ -9,13 +9,19 @@ import { writeAudit } from "@/server/services/audit";
 import { recordLoginMetrics } from "@/server/services/analytics";
 import {
   SESSION_COOKIE,
+  SESSION_MAX_AGE_SECONDS,
   requestContext,
   roleHome,
   sessionCookieOptions,
 } from "@/server/auth/session";
 import type { WithId, UserDoc } from "@/types/firestore";
 
-const bodySchema = z.object({ idToken: z.string().min(20) });
+const bodySchema = z.object({
+  idToken: z.string().min(20),
+  /** "login" records lastLoginAt + audit + metrics; "refresh" only renews
+   * the cookie so hourly ID-token renewals don't pollute login analytics. */
+  kind: z.enum(["login", "refresh"]).default("login"),
+});
 
 /** Exchange a fresh Firebase ID token for an httpOnly session cookie. */
 export async function POST(request: NextRequest) {
@@ -29,6 +35,17 @@ export async function POST(request: NextRequest) {
     decoded = await adminAuth().verifyIdToken(parsed.data.idToken, true);
   } catch {
     return NextResponse.json({ error: "Invalid or expired session token." }, { status: 401 });
+  }
+
+  // Mint a native session cookie — verified locally on every request without
+  // a revocation round-trip (see getCurrentUser in server/auth/session.ts).
+  let sessionCookieValue: string;
+  try {
+    sessionCookieValue = await adminAuth().createSessionCookie(parsed.data.idToken, {
+      expiresIn: SESSION_MAX_AGE_SECONDS * 1000,
+    });
+  } catch {
+    return NextResponse.json({ error: "Could not establish a session." }, { status: 401 });
   }
 
   const snap = await userDoc(decoded.uid).get();
@@ -60,20 +77,27 @@ export async function POST(request: NextRequest) {
 
   const context = await requestContext();
   const jar = await cookies();
-  jar.set(SESSION_COOKIE, parsed.data.idToken, sessionCookieOptions());
+  jar.set(SESSION_COOKIE, sessionCookieValue, sessionCookieOptions());
 
-  await userDoc(user.id).update({
-    lastLoginAt: FieldValue.serverTimestamp(),
-    lastLoginMeta: context,
-    updatedAt: FieldValue.serverTimestamp(),
-  });
-  await writeAudit({
-    actorId: user.id,
-    actorRole: user.role,
-    action: "auth.login",
-    context,
-  });
-  void recordLoginMetrics(context.browser, context.device);
+  if (parsed.data.kind === "refresh") {
+    // Token renewal only — don't count it as a new login.
+    return NextResponse.json({ ok: true, role: user.role, home: roleHome(user.role) });
+  }
+
+  await Promise.all([
+    userDoc(user.id).update({
+      lastLoginAt: FieldValue.serverTimestamp(),
+      lastLoginMeta: context,
+      updatedAt: FieldValue.serverTimestamp(),
+    }),
+    writeAudit({
+      actorId: user.id,
+      actorRole: user.role,
+      action: "auth.login",
+      context,
+    }),
+    recordLoginMetrics(context.browser, context.device),
+  ]);
 
   return NextResponse.json({ ok: true, role: user.role, home: roleHome(user.role) });
 }
@@ -85,7 +109,7 @@ export async function DELETE() {
   const token = jar.get(SESSION_COOKIE)?.value;
   if (token) {
     try {
-      const decoded = await adminAuth().verifyIdToken(token);
+      const decoded = await adminAuth().verifySessionCookie(token);
       await writeAudit({
         actorId: decoded.uid,
         actorRole: null,

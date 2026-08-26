@@ -45,16 +45,12 @@ export function ExamOnboarding({
   starting: boolean;
   error: string | null;
 }) {
-  const [checked, setChecked] = useState<Set<string>>(
-    () => new Set(permissionsGranted ? CHECKLIST.map((c) => c.label) : []),
+  // Track what is NOT yet acknowledged. When permissions flip to granted the
+  // checklist simply stops excluding items — derived state, no setState-in-effect.
+  const [unchecked, setUnchecked] = useState<ReadonlySet<string>>(
+    () => new Set(CHECKLIST.map((c) => c.label)),
   );
-
-  // React render-phase adjustment when permissions flip to granted.
-  if (permissionsGranted && checked.size !== CHECKLIST.length) {
-    setChecked(new Set(CHECKLIST.map((c) => c.label)));
-  }
-
-  const allChecked = checked.size === CHECKLIST.length;
+  const allChecked = unchecked.size === 0;
 
   return (
     <div className="bg-mesh bg-noise flex min-h-dvh items-center justify-center overflow-y-auto p-4">
@@ -108,16 +104,16 @@ export function ExamOnboarding({
 
           <div className="flex flex-col gap-2.5">
             {CHECKLIST.map((item) => {
-              const done = checked.has(item.label);
+              const done = !unchecked.has(item.label);
               return (
                 <button
                   key={item.label}
                   type="button"
+                  disabled={!permissionsGranted}
                   onClick={() =>
-                    setChecked((prev) => {
+                    setUnchecked((prev) => {
                       const next = new Set(prev);
-                      if (next.has(item.label)) next.delete(item.label);
-                      else next.add(item.label);
+                      next.delete(item.label);
                       return next;
                     })
                   }

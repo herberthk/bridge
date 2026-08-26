@@ -1,9 +1,15 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { format } from "date-fns";
 import { toast } from "sonner";
-import { Building2Icon, PlusIcon, UserRoundPlusIcon } from "lucide-react";
+import {
+  Building2Icon,
+  EyeIcon,
+  EyeOffIcon,
+  PlusIcon,
+  UserRoundPlusIcon,
+} from "lucide-react";
 
 import {
   createSchoolAction,
@@ -46,16 +52,57 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-function useActionToast(state: ActionState | null, onOk?: () => void) {
+export function useActionToast(
+  state: ActionState | { ok: boolean; error?: string } | null,
+  onOk?: () => void,
+  successMessage?: string,
+) {
+  // The effect depends only on `state`, so each distinct action result is
+  // handled exactly once. Refs (synced in their own effect, never during
+  // render) keep the latest callbacks without re-triggering it.
+  const onOkRef = useRef(onOk);
+  const messageRef = useRef(successMessage);
+
+  useEffect(() => {
+    onOkRef.current = onOk;
+    messageRef.current = successMessage;
+  }, [onOk, successMessage]);
+
   useEffect(() => {
     if (!state) return;
     if (state.ok) {
-      toast.success("Done.");
-      onOk?.();
+      toast.success(messageRef.current ?? "Done.");
+      onOkRef.current?.();
     } else {
-      toast.error(state.error);
+      toast.error(state.error ?? "Something went wrong.");
     }
-  }, [state, onOk]);
+  }, [state]);
+}
+
+/** Password input with reveal toggle — temp passwords are shared out-of-band. */
+export function TempPasswordField({ id, name }: { id: string; name: string }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative">
+      <Input
+        id={id}
+        name={name}
+        type={show ? "text" : "password"}
+        required
+        autoComplete="new-password"
+        placeholder="10+ chars, mixed case, number"
+        className="pr-10"
+      />
+      <button
+        type="button"
+        onClick={() => setShow((v) => !v)}
+        className="text-muted-foreground hover:text-foreground absolute inset-y-0 right-0 flex w-10 items-center justify-center transition-colors"
+        aria-label={show ? "Hide password" : "Show password"}
+      >
+        {show ? <EyeOffIcon className="size-4" /> : <EyeIcon className="size-4" />}
+      </button>
+    </div>
+  );
 }
 
 function CreateSchoolDialog() {
@@ -96,7 +143,7 @@ function CreateSchoolDialog() {
             </Field>
             <Field>
               <FieldLabel htmlFor="ownerPassword">Temporary password</FieldLabel>
-              <Input id="ownerPassword" name="ownerPassword" type="text" required placeholder="10+ chars, mixed case, number" />
+              <TempPasswordField id="ownerPassword" name="ownerPassword" />
               <FieldDescription>Share it securely — they should change it after first sign-in.</FieldDescription>
             </Field>
             <DialogFooter>
@@ -148,7 +195,7 @@ function CreateStandaloneAdminDialog() {
             </Field>
             <Field>
               <FieldLabel htmlFor="password">Temporary password</FieldLabel>
-              <Input id="password" name="password" type="text" required placeholder="10+ chars, mixed case, number" />
+              <TempPasswordField id="password" name="password" />
             </Field>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>
@@ -168,9 +215,16 @@ function CreateStandaloneAdminDialog() {
 export function SchoolsManager({
   schools,
   standaloneAdmins,
+  totals,
 }: {
   schools: SerializedWithId<SchoolDoc>[];
   standaloneAdmins: SerializedWithId<UserDoc>[];
+  totals: {
+    schools: number;
+    schoolsTruncated: boolean;
+    standaloneAdmins: number;
+    adminsTruncated: boolean;
+  };
 }) {
   const totalStudents = schools.reduce((n, s) => n + (s.studentCount ?? 0), 0);
 
@@ -180,10 +234,16 @@ export function SchoolsManager({
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Schools &amp; admins</h1>
           <p className="text-muted-foreground mt-1 text-sm">
-            {schools.length} school{schools.length === 1 ? "" : "s"} ·{" "}
-            {totalStudents} students · {standaloneAdmins.length} standalone admin
-            {standaloneAdmins.length === 1 ? "" : "s"}
+            {totals.schools} school{totals.schools === 1 ? "" : "s"} ·{" "}
+            {totalStudents} {totals.schoolsTruncated ? "students in displayed schools" : "students"} · {totals.standaloneAdmins} standalone admin
+            {totals.standaloneAdmins === 1 ? "" : "s"}
           </p>
+          {(totals.schoolsTruncated || totals.adminsTruncated) && (
+            <p className="text-muted-foreground mt-1 text-xs">
+              Showing the most recent {schools.length} schools and{" "}
+              {standaloneAdmins.length} admins.
+            </p>
+          )}
         </div>
         <div className="flex gap-2">
           <CreateStandaloneAdminDialog />
@@ -220,8 +280,7 @@ export function SchoolsManager({
                   <TableCell>{s.adminCount}</TableCell>
                   <TableCell>{s.studentCount}</TableCell>
                   <TableCell className="text-muted-foreground text-sm">
-                  {s.createdAt.toString()}
-                    {/* {s.createdAt ? format(parseDate(s.createdAt)!, "d MMM yyyy") : "–"} */}
+                    {s.createdAt ? format(parseDate(s.createdAt)!, "d MMM yyyy") : "–"}
                   </TableCell>
                 </TableRow>
               ))}

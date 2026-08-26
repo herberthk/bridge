@@ -8,7 +8,8 @@ import { authClient } from "@/lib/firebase/client";
 /**
  * Keeps the httpOnly session cookie in sync with the Firebase ID token.
  * Firebase refreshes tokens roughly hourly; each refresh re-posts the token
- * so the server cookie never goes stale while a tab is open.
+ * (flagged as a renewal) so the server cookie never goes stale while a tab
+ * is open — and renewals are not recorded as logins.
  */
 export function AuthSync() {
   useEffect(() => {
@@ -18,7 +19,7 @@ export function AuthSync() {
         await fetch("/api/auth/session", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ idToken }),
+          body: JSON.stringify({ idToken, kind: "refresh" }),
         }).catch(() => undefined);
       }
       // Sign-out is initiated client-side (signOut helper); nothing to do here.

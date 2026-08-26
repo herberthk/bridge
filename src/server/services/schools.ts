@@ -42,13 +42,21 @@ export async function createSchoolWithOwner(
     updatedAt: now,
   });
 
-  const owner = await provisionUser(actor, {
-    email: input.ownerEmail,
-    password: input.ownerPassword,
-    displayName: input.ownerName,
-    role: "admin",
-    schoolId: schoolRef.id,
-  });
+  let owner;
+  try {
+    owner = await provisionUser(actor, {
+      email: input.ownerEmail,
+      password: input.ownerPassword,
+      displayName: input.ownerName,
+      role: "admin",
+      schoolId: schoolRef.id,
+    });
+  } catch (err) {
+    // Don't leave an orphaned, ownerless school behind when provisioning
+    // fails (e.g. duplicate email → 409).
+    await schoolRef.delete().catch(() => undefined);
+    throw err;
+  }
 
   await schoolRef.update({
     ownerUid: owner.id,
@@ -109,8 +117,14 @@ export async function createStandaloneAdmin(
   return admin;
 }
 
-export async function listSchools(): Promise<WithId<SchoolDoc>[]> {
-  const snap = await schoolsCol().orderBy("createdAt", "desc").limit(500).get();
+/** Total number of schools (cheap aggregate for truncation indicators). */
+export async function countSchools(): Promise<number> {
+  const snap = await schoolsCol().count().get();
+  return snap.data().count;
+}
+
+export async function listSchools(limit = 500): Promise<WithId<SchoolDoc>[]> {
+  const snap = await schoolsCol().orderBy("createdAt", "desc").limit(limit).get();
   return snap.docs.map((d) => ({ id: d.id, ...d.data()! }));
 }
 
