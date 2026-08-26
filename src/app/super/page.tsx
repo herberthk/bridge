@@ -14,10 +14,12 @@ export default async function SuperHomePage() {
   await requireRole("super_admin");
 
   let data: Awaited<ReturnType<typeof superDashboard>> | null = null;
+  let loadFailed = false;
   try {
     data = await superDashboard();
   } catch (err) {
     console.error("[super dashboard] load failed", err);
+    loadFailed = true;
   }
 
   return (
@@ -29,9 +31,16 @@ export default async function SuperHomePage() {
         </p>
       </div>
 
+      {loadFailed && (
+        <p className="text-destructive rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
+          Platform metrics failed to load — figures below may be stale or zero.
+          Try refreshing the page.
+        </p>
+      )}
+
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard
-          title="Revenue (all time)"
+          title="Revenue (last year)"
           value={data?.revenueUsd ?? 0}
           suffix="USD"
           accent

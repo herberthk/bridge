@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 
 import { SUBJECT_LABELS, type Subject } from "@/lib/constants";
-import type { AttemptDoc } from "@/types/firestore";
+import type { StudentAttemptListItem } from "@/server/services/attempts";
 import { parseDate, type SerializedWithId } from "@/lib/serialize";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,8 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export interface AttemptWithExam {
-  attempt: SerializedWithId<AttemptDoc>;
+  /** Projected attempt (list fields only — answers are not sent to clients). */
+  attempt: SerializedWithId<StudentAttemptListItem>;
   exam: {
     id: string;
     title: string;

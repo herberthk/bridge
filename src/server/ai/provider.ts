@@ -32,7 +32,7 @@ export function textProModel() {
 
 /** Model id used for a call — recorded on docs for transparency. */
 export const modelIds = {
-  text: () => process.env.BRIDGE_MODEL_TEXT ?? "gemini-3.6-flash",
+  text: () => process.env.BRIDGE_MODEL_TEXT ?? "gemini-3.7-flash",
   textPro: () => process.env.BRIDGE_MODEL_TEXT_PRO ?? "gemini-3.1-pro-preview",
   live: () => process.env.BRIDGE_MODEL_LIVE ?? "gemini-live-2.5-flash-native-audio",
 };

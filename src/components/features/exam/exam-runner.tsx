@@ -9,6 +9,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   FlagIcon,
+  Loader2Icon,
   SendIcon,
   ShieldAlertIcon,
 } from "lucide-react";
@@ -34,7 +35,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Progress } from "@/components/ui/progress";
 
 /* ── Timer ring ────────────────────────────────────────────── */
 
@@ -226,6 +226,44 @@ function QuestionView({
   );
 }
 
+/* ── Draft persistence ───────────────────────────────────── */
+
+/** Session-scoped draft persistence — answers survive an accidental refresh.
+ *  sessionStorage (not localStorage) so drafts never outlive the tab session. */
+const draftKey = (attemptId: string) => `bridge:exam-draft:${attemptId}`;
+
+function saveDraft(
+  attemptId: string,
+  answers: Record<string, unknown>,
+  deadlineMs: number,
+) {
+  try {
+    sessionStorage.setItem(
+      draftKey(attemptId),
+      JSON.stringify({ answers, deadlineMs, savedAt: Date.now() }),
+    );
+  } catch {
+    // Storage full/blocked — best-effort only.
+  }
+}
+
+function loadDraft(
+  attemptId: string,
+): { answers: Record<string, string | string[] | number | boolean>; deadlineMs: number } | null {
+  try {
+    const raw = sessionStorage.getItem(draftKey(attemptId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as {
+      answers: Record<string, string | string[] | number | boolean>;
+      deadlineMs: number;
+    };
+    // Expired drafts are worthless — the attempt is past its deadline.
+    return parsed.deadlineMs > Date.now() ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 /* ── Runner ────────────────────────────────────────────────── */
 
 type Phase = "onboarding" | "exam" | "submitting" | "terminated";
@@ -290,14 +328,20 @@ export function ExamRunner({
         setStartError(data && "error" in data ? data.error : "Could not start the exam.");
         return;
       }
+      // Restore any in-session draft (e.g. after an accidental refresh).
+      const draft = loadDraft(attemptId);
       session.hydrate({
         attemptId,
         examTitle: data.examTitle,
         questions: data.questions,
         deadlineMs: data.deadlineMs,
+        answers: draft?.answers ?? {},
       });
       setMeta({ durationMinutes: data.durationMinutes, deadlineMs: data.deadlineMs });
       startMsRef.current = Date.now();
+      if (draft && Object.keys(draft.answers).length > 0) {
+        toast.info("Your previous answers were restored.");
+      }
 
       await rig.beginExamCapture();
       await document.documentElement.requestFullscreen?.().catch(() => undefined);
@@ -325,6 +369,17 @@ export function ExamRunner({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attemptId, session.hydrate, rig.beginExamCapture]);
+
+  // Autosave answers to sessionStorage every few seconds while in the exam.
+  useEffect(() => {
+    if (phase !== "exam") return;
+    const timer = setInterval(() => {
+      if (meta?.deadlineMs) {
+        saveDraft(attemptId, useExamSession.getState().answers, meta.deadlineMs);
+      }
+    }, 5_000);
+    return () => clearInterval(timer);
+  }, [phase, attemptId, meta?.deadlineMs]);
 
   const uploadRecordings = useCallback(
     async (cameraBlob: Blob | null, screenBlob: Blob | null) => {
@@ -358,17 +413,12 @@ export function ExamRunner({
     [attemptId],
   );
 
-  const doSubmit = useCallback(
-    async (auto: boolean) => {
-      if (submittedRef.current) return;
-      submittedRef.current = true;
-      setPhase("submitting");
-      clockRef.current?.postMessage({ type: "stop" });
-
-      const { cameraBlob, screenBlob } = await rig.stopEverything();
-      await uploadRecordings(cameraBlob, screenBlob);
-
-      const answers = Object.entries(session.answers).map(([questionId, response]) => ({
+  /** Answers-only POST — deadline-critical path. Recordings follow later so a
+   *  slow video upload can never push a student past the server deadline. */
+  const submitAnswers = useCallback(
+    async (auto: boolean): Promise<boolean> => {
+      const state = useExamSession.getState();
+      const answers = Object.entries(state.answers).map(([questionId, response]) => ({
         questionId,
         response,
       }));
@@ -376,33 +426,54 @@ export function ExamRunner({
         0,
         Math.round((Date.now() - startMsRef.current) / 1000),
       );
+      const res = await fetch(`/api/attempts/${attemptId}/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ answers, autoSubmitted: auto, timeSpentSeconds }),
+      });
+      return res.ok;
+    },
+    [attemptId],
+  );
+
+  const doSubmit = useCallback(
+    async (auto: boolean) => {
+      if (submittedRef.current) return;
+      submittedRef.current = true;
+      setPhase("submitting");
+      clockRef.current?.postMessage({ type: "stop" });
 
       try {
-        const res = await fetch(`/api/attempts/${attemptId}/submit`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ answers, autoSubmitted: auto, timeSpentSeconds }),
-        });
-        if (!res.ok) {
-          const data = (await res.json().catch(() => null)) as { error?: string } | null;
-          toast.error(data?.error ?? "Submission failed — retrying may be needed.");
-          submittedRef.current = false;
-          setPhase("exam");
-          return;
-        }
+        // 1) Answers first — this is what the server deadline judges.
+        const ok = await submitAnswers(auto);
+        if (!ok) throw new Error("rejected");
+
+        try {
+          sessionStorage.removeItem(draftKey(attemptId));
+        } catch {}
+
         if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
         toast.success("Submitted!", {
-          description: "Your results are being prepared — this usually takes under a minute.",
+          description: "Your recordings are uploading in the background.",
         });
         router.replace(`/student/results/${attemptId}`);
       } catch {
-        toast.error("Network error during submission. Reconnecting…");
-        // Keep submittedRef true to avoid duplicates; the deadline logic on
-        // the server will still accept this attempt when connectivity returns.
+        // Recoverable: unblock and let the student retry (or the worker's
+        // expiry tick re-fire). Keep the phase on exam so the UI is usable.
+        submittedRef.current = false;
+        setPhase("exam");
+        toast.error("Submission failed — check your connection and try again.");
       }
+
+      // 2) Recordings after — failures here must not block or mislead:
+      //    stop capture first, then upload whatever we got.
+      void (async () => {
+        const { cameraBlob, screenBlob } = await rig.stopEverything();
+        await uploadRecordings(cameraBlob, screenBlob);
+      })();
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [attemptId, rig.stopEverything, uploadRecordings, session.answers, router],
+    [attemptId, rig.stopEverything, uploadRecordings, submitAnswers, router],
   );
 
   // Keep the submit indirection fresh for proctoring/worker callbacks.
@@ -547,6 +618,22 @@ export function ExamRunner({
           Previous
         </Button>
 
+        {/* Mobile question jumper (dots are md+ only) */}
+        <div className="flex items-center gap-2 md:hidden">
+          <select
+            aria-label="Go to question"
+            value={session.current}
+            onChange={(e) => session.setCurrent(Number(e.target.value))}
+            className="border-input bg-background h-9 rounded-lg border px-2 text-sm"
+          >
+            {questions.map((q, i) => (
+              <option key={q.id} value={i}>
+                Q{i + 1}{session.flagged.has(q.id) ? " ⚑" : q.id in session.answers ? " ✓" : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+
         <div className="hidden gap-1.5 md:flex">
           {questions.map((q, i) => {
             const answeredQ = q.id in session.answers;
@@ -632,10 +719,10 @@ export function ExamRunner({
       {phase === "submitting" && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-background/80 backdrop-blur">
           <div className="flex flex-col items-center gap-4 text-center">
-            <Progress className="w-48" value={100} />
+            <Loader2Icon className="text-primary size-8 animate-spin" />
             <p className="font-medium">Submitting your exam…</p>
             <p className="text-muted-foreground text-sm">
-              Uploading proctoring recordings and finalizing your answers.
+              Finalizing your answers — this only takes a moment.
             </p>
           </div>
         </div>

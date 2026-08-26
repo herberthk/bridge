@@ -163,5 +163,11 @@ export function todayMetricId(now = new Date()): string {
   return now.toISOString().slice(0, 10);
 }
 
+/** Server-side count aggregation — avoids reading documents just to count them. */
+export async function countQuery<T>(q: Query<T>): Promise<number> {
+  const snapshot = await q.count().get();
+  return snapshot.data().count;
+}
+
 /** Collection reference type helpers for services. */
 export type TypedCollection<T> = CollectionReference<T>;

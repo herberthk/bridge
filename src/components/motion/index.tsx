@@ -86,15 +86,23 @@ export function AnimatedCounter({
   const reduce = useReducedMotion();
   const [display, setDisplay] = useState(() => format(reduce ? value : 0));
 
+  // `format` defaults to a fresh closure every render, so listing it as an
+  // effect dependency restarted (and re-rendered) the animation forever.
+  // Route it through a ref instead — synced outside the animation effect.
+  const formatRef = useRef(format);
+  useEffect(() => {
+    formatRef.current = format;
+  }, [format]);
+
   useEffect(() => {
     if (!inView || reduce) return;
     const controls = animate(0, value, {
       duration,
       ease: [0.16, 1, 0.3, 1],
-      onUpdate: (v) => setDisplay(format(v)),
+      onUpdate: (v) => setDisplay(formatRef.current(v)),
     });
     return () => controls.stop();
-  }, [inView, value, duration, format, reduce]);
+  }, [inView, value, duration, reduce]);
 
   return (
     <span ref={ref} className={cn("tabular-nums", className)}>

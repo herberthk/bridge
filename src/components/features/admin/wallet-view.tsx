@@ -23,10 +23,12 @@ export function WalletView({
   wallet,
   transactions,
   ownerLabel,
+  loadFailed = false,
 }: {
   wallet: SerializedWithId<WalletDoc> | null;
   transactions: SerializedWithId<TransactionDoc>[];
   ownerLabel: string;
+  loadFailed?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-6">
@@ -37,6 +39,13 @@ export function WalletView({
           works for you.
         </p>
       </div>
+
+      {loadFailed && (
+        <p className="text-destructive rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
+          Your wallet could not be loaded — balances shown may be stale. Try
+          refreshing the page.
+        </p>
+      )}
 
       <div className="grid gap-4 md:grid-cols-3">
         <div className="bg-brand shadow-glow relative overflow-hidden rounded-2xl p-6 text-primary-foreground md:col-span-2">
@@ -113,8 +122,7 @@ export function WalletView({
             {transactions.map((t) => (
               <TableRow key={t.id}>
                 <TableCell className="text-muted-foreground text-sm">
-                  {t.createdAt.toString()}
-                  {/* {t.createdAt ? format(parseDate(t.createdAt)!, "d MMM yyyy, HH:mm") : "–"} */}
+                  {t.createdAt ? format(parseDate(t.createdAt)!, "d MMM yyyy, HH:mm") : "–"}
                 </TableCell>
                 <TableCell className="max-w-72 truncate">{t.description}</TableCell>
                 <TableCell className="flex items-center gap-1 tabular-nums">

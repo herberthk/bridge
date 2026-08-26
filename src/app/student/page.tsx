@@ -19,6 +19,7 @@ export default async function StudentHomePage() {
 
   let data: Awaited<ReturnType<typeof studentDashboard>> | null = null;
   let upcoming: Awaited<ReturnType<typeof listStudentAttempts>> = [];
+  let loadFailed = false;
   try {
     [data, upcoming] = await Promise.all([
       studentDashboard(actor),
@@ -26,6 +27,7 @@ export default async function StudentHomePage() {
     ]);
   } catch (err) {
     console.error("[student dashboard] load failed", err);
+    loadFailed = true;
   }
 
   const nextExam = upcoming.find(
@@ -42,6 +44,13 @@ export default async function StudentHomePage() {
           Here&apos;s how your learning is going.
         </p>
       </div>
+
+      {loadFailed && (
+        <p className="text-destructive rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
+          Your progress could not be loaded — figures below may be stale. Try
+          refreshing the page.
+        </p>
+      )}
 
       {nextExam && (
         <div className="gradient-border shadow-lifted flex flex-wrap items-center justify-between gap-4 rounded-xl p-5">

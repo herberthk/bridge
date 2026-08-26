@@ -4,6 +4,7 @@ import Link from "next/link";
 import { format } from "date-fns";
 import { ArrowRightIcon, LineChartIcon } from "lucide-react";
 
+import { timestampToDate } from "@/lib/serialize";
 import { requireRole } from "@/server/auth/session";
 import { listStudentAttempts } from "@/server/services/attempts";
 import { Badge } from "@/components/ui/badge";
@@ -14,10 +15,12 @@ export const metadata = { title: "Results" };
 export default async function StudentResultsPage() {
   const actor = await requireRole("student");
   let items: Awaited<ReturnType<typeof listStudentAttempts>> = [];
+  let loadFailed = false;
   try {
     items = await listStudentAttempts(actor);
   } catch (err) {
     console.error("[student/results] load failed", err);
+    loadFailed = true;
   }
   const graded = items.filter((i) => i.attempt.status === "graded" || i.attempt.status === "flagged");
 
@@ -30,7 +33,12 @@ export default async function StudentResultsPage() {
         </p>
       </div>
 
-      {graded.length === 0 ? (
+      {loadFailed ? (
+        <p className="text-destructive rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
+          Your results could not be loaded. Try refreshing the page — if this
+          keeps happening, contact your administrator.
+        </p>
+      ) : graded.length === 0 ? (
         <div className="shadow-card flex flex-col items-center gap-3 rounded-xl border bg-card p-12 text-center">
           <span className="bg-brand-soft flex size-12 items-center justify-center rounded-xl text-accent-foreground">
             <LineChartIcon className="size-6" />
@@ -42,7 +50,9 @@ export default async function StudentResultsPage() {
         </div>
       ) : (
         <div className="shadow-card flex flex-col divide-y rounded-xl border bg-card">
-          {graded.map(({ attempt, exam }) => (
+          {graded.map(({ attempt, exam }) => {
+            const gradedWhen = timestampToDate(attempt.gradedAt);
+            return (
             <Link
               key={attempt.id}
               href={`/student/results/${attempt.id}`}
@@ -51,8 +61,8 @@ export default async function StudentResultsPage() {
               <div className="min-w-0 flex-1">
                 <p className="truncate font-medium">{exam?.title ?? "Exam"}</p>
                 <p className="text-muted-foreground text-xs">
-                  {attempt.gradedAt
-                    ? format(attempt.gradedAt.toDate(), "d MMM yyyy, HH:mm")
+                  {gradedWhen
+                    ? format(gradedWhen, "d MMM yyyy, HH:mm")
                     : attempt.status === "flagged"
                       ? "Under review"
                       : "Grading…"}
@@ -77,7 +87,8 @@ export default async function StudentResultsPage() {
               )}
               <ArrowRightIcon className="text-muted-foreground size-4" />
             </Link>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

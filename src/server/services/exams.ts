@@ -1,4 +1,4 @@
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldPath, FieldValue, Timestamp } from "firebase-admin/firestore";
 
 import { generateText, Output } from "ai";
 
@@ -13,6 +13,7 @@ import {
   attemptsCol,
   examDoc,
   examsCol,
+  usersCol,
 } from "@/server/firebase/collections";
 import { writeAudit } from "@/server/services/audit";
 import { assertCanAfford, consumeTokens } from "@/server/services/billing";
@@ -59,40 +60,68 @@ export async function generateExam(
     ? await loadDocumentExcerpts(actor, input.documentIds)
     : [];
 
-  let output: ExamOutput;
-  let tokensUsed: number;
-  try {
-    const result = await generateText({
-      model: textModel(),
-      instructions: examGenerationInstructions(input.params),
-      prompt: examGenerationPrompt(
-        input.params,
-        excerpts.map((d) => ({ name: d.name, text: chunkDocumentText(d.text) })),
-      ),
-      output: Output.object({ schema: examOutputSchema }),
-      // Gemini 3.x reasons inside the output budget — keep it generous or
-      // structured output arrives truncated/empty.
-      maxOutputTokens: Math.min(60_000, 4_000 + input.params.questionCount * 800),
-      temperature: 0.7,
-    });
-    output = result.output;
-    const usage = result.usage;
-    tokensUsed =
-      usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown AI error";
-    throw new ExamsServiceError(`AI generation failed: ${message}`, 502);
+  let output: ExamOutput | null = null;
+  let tokensUsed = 0;
+
+  // Gemini 3.x spends a large share of the output budget on internal reasoning
+  // before writing any JSON; when thinking runs long, only a few questions
+  // survive and structured parsing still "succeeds". Budget generously and
+  // auto-retry: this truncation is transient (not deterministic), so a couple
+  // of retries converts a frequent 502 into a rare one.
+  const maxAttempts = 3;
+  let lastFailure: ExamsServiceError | null = null;
+
+  for (let attempt = 1; attempt <= maxAttempts && !output; attempt += 1) {
+    try {
+      const result = await generateText({
+        model: textModel(),
+        instructions: examGenerationInstructions(input.params),
+        prompt: examGenerationPrompt(
+          input.params,
+          excerpts.map((d) => ({ name: d.name, text: chunkDocumentText(d.text) })),
+        ),
+        output: Output.object({ schema: examOutputSchema }),
+        maxOutputTokens: Math.min(
+          60_000,
+          8_000 + input.params.questionCount * 2_500,
+        ),
+        temperature: 0.7,
+      });
+      const usage = result.usage;
+      tokensUsed =
+        usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+
+      const candidate = result.output;
+      const count = candidate.questions.length;
+      const drift = Math.abs(count - input.params.questionCount);
+      // Tolerate near-misses from the model but reject wild deviations.
+      if (
+        count !== input.params.questionCount &&
+        drift > Math.max(2, input.params.questionCount * 0.2)
+      ) {
+        throw new ExamsServiceError(
+          `AI returned ${count} questions (expected ${input.params.questionCount}).`,
+          502,
+        );
+      }
+      output = candidate;
+    } catch (err) {
+      console.error(`[exams] generation attempt ${attempt}/${maxAttempts} failed`);
+      lastFailure =
+        err instanceof ExamsServiceError
+          ? err
+          : new ExamsServiceError(
+              `AI generation failed: ${err instanceof Error ? err.message : "Unknown AI error"}`,
+              502,
+            );
+    }
   }
 
-  if (output.questions.length !== input.params.questionCount) {
-    // Tolerate near-misses from the model but reject wild deviations.
-    const drift = Math.abs(output.questions.length - input.params.questionCount);
-    if (drift > Math.max(2, input.params.questionCount * 0.2)) {
-      throw new ExamsServiceError(
-        `AI returned ${output.questions.length} questions (expected ${input.params.questionCount}). Try again.`,
-        502,
-      );
-    }
+  if (!output) {
+    throw (
+      lastFailure ??
+      new ExamsServiceError("AI returned an empty exam. Try again.", 502)
+    );
   }
 
   const questions: Question[] = output.questions.map((q, i) => ({
@@ -171,13 +200,40 @@ export async function assignExam(
     throw new ExamsServiceError("This exam belongs to another school.", 403);
   }
 
+  // Enforce that every referenced student actually belongs to this admin
+  // (same school / standalone household). Prevents assigning exams to
+  // arbitrary student ids across the platform.
+  const CHUNK = 10;
+  const allowedIds = new Set<string>();
+  for (let i = 0; i < input.studentIds.length; i += CHUNK) {
+    const chunk = input.studentIds.slice(i, i + CHUNK);
+    let query = usersCol().where("role", "==", "student");
+    if (actor.role === "admin" && actor.schoolId) {
+      query = query.where("schoolId", "==", actor.schoolId);
+    } else if (actor.role === "admin") {
+      query = query.where("createdBy", "==", actor.uid);
+    }
+    const snap = await query.where(FieldPath.documentId(), "in", chunk).get();
+    snap.docs.forEach((d) => allowedIds.add(d.id));
+  }
+  const rejected = input.studentIds.filter((id) => !allowedIds.has(id));
+  if (rejected.length > 0) {
+    throw new ExamsServiceError(
+      `${rejected.length} selected student(s) are not in your school.`,
+      403,
+    );
+  }
+
   const now = FieldValue.serverTimestamp();
+  const scheduledAt = input.scheduledFor
+    ? Timestamp.fromMillis(Date.parse(input.scheduledFor))
+    : null;
   const base: WriteModel<AttemptDoc> = {
     examId: input.examId,
     studentId: "",
     schoolId: exam.schoolId,
     status: "pending",
-    scheduledFor: input.scheduledFor ? FieldValue.serverTimestamp() : null,
+    scheduledFor: scheduledAt,
     startedAt: null,
     submittedAt: null,
     autoSubmitted: false,
@@ -195,16 +251,23 @@ export async function assignExam(
     updatedAt: now,
   };
 
-  let created = 0;
-  for (const studentId of input.studentIds) {
-    // Skip if an open/unfinished attempt already exists for this exam.
+  // Skip students who already have an open/unfinished attempt for this exam.
+  // One query per chunk instead of one per student (N+1 → N/30).
+  const openStatuses = ["pending", "in_progress", "submitted"] as const;
+  const hasOpenAttempt = new Set<string>();
+  for (let i = 0; i < input.studentIds.length; i += CHUNK) {
+    const chunk = input.studentIds.slice(i, i + CHUNK);
     const existing = await attemptsCol()
       .where("examId", "==", input.examId)
-      .where("studentId", "==", studentId)
-      .where("status", "in", ["pending", "in_progress", "submitted"])
-      .limit(1)
+      .where("studentId", "in", chunk)
+      .where("status", "in", [...openStatuses])
       .get();
-    if (!existing.empty) continue;
+    existing.docs.forEach((d) => hasOpenAttempt.add(d.data().studentId as string));
+  }
+
+  let created = 0;
+  for (const studentId of input.studentIds) {
+    if (hasOpenAttempt.has(studentId)) continue;
 
     await attemptsCol().add({ ...base, studentId });
     created += 1;

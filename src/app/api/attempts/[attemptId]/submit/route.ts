@@ -33,6 +33,7 @@ export async function POST(
 
     return NextResponse.json({ ok: true, ...result });
   } catch (err) {
+    console.log('[grading] async AI grading failed', err);
     const status = err instanceof AttemptsServiceError ? err.status : 500;
     const message =
       err instanceof AttemptsServiceError ? err.message : "Submission failed.";

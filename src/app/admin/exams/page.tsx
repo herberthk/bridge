@@ -12,6 +12,7 @@ export default async function AdminExamsPage() {
 
   let exams: WithId<ExamDoc>[] = [];
   let students: WithId<UserDoc>[] = [];
+  let loadFailed = false;
   try {
     [exams, students] = await Promise.all([
       listExams(actor),
@@ -19,7 +20,17 @@ export default async function AdminExamsPage() {
     ]);
   } catch (err) {
     console.error("[admin/exams] load failed", err);
+    loadFailed = true;
   }
 
-  return <ExamLibrary exams={serializeDocs(exams)} students={serializeDocs(students)} />;
+  return (
+    <>
+      {loadFailed && (
+        <p className="text-destructive rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
+          Your exam library could not be loaded. Try refreshing the page.
+        </p>
+      )}
+      <ExamLibrary exams={serializeDocs(exams)} students={serializeDocs(students)} />
+    </>
+  );
 }

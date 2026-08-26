@@ -1,5 +1,7 @@
 import { FieldValue } from "firebase-admin/firestore";
 
+import { adminDb } from "@/server/firebase/admin";
+
 import {
   attemptsCol,
   examDoc,
@@ -46,6 +48,21 @@ async function loadExam(examId: string): Promise<WithId<ExamDoc>> {
   const snap = await examDoc(examId).get();
   if (!snap.exists) throw new AttemptsServiceError("Exam not found.", 404);
   return { id: snap.id, ...snap.data()! } as WithId<ExamDoc>;
+}
+
+/**
+ * Assert the attempt belongs to the acting student — cheap ownership gate
+ * used before expensive work (AI analysis, uploads).
+ */
+export async function assertAttemptOwner(
+  actor: SessionUser,
+  attemptId: string,
+): Promise<WithId<AttemptDoc>> {
+  const attempt = await loadAttempt(attemptId);
+  if (attempt.studentId !== actor.uid) {
+    throw new AttemptsServiceError("Not your attempt.", 403);
+  }
+  return attempt;
 }
 
 /** Start a pending attempt — enforces schedule windows, returns safe questions. */
@@ -145,6 +162,10 @@ export async function submitAttempt(
   if (attempt.status === "flagged") {
     throw new AttemptsServiceError("This attempt is locked for review.", 403);
   }
+  if (attempt.status === "pending") {
+    // Never started — submitting directly would bypass proctoring.
+    throw new AttemptsServiceError("Start the exam before submitting.", 409);
+  }
 
   const exam = await loadExam(attempt.examId);
   const now = Date.now();
@@ -160,26 +181,40 @@ export async function submitAttempt(
     (a) => a.graded === null && a.response !== null,
   );
 
-  const ts = FieldValue.serverTimestamp();
-  await attemptRef(attemptId).update({
-    status: "submitted",
-    answers,
-    submittedAt: ts,
-    autoSubmitted: input.autoSubmitted || late,
-    timeSpentSeconds: Math.min(
-      input.timeSpentSeconds,
-      Math.round((now - startedMs) / 1000),
-    ),
-    score:
-      !needsAiGrading && possibleTotal > 0
-        ? {
-            earned,
-            possible: possibleTotal,
-            percentage: Math.round((earned / possibleTotal) * 100),
-          }
-        : null,
-    updatedAt: ts,
+  // Transactional write with an in_progress guard: a concurrent proctoring
+  // termination (flag) must win over a late manual submit, never the reverse.
+  const committed = await adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(attemptRef(attemptId));
+    if (!snap.exists) throw new AttemptsServiceError("Attempt not found.", 404);
+    if (snap.data()!.status !== "in_progress") {
+      return false;
+    }
+    const ts = FieldValue.serverTimestamp();
+    tx.update(attemptRef(attemptId), {
+      status: "submitted",
+      answers,
+      submittedAt: ts,
+      autoSubmitted: input.autoSubmitted || late,
+      timeSpentSeconds: Math.min(
+        input.timeSpentSeconds,
+        Math.round((now - startedMs) / 1000),
+      ),
+      score:
+        !needsAiGrading && possibleTotal > 0
+          ? {
+              earned,
+              possible: possibleTotal,
+              percentage: Math.round((earned / possibleTotal) * 100),
+            }
+          : null,
+      updatedAt: ts,
+    });
+    return true;
   });
+
+  if (!committed) {
+    return { status: "flagged", needsAiGrading: false };
+  }
 
   await writeAudit({
     actorId: actor.uid,
@@ -261,28 +296,61 @@ export async function logProctorEvent(
   warnings: number;
   action: "continue" | "warn" | "terminate";
 }> {
-  const attempt = await loadAttempt(attemptId);
-  if (attempt.studentId !== actor.uid) {
-    throw new AttemptsServiceError("Not your attempt.", 403);
-  }
+  const attempt = await assertAttemptOwner(actor, attemptId);
   if (attempt.status !== "in_progress") {
     return { violations: attempt.violationsCount, warnings: attempt.warningsIssued, action: "continue" };
   }
 
-  const countsAsViolation = input.severity === "high" || input.severity === "critical";
-  const violations = attempt.violationsCount + (countsAsViolation ? 1 : 0);
-
-  // Policy: warn after the first violation, terminate after the second.
-  let warnings = attempt.warningsIssued;
-  let action: "continue" | "warn" | "terminate" = "continue";
-  if (countsAsViolation) {
-    if (violations <= PROCTORING.maxWarnings) {
-      warnings += 1;
-      action = violations === PROCTORING.maxWarnings ? "warn" : "warn";
-    } else {
-      action = "terminate";
+  // Atomically increment counters — concurrent events (tab_switch bursts)
+  // must not lose violation counts.
+  const outcome = await adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(attemptRef(attemptId));
+    if (!snap.exists) throw new AttemptsServiceError("Attempt not found.", 404);
+    const current = snap.data()!;
+    if (current.status !== "in_progress") {
+      return {
+        violations: current.violationsCount,
+        warnings: current.warningsIssued,
+        action: "continue" as const,
+      };
     }
-  }
+
+    const countsAsViolation = input.severity === "high" || input.severity === "critical";
+    const violations = current.violationsCount + (countsAsViolation ? 1 : 0);
+
+    // Policy: warn after the first violation, terminate after the second.
+    let warnings = current.warningsIssued;
+    let action: "continue" | "warn" | "terminate" = "continue";
+    if (countsAsViolation) {
+      if (violations <= PROCTORING.maxWarnings) {
+        warnings += 1;
+        action = "warn";
+      } else {
+        action = "terminate";
+      }
+    }
+
+    const now = FieldValue.serverTimestamp();
+    if (action === "terminate") {
+      // Flag atomically with the counter update — a concurrent submit racing
+      // this transaction can no longer overwrite the flagged state.
+      tx.update(attemptRef(attemptId), {
+        violationsCount: violations,
+        warningsIssued: warnings,
+        status: "flagged",
+        autoSubmitted: true,
+        submittedAt: now,
+        updatedAt: now,
+      });
+    } else {
+      tx.update(attemptRef(attemptId), {
+        violationsCount: violations,
+        warningsIssued: warnings,
+        updatedAt: now,
+      });
+    }
+    return { violations, warnings, action };
+  });
 
   const event: WriteModel<ProctoringEventDoc> = {
     attemptId,
@@ -298,20 +366,8 @@ export async function logProctorEvent(
 
   await proctoringEventsCol().add(event);
 
-  await attemptRef(attemptId).update({
-    violationsCount: violations,
-    warningsIssued: warnings,
-    updatedAt: FieldValue.serverTimestamp(),
-  });
-
-  if (action === "terminate") {
-    // Flag the attempt and notify the school admin via audit + flag status.
-    await attemptRef(attemptId).update({
-      status: "flagged",
-      autoSubmitted: true,
-      submittedAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
+  if (outcome.action === "terminate") {
+    // Status was already flipped inside the transaction — just notify.
     await writeAudit({
       actorId: actor.uid,
       actorRole: actor.role,
@@ -322,7 +378,7 @@ export async function logProctorEvent(
     });
   }
 
-  return { violations, warnings, action };
+  return outcome;
 }
 
 /** Attach uploaded recording storage paths to an attempt. */
@@ -331,10 +387,7 @@ export async function attachRecordings(
   attemptId: string,
   refs: { cameraPath: string | null; screenPath: string | null },
 ): Promise<void> {
-  const attempt = await loadAttempt(attemptId);
-  if (attempt.studentId !== actor.uid) {
-    throw new AttemptsServiceError("Not your attempt.", 403);
-  }
+  const attempt = await assertAttemptOwner(actor, attemptId);
   await attemptRef(attemptId).update({
     recordings: {
       cameraPath: refs.cameraPath ?? attempt.recordings?.cameraPath ?? null,
@@ -344,16 +397,44 @@ export async function attachRecordings(
   });
 }
 
+/** Fields needed by list views (dashboard/exams/results) — excludes answers. */
+type AttemptListFields = Pick<
+  AttemptDoc,
+  | "examId"
+  | "status"
+  | "score"
+  | "submittedAt"
+  | "gradedAt"
+  | "scheduledFor"
+  | "autoSubmitted"
+  | "createdAt"
+>;
+export type StudentAttemptListItem = WithId<AttemptListFields>;
+
 /** Attempts visible to a student, newest first, with exam metadata joined. */
 export async function listStudentAttempts(actor: SessionUser): Promise<
-  { attempt: WithId<AttemptDoc>; exam: { id: string; title: string; subject: string; durationMinutes: number; questionCount: number } | null }[]
+  { attempt: StudentAttemptListItem; exam: { id: string; title: string; subject: string; durationMinutes: number; questionCount: number } | null }[]
 > {
+  // List views only need metadata — project away the heavy answers/feedback
+  // arrays so listing 100 attempts doesn't deserialize megabytes.
   const snap = await attemptsCol()
     .where("studentId", "==", actor.uid)
     .orderBy("createdAt", "desc")
     .limit(100)
+    .select(
+      "examId",
+      "status",
+      "score",
+      "submittedAt",
+      "gradedAt",
+      "scheduledFor",
+      "autoSubmitted",
+      "createdAt",
+    )
     .get();
-  const attempts = snap.docs.map((d) => ({ id: d.id, ...d.data()! }));
+  const attempts = snap.docs.map(
+    (d) => ({ id: d.id, ...d.data()! }) as StudentAttemptListItem,
+  );
 
   const examIds = [...new Set(attempts.map((a) => a.examId))];
   const examMetaById = new Map<

@@ -16,7 +16,10 @@ service firebase.storage {
         return firestore.get(/databases/(default)/documents/attempts/$(attemptId));
       }
       allow read: if isSuper()
-        || (isAdmin() && attempt().data.schoolId == mySchool());
+        || (isAdmin()
+            && ((attempt().data.schoolId != null && attempt().data.schoolId == mySchool())
+                || (attempt().data.schoolId == null
+                    && firestore.get(/databases/(default)/documents/users/$(attempt().data.studentId)).data.createdBy == request.auth.uid)));
       allow write: if isSignedIn()
         && attempt().data.studentId == request.auth.uid
         && request.resource.size < 500 * 1024 * 1024

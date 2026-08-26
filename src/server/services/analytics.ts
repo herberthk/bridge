@@ -2,11 +2,11 @@ import { FieldValue, Timestamp } from "firebase-admin/firestore";
 
 import {
   attemptsCol,
+  countQuery,
   dailyMetricDoc,
   examsCol,
   metricsCol,
   schoolsCol,
-  transactionsCol,
   usersCol,
   walletsCol,
 } from "@/server/firebase/collections";
@@ -188,16 +188,18 @@ export interface SuperDashboardData {
 }
 
 export async function superDashboard(): Promise<SuperDashboardData> {
-  const [studentsSnap, adminsSnap, schoolsSnap, examsSnap, attemptsSnap, metricsSnap, txSnap, loginsSnap] =
+  const weekAgo = Timestamp.fromMillis(Date.now() - 7 * 86400_000);
+  const [totalStudents, totalAdmins, totalSchools, totalExams, totalAttempts, activeUsers7d, metricsSnap] =
     await Promise.all([
-      usersCol().where("role", "==", "student").get(),
-      usersCol().where("role", "==", "admin").get(),
-      schoolsCol().get(),
-      examsCol().limit(5000).get(),
-      attemptsCol().limit(5000).get(),
-      metricsCol().orderBy("__name__", "desc").limit(30).get(),
-      transactionsCol().where("type", "==", "consumption").limit(5000).get(),
-      usersCol().where("lastLoginAt", ">", Timestamp.fromMillis(Date.now() - 7 * 86400_000)).get(),
+      countQuery(usersCol().where("role", "==", "student")),
+      countQuery(usersCol().where("role", "==", "admin")),
+      countQuery(schoolsCol()),
+      countQuery(examsCol()),
+      countQuery(attemptsCol()),
+      countQuery(usersCol().where("lastLoginAt", ">", weekAgo)),
+      // Daily aggregates are the single source of truth for revenue and
+      // consumption — no need to deserialize thousands of transaction docs.
+      metricsCol().orderBy("__name__", "desc").limit(366).get(),
     ]);
 
   const metrics: WithId<DailyMetricDoc>[] = metricsSnap.docs.map((d) => ({
@@ -205,11 +207,7 @@ export async function superDashboard(): Promise<SuperDashboardData> {
     ...d.data()!,
   }));
 
-  // Revenue = all consumption transactions.
-  const revenueMicros = txSnap.docs.reduce(
-    (n, d) => n + (d.data()!.usdMicros ?? 0),
-    0,
-  );
+  const revenueMicros = metrics.reduce((n, m) => n + (m.usdRevenueMicros ?? 0), 0);
   const tokensConsumed = metrics.reduce((n, m) => n + (m.tokensConsumed ?? 0), 0);
 
   const revenueByDay = metrics
@@ -219,14 +217,6 @@ export async function superDashboard(): Promise<SuperDashboardData> {
       date: m.date.slice(5),
       usd: Math.round(((m.usdRevenueMicros ?? 0) / 1_000_000) * 1000) / 1000,
     }));
-
-  // Subject distribution across all exams' attempts.
-  const exams = examsSnap.docs.map((d) => ({ id: d.id, ...d.data()! }));
-  const subjectCount = new Map<string, number>();
-  for (const e of exams) {
-    const s = SUBJECT_LABELS[e.params.subject as Subject] ?? e.params.subject;
-    subjectCount.set(s, (subjectCount.get(s) ?? 0) + 1);
-  }
 
   const browserMap = new Map<string, number>();
   const deviceMap = new Map<string, number>();
@@ -239,18 +229,28 @@ export async function superDashboard(): Promise<SuperDashboardData> {
     }
   }
 
+  // Exact per-subject exam counts via cheap count() aggregations instead of
+  // deserializing every exam document.
+  const subjects = Object.keys(SUBJECT_LABELS) as Subject[];
+  const subjectCounts = await Promise.all(
+    subjects.map(async (subject) => ({
+      subject: SUBJECT_LABELS[subject],
+      attempts: await countQuery(examsCol().where("params.subject", "==", subject)),
+    })),
+  );
+
   return {
-    totalStudents: studentsSnap.size,
-    totalAdmins: adminsSnap.size,
-    totalSchools: schoolsSnap.size,
-    totalExams: examsSnap.size,
-    totalAttempts: attemptsSnap.size,
-    activeUsers7d: loginsSnap.size,
+    totalStudents,
+    totalAdmins,
+    totalSchools,
+    totalExams,
+    totalAttempts,
+    activeUsers7d,
     revenueUsd: Math.round((revenueMicros / 1_000_000) * 100) / 100,
     tokensConsumed,
     revenueByDay,
-    attemptsBySubject: [...subjectCount.entries()]
-      .map(([subject, attempts]) => ({ subject, attempts }))
+    attemptsBySubject: subjectCounts
+      .filter((s) => s.attempts > 0)
       .sort((a, b) => b.attempts - a.attempts),
     byBrowser: [...browserMap.entries()]
       .map(([browser, count]) => ({ browser, count }))

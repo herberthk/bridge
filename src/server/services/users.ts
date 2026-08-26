@@ -199,6 +199,18 @@ export async function setUserStatus(
   }
 }
 
+/** Total students visible to an admin — cheap count aggregate. */
+export async function countStudents(actor: SessionUser): Promise<number> {
+  let query = usersCol().where("role", "==", "student");
+  if (actor.role === "admin" && actor.schoolId) {
+    query = query.where("schoolId", "==", actor.schoolId);
+  } else if (actor.role === "admin") {
+    query = query.where("createdBy", "==", actor.uid);
+  }
+  const snap = await query.count().get();
+  return snap.data().count;
+}
+
 /** Students visible to an admin: same school, or all students for super admin. */
 export async function listStudents(actor: SessionUser): Promise<WithId<UserDoc>[]> {
   let query = usersCol().where("role", "==", "student");

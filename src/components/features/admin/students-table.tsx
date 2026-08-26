@@ -17,6 +17,10 @@ import {
   setUserStatusAction,
   type ActionState,
 } from "@/app/admin/actions";
+import {
+  TempPasswordField,
+  useActionToast,
+} from "@/components/features/super/schools-manager";
 import { classLevelOptions } from "@/lib/schemas/users";
 import type { Role, UserStatus } from "@/lib/constants";
 import type { UserDoc } from "@/types/firestore";
@@ -91,20 +95,7 @@ function CreateStudentDialog() {
     createStudentAction,
     null,
   );
-  const [handled, setHandled] = useState<ActionState | null>(null);
-
-  // React render-phase state adjustment: react to each new action result once.
-  if (state && state !== handled) {
-    setHandled(state);
-    if (state.ok) {
-      setOpen(false);
-      toast.success("Student created", {
-        description: "Share the email + temporary password with the student.",
-      });
-    } else {
-      toast.error(state.error);
-    }
-  }
+  useActionToast(state, () => setOpen(false), "Student created");
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -143,13 +134,7 @@ function CreateStudentDialog() {
             </Field>
             <Field>
               <FieldLabel htmlFor="password">Temporary password</FieldLabel>
-              <Input
-                id="password"
-                name="password"
-                type="text"
-                required
-                placeholder="10+ chars, mixed case, number"
-              />
+              <TempPasswordField id="password" name="password" />
               <FieldDescription>
                 At least 10 characters with upper/lowercase and a number.
               </FieldDescription>
@@ -318,17 +303,24 @@ function StudentRowActions({ student }: { student: SerializedWithId<UserDoc> }) 
 export function StudentsTable({
   students,
   viewerRole,
+  total = null,
 }: {
   students: SerializedWithId<UserDoc>[];
   viewerRole: Role;
+  /** Exact count when available — lets us show “X of Y” on capped lists. */
+  total: number | null;
 }) {
+  const truncated = total !== null && students.length < total;
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Students</h1>
           <p className="text-muted-foreground mt-1 text-sm">
-            {students.length} student{students.length === 1 ? "" : "s"} ·
+            {truncated
+              ? `${students.length} of ${total} students shown`
+              : `${students.length} student${students.length === 1 ? "" : "s"}`}
+            ·
             {viewerRole === "admin" ? " managed by you" : " across the platform"}
           </p>
         </div>

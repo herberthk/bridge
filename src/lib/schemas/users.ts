@@ -68,6 +68,21 @@ export const setUserStatusSchema = z.object({
 });
 export type SetUserStatusInput = z.infer<typeof setUserStatusSchema>;
 
+/**
+ * Manual wallet credit. Tokens arrive as a form string and are coerced; the
+ * hard ceiling guards against typos (the largest preset pack is 10M).
+ */
+export const topupWalletSchema = z.object({
+  walletId: z.string().min(1),
+  tokens: z.coerce
+    .number()
+    .int("Tokens must be a whole number")
+    .min(1, "Enter a valid token amount.")
+    .max(100_000_000, "That amount looks like a typo — maximum is 100,000,000."),
+  description: z.string().trim().max(300).optional(),
+});
+export type TopupWalletInput = z.infer<typeof topupWalletSchema>;
+
 /** Client-side helpers for class level options. */
 export const classLevelOptions = (
   level: "primary" | "secondary",

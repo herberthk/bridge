@@ -17,10 +17,12 @@ export default async function AdminHomePage() {
   const actor = await requireRole("admin");
 
   let data: Awaited<ReturnType<typeof adminDashboard>> | null = null;
+  let loadFailed = false;
   try {
     data = await adminDashboard(actor);
   } catch (err) {
     console.error("[admin dashboard] load failed", err);
+    loadFailed = true;
   }
 
   return (
@@ -38,6 +40,13 @@ export default async function AdminHomePage() {
           <ArrowRightIcon data-icon="inline-end" />
         </Button>
       </div>
+
+      {loadFailed && (
+        <p className="text-destructive rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
+          Dashboard metrics failed to load — figures below may be stale or zero.
+          Try refreshing the page.
+        </p>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <KpiCard title="Students" value={data?.studentCount ?? 0} accent />
