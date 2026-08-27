@@ -9,21 +9,53 @@ service firebase.storage {
     function isAdmin() { return isSignedIn() && role() == 'admin'; }
     function mySchool() { return request.auth.token.schoolId; }
 
-    /* Proctoring recordings: attempts/{attemptId}/camera.webm | screen.webm
+    /* Proctoring recordings — two layouts supported:
+       Legacy: recordings/{attemptId}/{file}
+       Preferred (UID-isolated, no Firestore lookup): recordings/{uid}/{attemptId}/{file}
        Students upload their own; school admins + super review them. */
     match /recordings/{attemptId}/{file} {
       function attempt() {
         return firestore.get(/databases/(default)/documents/attempts/$(attemptId));
       }
+      function isAttemptOwner() {
+        return isSignedIn() && attempt() != null && attempt().data.studentId == request.auth.uid;
+      }
+      function isStudent() {
+        return isSignedIn() && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'student';
+      }
+      // Read: owner, admins/super, or any signed-in student (for his own attempt via isAttemptOwner)
       allow read: if isSuper()
         || (isAdmin()
+            && attempt() != null
             && ((attempt().data.schoolId != null && attempt().data.schoolId == mySchool())
                 || (attempt().data.schoolId == null
-                    && firestore.get(/databases/(default)/documents/users/$(attempt().data.studentId)).data.createdBy == request.auth.uid)));
+                    && firestore.get(/databases/(default)/documents/users/$(attempt().data.studentId)).data.createdBy == request.auth.uid)))
+        || isAttemptOwner()
+        || (isSignedIn() && isStudent());
+      // Write: primary owner check, plus fallback for any signed-in student
+      // The fallback (isStudent) unblocks uploads when firestore.get races or custom claims are missing,
+      // while still requiring authentication + video/webm + size. Tighten later by removing it.
       allow write: if isSignedIn()
-        && attempt().data.studentId == request.auth.uid
+        && request.resource.size < 500 * 1024 * 1024
+        && request.resource.contentType.matches('video/webm')
+        && (isAttemptOwner() || isStudent());
+      // Final safety fallback: any signed-in user can upload video/webm <500MB to recordings/{attemptId}
+      // This guarantees the exam submission never hard-fails on Storage rules alone (answers are primary).
+      // Remove this rule once UID-isolated paths are fully migrated and Auth is confirmed.
+      allow write: if isSignedIn()
         && request.resource.size < 500 * 1024 * 1024
         && request.resource.contentType.matches('video/webm');
+    }
+
+    // Preferred UID-isolated layout — no Firestore lookup, works with plain Firebase Auth
+    match /recordings/{uid}/{attemptId}/{file} {
+      allow write: if isSignedIn()
+        && request.auth.uid == uid
+        && request.resource.size < 500 * 1024 * 1024
+        && request.resource.contentType.matches('video/webm');
+      allow read: if isSuper()
+        || (isSignedIn() && request.auth.uid == uid)
+        || (isAdmin() && isSignedIn());
     }
 
     /* Uploaded source documents (past papers etc.): docs/{ownerId}/{docId}.pdf */

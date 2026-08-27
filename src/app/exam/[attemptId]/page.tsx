@@ -34,12 +34,20 @@ export default async function ExamRunnerPage({
     redirect(`/student/results/${attemptId}`);
   }
 
+  const policy = {
+    preventBacktrack: (exam?.params as unknown as { preventBacktrack?: boolean } | undefined)?.preventBacktrack ?? true,
+    allowReviewBeforeSubmit: (exam?.params as unknown as { allowReviewBeforeSubmit?: boolean } | undefined)?.allowReviewBeforeSubmit ?? false,
+    allowSkipping: (exam?.params as unknown as { allowSkipping?: boolean } | undefined)?.allowSkipping ?? true,
+    requireFullscreen: (exam?.params as unknown as { requireFullscreen?: boolean } | undefined)?.requireFullscreen ?? true,
+  };
+
   return (
     <ExamRunner
       attemptId={attemptId}
       examTitle={exam?.title ?? "Exam"}
       durationMinutes={exam?.params.durationMinutes ?? 45}
       questionCount={exam?.questions.length ?? 0}
+      policy={policy}
     />
   );
 }

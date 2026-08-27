@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "firebase-deploy": "firebase deploy --only firestore:rules,storage,indexes"
   },
   "dependencies": {
     "@ai-sdk/google": "^4.0.50",

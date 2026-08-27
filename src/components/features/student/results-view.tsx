@@ -1,12 +1,15 @@
 "use client";
 
 import { useActionState, useCallback, useState } from "react";
+import { motion } from "motion/react";
 import {
+  AlertTriangleIcon,
   ArrowLeftIcon,
   CheckCircle2Icon,
   ClockIcon,
   FileDownIcon,
   RotateCcwIcon,
+  ShieldAlertIcon,
   SparklesIcon,
   TargetIcon,
   XCircleIcon,
@@ -45,52 +48,86 @@ function gradeColor(pct: number): string {
   return "text-destructive";
 }
 
-function RetakeDialog({ attemptId }: { attemptId: string }) {
+const RETAKE_CHIPS = [
+  "Internet dropped mid-exam",
+  "Power outage",
+  "Health issue",
+  "Proctoring flagged incorrectly",
+] as const;
+
+function RetakeDialog({ attemptId, flagged }: { attemptId: string; flagged?: boolean }) {
   const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
   const [state, formAction, pending] = useActionState<
     { ok: boolean; error?: string } | null,
     FormData
   >(requestRetakeAction, null);
-  // setSelected/setOpen are stable React setters, so this callback is stable.
   const closeDialog = useCallback(() => setOpen(false), []);
   useActionToast(state, closeDialog, "Retake requested — your teacher will review it.");
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button variant="outline" />}>
+      <DialogTrigger render={<Button variant={flagged ? "default" : "outline"} className={flagged ? "shadow-glow" : ""} />}>
         <RotateCcwIcon data-icon="inline-start" />
-        Request retake
+        {flagged ? "Request retake — flagged" : "Request retake"}
       </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Request a retake</DialogTitle>
-          <DialogDescription>
-            Your teacher reviews every request. Explain briefly why you deserve
-            another attempt.
+      <DialogContent className="overflow-hidden rounded-2xl border p-0 shadow-lifted sm:max-w-[520px]">
+        <div className="bg-brand relative overflow-hidden p-6 text-primary-foreground">
+          <div aria-hidden className="pointer-events-none absolute inset-0 opacity-15" style={{ backgroundImage: "radial-gradient(18rem 10rem at 15% 0%, white, transparent 60%)" }} />
+          <p className="relative inline-flex items-center gap-2 text-xs font-medium opacity-80"><ShieldAlertIcon className="size-3.5" /> Retake request</p>
+          <DialogTitle className="relative mt-1 text-lg font-semibold text-white">Request a retake</DialogTitle>
+          <DialogDescription className="relative mt-1 text-sm text-white/80">
+            {flagged ? "Your attempt was flagged for review — explain what happened and your teacher will decide." : "Your teacher reviews every request. Pick a chip or write your reason (10–500 chars)."}
           </DialogDescription>
-        </DialogHeader>
-        <form action={formAction}>
+        </div>
+
+        <form action={formAction} className="flex flex-col gap-4 p-6">
           <input type="hidden" name="attemptId" value={attemptId} />
-          <div className="flex flex-col gap-4">
-            <Field>
-              <FieldLabel htmlFor="reason">Reason</FieldLabel>
-              <Textarea
-                id="reason"
-                name="reason"
-                rows={4}
-                required
-                placeholder="e.g. I lost internet during question 12 and couldn't finish…"
-              />
-            </Field>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setOpen(false)}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={pending}>
-                {pending ? "Sending…" : "Send request"}
-              </Button>
-            </DialogFooter>
-          </div>
+          <Field>
+            <FieldLabel htmlFor="reason" className="flex items-center justify-between">
+              Reason <span className={`text-xs tabular-nums ${reason.length < 10 ? "text-amber-600" : reason.length > 500 ? "text-destructive" : "text-muted-foreground"}`}>{reason.length}/500</span>
+            </FieldLabel>
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {RETAKE_CHIPS.map((c) => (
+                <button key={c} type="button" onClick={() => setReason(c)} className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors ${reason === c ? "border-primary bg-primary text-primary-foreground shadow-glow" : "bg-muted hover:bg-accent"}`}>
+                  {c}
+                </button>
+              ))}
+            </div>
+            <Textarea
+              id="reason"
+              name="reason"
+              rows={4}
+              required
+              maxLength={500}
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder={flagged ? "e.g. My camera froze at question 8 — I stayed in the room and did not cheat…" : "e.g. I lost internet during question 12 and couldn't finish…"}
+              className="min-h-[96px] rounded-xl border bg-card shadow-card"
+            />
+            <p className="text-muted-foreground mt-1 text-xs">Be specific — teachers approve well-explained requests faster.</p>
+            {state?.error && (
+              <motion.p initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+                <AlertTriangleIcon className="mr-1 inline size-3" /> {state.error}
+              </motion.p>
+            )}
+          </Field>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button type="button" variant="outline" onClick={() => setOpen(false)} className="rounded-xl">
+              Cancel
+            </Button>
+            <Button type="submit" disabled={pending || reason.trim().length < 10} className="shadow-glow min-w-[132px] rounded-xl">
+              {pending ? (
+                <>
+                  <span className="size-4 animate-spin rounded-full border-2 border-white/40 border-t-white" /> Sending…
+                </>
+              ) : (
+                <>
+                  <RotateCcwIcon data-icon="inline-start" /> Send request
+                </>
+              )}
+            </Button>
+          </DialogFooter>
         </form>
       </DialogContent>
     </Dialog>
@@ -128,14 +165,19 @@ export function ResultsView({
             </p>
           </div>
         </div>
-        {!pending && !flagged && (
-          <div className="flex gap-2">
+        {(attempt.status === "graded" || attempt.status === "flagged") && (
+          <div className="flex flex-wrap gap-2">
             <Button variant="outline" nativeButton={false} render={<a href={`/api/reports/attempt/${attempt.id}`} target="_blank" rel="noopener noreferrer" />}>
               <FileDownIcon data-icon="inline-start" />
               Download PDF
             </Button>
-            <RetakeDialog attemptId={attempt.id} />
+            <RetakeDialog attemptId={attempt.id} flagged={flagged} />
           </div>
+        )}
+        {pending && (
+          <Badge variant="secondary" className="hidden sm:inline-flex gap-1.5">
+            <ClockIcon className="size-3 animate-pulse" /> Grading…
+          </Badge>
         )}
       </div>
 

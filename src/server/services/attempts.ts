@@ -120,6 +120,14 @@ export async function startAttempt(
   const startedMs = attempt.startedAt?.toMillis() ?? Date.now();
   const deadlineMs = startedMs + exam.params.durationMinutes * 60_000;
 
+  // Backwards compat: exams created before the policy fields get secure defaults.
+  const policy = {
+    preventBacktrack: (exam.params as unknown as { preventBacktrack?: boolean }).preventBacktrack ?? true,
+    allowReviewBeforeSubmit: (exam.params as unknown as { allowReviewBeforeSubmit?: boolean }).allowReviewBeforeSubmit ?? false,
+    allowSkipping: (exam.params as unknown as { allowSkipping?: boolean }).allowSkipping ?? true,
+    requireFullscreen: (exam.params as unknown as { requireFullscreen?: boolean }).requireFullscreen ?? true,
+  };
+
   return {
     attemptId,
     examTitle: exam.title,
@@ -127,6 +135,7 @@ export async function startAttempt(
     durationMinutes: exam.params.durationMinutes,
     deadlineMs,
     questions: exam.questions.map(toSafeQuestion),
+    policy,
   };
 }
 
@@ -214,7 +223,7 @@ export async function submitAttempt(
   });
 
   if (!result.committed) {
-    return { status: result.currentStatus, needsAiGrading: false };
+    return { status: result.currentStatus as AttemptDoc["status"], needsAiGrading: false };
   }
 
   await writeAudit({

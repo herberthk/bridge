@@ -42,6 +42,11 @@ export const examParamsSchema = z
     includeExplanations: z.boolean(),
     includeWorkedExamples: z.boolean(),
     instructions: z.string().trim().max(2000).nullable(),
+    // Strict exam controls — admin configurable, secure defaults as per spec
+    preventBacktrack: z.boolean().default(true),
+    allowReviewBeforeSubmit: z.boolean().default(false),
+    allowSkipping: z.boolean().default(true),
+    requireFullscreen: z.boolean().default(true),
   })
   .superRefine((p, ctx) => {
     if (p.level === "primary") {

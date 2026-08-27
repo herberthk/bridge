@@ -49,7 +49,7 @@ export function examGenerationInstructions(params: ExamParamsInput): string {
     subsidiaryLine,
     `Topic/theme: ${params.topic}.`,
     `Difficulty: ${DIFFICULTY_LABELS[params.difficulty as Difficulty] ?? params.difficulty} — calibrate language, depth, and distractors to this band.`,
-    `Produce exactly ${params.questionCount} questions distributed across these types: ${params.questionTypes.map((t) => QUESTION_TYPE_LABELS[t]).join(", ")}.`,
+    `Produce EXACTLY ${params.questionCount} questions — not fewer, not more. Count them before you finish: the "questions" array length must equal ${params.questionCount}. If you cannot fit them in one response, still return all ${params.questionCount}.`,
     ...(params.includeHints
       ? ["Include a short, nudging hint (not the answer) for each question in `hint`."]
       : ["Set every `hint` to null."]),
@@ -71,6 +71,7 @@ export function examGenerationInstructions(params: ExamParamsInput): string {
     "- Never leak the answer inside the prompt text.",
     "- Spread points sensibly (default 1; essays 5–10; matching 2).",
     "- For the exam title, use a concise descriptive name including the topic.",
+    "- CRITICAL: Return exactly the requested number of questions. Verify the array length before finalizing. Truncation is a failure — use your full output budget for questions, not reasoning.",
   ].join("\n");
 }
 

@@ -143,6 +143,10 @@ async function main() {
       includeExplanations: true,
       includeWorkedExamples: false,
       instructions: null,
+      preventBacktrack: true,
+      allowReviewBeforeSubmit: false,
+      allowSkipping: true,
+      requireFullscreen: true,
     },
     documentIds: [],
   });

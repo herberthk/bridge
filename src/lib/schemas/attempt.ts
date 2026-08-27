@@ -16,6 +16,13 @@ export interface SafeQuestion {
   hint: string | null;
 }
 
+export interface ExamSessionPolicy {
+  preventBacktrack: boolean;
+  allowReviewBeforeSubmit: boolean;
+  allowSkipping: boolean;
+  requireFullscreen: boolean;
+}
+
 export interface StartedExam {
   attemptId: string;
   examTitle: string;
@@ -24,6 +31,7 @@ export interface StartedExam {
   /** Absolute deadline (epoch ms) — the client renders a countdown to this. */
   deadlineMs: number;
   questions: SafeQuestion[];
+  policy: ExamSessionPolicy;
 }
 
 export const answerSchema = z.object({

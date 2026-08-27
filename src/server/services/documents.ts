@@ -42,7 +42,8 @@ export async function uploadAndParseDocument(
 
   const { text, pageCount } = await extractText(file.buffer, file.mimeType);
 
-  const storagePath = `docs/${actor.uid}/${Date.now()}-${sanitize(file.name)}`;
+  const uniqueSuffix = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${sanitize(file.name)}`;
+  const storagePath = `docs/${actor.uid}/${uniqueSuffix}`;
   const bucket = adminStorage().bucket();
   await bucket.file(storagePath).save(file.buffer, {
     metadata: { contentType: file.mimeType },

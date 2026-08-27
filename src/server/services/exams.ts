@@ -62,46 +62,52 @@ export async function generateExam(
 
   let output: ExamOutput | null = null;
   let tokensUsed = 0;
-
-  // Gemini 3.x spends a large share of the output budget on internal reasoning
-  // before writing any JSON; when thinking runs long, only a few questions
-  // survive and structured parsing still "succeeds". Budget generously and
-  // auto-retry: this truncation is transient (not deterministic), so a couple
-  // of retries converts a frequent 502 into a rare one.
-  const maxAttempts = 3;
   let lastFailure: ExamsServiceError | null = null;
 
+  // Helper: single Gemini call for exactly `count` questions, with
+  // thinking budget capped so reasoning doesn't eat the output window.
+  async function genSingle(
+    params: GenerateExamInput["params"],
+    docExcerpts: typeof excerpts,
+    attemptNum: number,
+  ): Promise<{ out: ExamOutput; tokens: number }> {
+    const result = await generateText({
+      model: textModel(),
+      instructions: examGenerationInstructions(params),
+      prompt: examGenerationPrompt(
+        params,
+        docExcerpts.map((d) => ({ name: d.name, text: chunkDocumentText(d.text) })),
+      ),
+      output: Output.object({ schema: examOutputSchema }),
+      maxOutputTokens: Math.min(64_000, 9_000 + params.questionCount * 3_000),
+      temperature: 0.55,
+      // providerOptions: {
+      //   google: {
+      //     thinkingConfig: { thinkingBudget: 3000, includeThoughts: false },
+      //   },
+      // } as any, // eslint-disable-line @typescript-eslint/no-explicit-any
+    });
+    const usage = result.usage;
+    const tokens = usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+    console.log(`[exams] gen attempt ${attemptNum}: ${result.output.questions.length}/${params.questionCount} q, ${tokens} tokens`);
+    return { out: result.output, tokens };
+  }
+
+  // Phase 1: try full generation up to 3 times (transient truncation usually
+  // succeeds on retry — don't immediately chunk).
+  const maxAttempts = 3;
   for (let attempt = 1; attempt <= maxAttempts && !output; attempt += 1) {
     try {
-      const result = await generateText({
-        model: textModel(),
-        instructions: examGenerationInstructions(input.params),
-        prompt: examGenerationPrompt(
-          input.params,
-          excerpts.map((d) => ({ name: d.name, text: chunkDocumentText(d.text) })),
-        ),
-        output: Output.object({ schema: examOutputSchema }),
-        maxOutputTokens: Math.min(
-          60_000,
-          8_000 + input.params.questionCount * 2_500,
-        ),
-        temperature: 0.7,
-      });
-      const usage = result.usage;
-      const attemptTokens =
-        usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
-      tokensUsed += attemptTokens;
-
-      const candidate = result.output;
+      const { out: candidate, tokens } = await genSingle(input.params, excerpts, attempt);
+      tokensUsed += tokens;
       const count = candidate.questions.length;
       const drift = Math.abs(count - input.params.questionCount);
-      // Tolerate near-misses from the model but reject wild deviations.
-      if (
-        count !== input.params.questionCount &&
-        drift > Math.max(2, input.params.questionCount * 0.2)
-      ) {
+      if (count !== input.params.questionCount && drift > Math.max(2, input.params.questionCount * 0.2)) {
+        // For severe truncation (e.g. 1 vs 20) immediately fall through to chunked
+        // after recording failure — don't waste remaining full retries on same shape.
+        const severe = count < Math.ceil(input.params.questionCount * 0.5);
         throw new ExamsServiceError(
-          `AI returned ${count} questions (expected ${input.params.questionCount}).`,
+          `AI returned ${count} questions (expected ${input.params.questionCount}).${severe ? " Severe truncation — will retry chunked." : ""}`,
           502,
         );
       }
@@ -115,14 +121,82 @@ export async function generateExam(
               `AI generation failed: ${err instanceof Error ? err.message : "Unknown AI error"}`,
               502,
             );
+      // If severe truncation, break early to chunked fallback.
+      if (lastFailure.message.includes("Severe truncation")) break;
     }
   }
 
+  // Phase 2: chunked fallback — split 20 into 7+7+6 etc. This avoids the
+  // single huge JSON array that triggers reasoning truncation. Each chunk is
+  // cheap and reliably returns its exact count.
   if (!output) {
-    throw (
-      lastFailure ??
-      new ExamsServiceError("AI returned an empty exam. Try again.", 502)
-    );
+    const total = input.params.questionCount;
+    const chunkSize = total > 10 ? 7 : 5;
+    console.warn(`[exams] falling back to chunked generation (${total} → chunks of ${chunkSize})`);
+    const chunks: Question[] = [];
+    let chunkTitle: string | null = null;
+    let chunkTokens = 0;
+    let chunkIndex = 0;
+    for (let offset = 0; offset < total; offset += chunkSize) {
+      const need = Math.min(chunkSize, total - offset);
+      chunkIndex += 1;
+      // Keep all params identical except questionCount for this slice.
+      // For variety, suffix the topic so Gemini doesn't repeat identical questions.
+      const chunkParams: GenerateExamInput["params"] = {
+        ...input.params,
+        questionCount: need,
+        topic:
+          chunkIndex === 1
+            ? input.params.topic
+            : `${input.params.topic} — part ${chunkIndex} (avoid repeating earlier questions)`,
+      };
+      let attempts = 0;
+      let chunkOut: ExamOutput | null = null;
+      while (attempts < 2 && !chunkOut) {
+        attempts += 1;
+        try {
+          const { out, tokens } = await genSingle(chunkParams, excerpts, 100 + chunkIndex * 10 + attempts);
+          chunkTokens += tokens;
+          if (out.questions.length !== need) {
+            throw new ExamsServiceError(
+              `Chunk ${chunkIndex} returned ${out.questions.length}/${need} questions.`,
+              502,
+            );
+          }
+          chunkOut = out;
+        } catch (err) {
+          console.error(`[exams] chunk ${chunkIndex} attempt ${attempts} failed`, err);
+          lastFailure =
+            err instanceof ExamsServiceError
+              ? err
+              : new ExamsServiceError(
+                  `Chunk ${chunkIndex} failed: ${err instanceof Error ? err.message : "Unknown"}`,
+                  502,
+                );
+        }
+      }
+      if (!chunkOut) {
+        throw lastFailure ?? new ExamsServiceError(`Failed to generate chunk ${chunkIndex} for ${need} questions. Try fewer questions or a shorter topic.`, 502);
+      }
+      if (!chunkTitle) chunkTitle = chunkOut.title;
+      chunks.push(
+        ...chunkOut.questions.map((q, i) => ({
+          id: `q${offset + i + 1}`,
+          ...q,
+        })),
+      );
+    }
+    tokensUsed += chunkTokens;
+    output = {
+      title: chunkTitle ?? `Exam: ${input.params.topic}`,
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      questions: chunks.map(({ id, ...rest }) => rest as unknown as ExamOutput["questions"][number]),
+    };
+    console.log(`[exams] chunked generation succeeded: ${output.questions.length}/${total} q, +${chunkTokens} tokens`);
+  }
+
+  if (!output) {
+    throw lastFailure ?? new ExamsServiceError("AI returned an empty exam. Try again.", 502);
   }
 
   const questions: Question[] = output.questions.map((q, i) => ({
