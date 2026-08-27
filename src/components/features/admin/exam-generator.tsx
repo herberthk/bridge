@@ -1,21 +1,35 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ReadonlyURLSearchParams } from "next/navigation";
 import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useDropzone } from "react-dropzone";
 import { toast } from "sonner";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   BookOpenIcon,
   CheckCircle2Icon,
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   FileTextIcon,
+  GraduationCapIcon,
+  LayersIcon,
   Loader2Icon,
+  LockIcon,
+  MonitorIcon,
+  ShieldCheckIcon,
   SparklesIcon,
+  TagIcon,
+  TargetIcon,
   UploadCloudIcon,
   XIcon,
+  ZapIcon,
+  EyeIcon,
+  ClockIcon,
+  FileQuestionIcon,
 } from "lucide-react";
 
 import { examParamsSchema, type ExamParamsInput } from "@/lib/schemas/exam";
@@ -45,9 +59,6 @@ import { Button } from "@/components/ui/button";
 import {
   Card,
   CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import {
   Field,
@@ -67,15 +78,27 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Markdown } from "@/components/markdown";
 
 interface UploadedDoc {
   documentId: string;
   name: string;
   parseStatus: "pending" | "parsed" | "failed";
   uploading: boolean;
+  progress: number; // 0-100 beautiful indicator
+  sizeLabel: string;
+}
+
+interface PreviewQuestion {
+  id: string;
+  type: string;
+  prompt: string;
+  points: number;
+  options?: string[] | null;
 }
 
 import type { z } from "zod";
@@ -83,19 +106,46 @@ import type { z } from "zod";
 /** Form shape before zod applies defaults. */
 type FormValues = z.input<typeof examParamsSchema>;
 
+// ── Wizard steps ──────────────────────────────────────────────
+const STEPS = [
+  { id: "curriculum", label: "Curriculum", icon: BookOpenIcon, desc: "Level & topic" },
+  { id: "format", label: "Format", icon: LayersIcon, desc: "Types & timing" },
+  { id: "rules", label: "Rules & Source", icon: ShieldCheckIcon, desc: "Policy & docs" },
+] as const;
+
+const GEN_STAGES = [
+  { label: "Parsing source documents", pct: 18, icon: FileTextIcon },
+  { label: "Analyzing curriculum context", pct: 32, icon: BookOpenIcon },
+  { label: "Drafting questions with Gemini", pct: 72, icon: SparklesIcon },
+  { label: "Calibrating difficulty & marks", pct: 88, icon: TargetIcon },
+  { label: "Finalizing & saving exam", pct: 100, icon: CheckCircle2Icon },
+] as const;
+
+// Premium trigger styles — shared across all dropdowns
+const premiumTrigger =
+  "h-11 rounded-xl border bg-card shadow-card hover:shadow-lifted hover:border-primary/20 data-[state=open]:border-primary data-[state=open]:ring-2 data-[state=open]:ring-primary/20 data-[state=open]:shadow-glow transition-all duration-200 group";
+const premiumContent = "rounded-2xl shadow-lifted border bg-popover/95 backdrop-blur-xl p-1.5";
+
 export function ExamGenerator() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const prefersReducedMotion = useReducedMotion();
   const [docs, setDocs] = useState<UploadedDoc[]>([]);
   const [generating, setGenerating] = useState(false);
+  const [genPct, setGenPct] = useState(0);
+  const [genStage, setGenStage] = useState(0);
   const [result, setResult] = useState<{
     examId: string;
     title: string;
     questions: number;
     tokensUsed: number;
   } | null>(null);
+  const [previewQuestions, setPreviewQuestions] = useState<PreviewQuestion[] | null>(null);
+  const [previewFailed, setPreviewFailed] = useState(false);
+  const [step, setStep] = useState(0);
+  const [dir, setDir] = useState(1);
+  const genTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Prefill from the voice builder's "Continue to generator" hand-off.
   const voice = readVoiceParams(searchParams);
 
   const form = useForm<FormValues, unknown, ExamParamsInput>({
@@ -115,6 +165,10 @@ export function ExamGenerator() {
       includeExplanations: true,
       includeWorkedExamples: false,
       instructions: null,
+      preventBacktrack: true,
+      allowReviewBeforeSubmit: false,
+      allowSkipping: true,
+      requireFullscreen: true,
     },
   });
 
@@ -122,6 +176,7 @@ export function ExamGenerator() {
   const subLevel = form.watch("secondarySubLevel") ?? "o_level";
   const subject = form.watch("subject");
   const questionCount = form.watch("questionCount");
+  const durationMinutes = form.watch("durationMinutes");
   const subjects =
     level === "primary"
       ? COUNTRY_CURRICULA.UG.primary
@@ -135,35 +190,130 @@ export function ExamGenerator() {
     [questionCount, docs],
   );
 
+  // Fetch preview questions after generation
+  useEffect(() => {
+    if (!result?.examId) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/exams/${result.examId}`, { cache: "no-store" });
+        if (!res.ok) {
+          if (!cancelled) {
+            setPreviewQuestions(null);
+            setPreviewFailed(true);
+          }
+          return;
+        }
+        const data = (await res.json()) as { exam?: { questions: PreviewQuestion[] } };
+        if (!cancelled) {
+          if (data.exam?.questions && Array.isArray(data.exam.questions)) {
+            setPreviewQuestions(data.exam.questions.slice(0, 6));
+            setPreviewFailed(false);
+          } else {
+            setPreviewQuestions(null);
+            setPreviewFailed(true);
+          }
+        }
+      } catch {
+        if (!cancelled) {
+          setPreviewQuestions(null);
+          setPreviewFailed(true);
+        }
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [result?.examId]);
+
+  // ── Staged generation progress (client simulation, premium) ──
+  useEffect(() => {
+    if (!generating) {
+      if (genTimerRef.current) clearInterval(genTimerRef.current);
+      return;
+    }
+    setGenPct(2);
+    setGenStage(0);
+    const started = Date.now();
+    const durationMs = 22_000 + Math.min(questionCount * 260, 18_000);
+    genTimerRef.current = setInterval(() => {
+      const elapsed = Date.now() - started;
+      const t = Math.min(elapsed / durationMs, 0.96);
+      const eased = 1 - Math.pow(1 - t, 3);
+      const target = 96 * eased;
+      setGenPct((prev) => {
+        const next = Math.max(prev, Math.min(target, 96));
+        const stageIdx = GEN_STAGES.findIndex((s) => next < s.pct);
+        const idx = stageIdx === -1 ? GEN_STAGES.length - 1 : Math.max(0, stageIdx);
+        setGenStage(idx);
+        return next;
+      });
+    }, 120);
+    return () => {
+      if (genTimerRef.current) clearInterval(genTimerRef.current);
+    };
+  }, [generating, questionCount]);
+
+  const formatBytes = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const uploadWithXhr = (file: File, onProgress: (pct: number) => void) =>
+    new Promise<{ ok: true; documentId: string; parseStatus: "parsed" | "failed" } | { error: string }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      const fd = new FormData();
+      fd.set("file", file);
+      xhr.open("POST", "/api/documents");
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+      };
+      xhr.onload = () => {
+        try {
+          const data = JSON.parse(xhr.responseText) as { ok?: boolean; documentId?: string; parseStatus?: string; error?: string };
+          if (xhr.status >= 200 && xhr.status < 300 && data.ok) resolve(data as { ok: true; documentId: string; parseStatus: "parsed" | "failed" });
+          else resolve({ error: (data as { error?: string })?.error ?? `Upload failed: ${xhr.statusText}` });
+        } catch {
+          resolve({ error: "Invalid server response" });
+        }
+      };
+      xhr.onerror = () => reject(new Error("Network error"));
+      xhr.send(fd);
+    });
+
   const onDrop = async (files: File[]) => {
     for (const file of files) {
       const id = crypto.randomUUID();
+      const sizeLabel = formatBytes(file.size);
       setDocs((prev) => [
         ...prev,
-        { documentId: id, name: file.name, parseStatus: "pending", uploading: true },
+        { documentId: id, name: file.name, parseStatus: "pending", uploading: true, progress: 0, sizeLabel },
       ]);
       try {
-        const fd = new FormData();
-        fd.set("file", file);
-        const res = await fetch("/api/documents", { method: "POST", body: fd });
-        const data = (await res.json().catch(() => null)) as
-          | { ok: true; documentId: string; parseStatus: "parsed" | "failed" }
-          | { error: string }
-          | null;
-        if (!res.ok || !data || !("ok" in data)) {
-          toast.error(data && "error" in data ? data.error : `Upload failed: ${file.name}`);
+        const data = await uploadWithXhr(file, (pct) => {
+          setDocs((prev) => prev.map((d) => (d.documentId === id ? { ...d, progress: pct } : d)));
+        });
+        // Ensure bar hits 100 before switching to parsed
+        setDocs((prev) => prev.map((d) => (d.documentId === id ? { ...d, progress: 100 } : d)));
+        await new Promise((r) => setTimeout(r, 180));
+        if ("error" in data) {
+          toast.error(data.error);
           setDocs((prev) => prev.filter((d) => d.documentId !== id));
-          return;
+          continue;
         }
         setDocs((prev) =>
           prev.map((d) =>
             d.documentId === id
-              ? { ...d, documentId: data.documentId, parseStatus: data.parseStatus, uploading: false }
+              ? { ...d, documentId: data.documentId, parseStatus: data.parseStatus, uploading: false, progress: 100 }
               : d,
           ),
         );
         if (data.parseStatus === "failed") {
           toast.warning(`Couldn't read text from ${file.name} — it will be skipped as source material.`);
+        } else {
+          toast.success(`${file.name} ready — grounded generation enabled.`);
         }
       } catch {
         toast.error(`Upload failed: ${file.name}`);
@@ -186,6 +336,8 @@ export function ExamGenerator() {
   const onSubmit = form.handleSubmit(async (values) => {
     setGenerating(true);
     setResult(null);
+    setPreviewQuestions(null);
+    setGenPct(2);
     try {
       const res = await fetch("/api/exams/generate", {
         method: "POST",
@@ -203,8 +355,11 @@ export function ExamGenerator() {
         toast.error(data && "error" in data ? data.error : "Generation failed.");
         return;
       }
+      setGenPct(100);
+      setGenStage(GEN_STAGES.length - 1);
+      await new Promise((r) => setTimeout(r, 420));
       setResult(data);
-      toast.success("Exam generated!", {
+      toast.success("Exam generated — premium preview ready!", {
         description: `${data.questions} questions · ${data.tokensUsed.toLocaleString()} tokens`,
       });
       router.refresh();
@@ -215,546 +370,691 @@ export function ExamGenerator() {
     }
   });
 
+  const go = (next: number) => {
+    if (next < 0 || next >= STEPS.length) return;
+    setDir(next > step ? 1 : -1);
+    setStep(next);
+  };
+
+  const canNext = async () => {
+    const fieldsByStep: Record<number, (keyof FormValues)[]> = {
+      0: ["level", "secondarySubLevel", "subject", "classLevel", "topic", "subsidiary"],
+      1: ["questionTypes", "difficulty", "questionCount", "durationMinutes"],
+      2: [],
+    };
+    const fields = fieldsByStep[step] ?? [];
+    if (fields.length) {
+      const ok = await form.trigger(fields as unknown as Parameters<typeof form.trigger>[0]);
+      return ok;
+    }
+    return true;
+  };
+
+  const slide = prefersReducedMotion
+    ? { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: { duration: 0.18 } }
+    : {
+        initial: { opacity: 0, x: dir * 16, filter: "blur(4px)" },
+        animate: { opacity: 1, x: 0, filter: "blur(0px)" },
+        exit: { opacity: 0, x: dir * -16, filter: "blur(4px)" },
+        transition: { duration: 0.32, ease: [0.16, 1, 0.3, 1] as const },
+      };
+
   return (
-    <form onSubmit={(e) => void onSubmit(e)} noValidate className="flex flex-col gap-6">
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="flex flex-col gap-6 lg:col-span-2">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <BookOpenIcon className="size-4" />
-                Curriculum
-              </CardTitle>
-              <CardDescription>What should the exam cover?</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <FieldGroup>
-                <div className="grid grid-cols-2 gap-3">
-                  <Field>
-                    <FieldLabel>Level</FieldLabel>
-                    <Controller
-                      control={form.control}
-                      name="level"
-                      render={({ field }) => (
-                        <ToggleGroup
-                          value={[field.value]}
-                          onValueChange={(v: readonly string[]) => {
-                            const next = v[0] as "primary" | "secondary" | undefined;
-                            if (!next) return;
-                            field.onChange(next);
-                            if (next === "primary") {
-                              form.setValue("secondarySubLevel", null);
-                              form.setValue("subsidiary", null);
-                              form.setValue("classLevel", 5);
-                              if (
-                                !(
-                                  COUNTRY_CURRICULA.UG.primary as readonly string[]
-                                ).includes(form.getValues("subject"))
-                              ) {
-                                form.setValue("subject", COUNTRY_CURRICULA.UG.primary[0]);
-                              }
-                            } else {
-                              const sub =
-                                form.getValues("secondarySubLevel") === "a_level"
-                                  ? "a_level"
-                                  : "o_level";
-                              form.setValue("secondarySubLevel", sub);
-                              form.setValue("classLevel", sub === "a_level" ? 5 : 2);
-                              if (
-                                !(
-                                  SECONDARY_SUBJECTS_BY_SUB_LEVEL[sub] as readonly string[]
-                                ).includes(form.getValues("subject"))
-                              ) {
-                                form.setValue(
-                                  "subject",
-                                  SECONDARY_SUBJECTS_BY_SUB_LEVEL[sub][0] as FormValues["subject"],
-                                );
-                              }
-                            }
-                          }}
-                          className="flex"
-                        >
-                          <ToggleGroupItem value="primary" className="flex-1">
-                            Primary
-                          </ToggleGroupItem>
-                          <ToggleGroupItem value="secondary" className="flex-1">
-                            Secondary
-                          </ToggleGroupItem>
-                        </ToggleGroup>
-                      )}
-                    />
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="classLevel">Class</FieldLabel>
-                    <Controller
-                      control={form.control}
-                      name="classLevel"
-                      render={({ field }) => (
-                        <Select
-                          value={String(field.value)}
-                          onValueChange={(v) => field.onChange(Number(v))}
-                        >
-                          <SelectTrigger id="classLevel">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {classLevelOptions(level, subLevel).map((opt) => (
-                              <SelectItem key={opt.value} value={String(opt.value)}>
-                                {opt.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      )}
-                    />
-                  </Field>
+    <div className="flex flex-col gap-6">
+      {/* ── Row layout: Create exam + Estimated cost side-by-side on lg ── */}
+      <div className="grid gap-6 lg:grid-cols-3 items-start">
+        {/* Left: Wizard — col-span-2 on desktop, full width on mobile */}
+        <div className="lg:col-span-2 flex flex-col gap-6">
+          <form onSubmit={(e) => void onSubmit(e)} noValidate className="flex flex-col gap-0">
+            {/* Premium header */}
+            <div className="shadow-lifted gradient-border overflow-hidden rounded-2xl bg-card">
+              <div className="bg-brand relative overflow-hidden p-6 text-primary-foreground">
+                <div aria-hidden className="pointer-events-none absolute inset-0 opacity-[0.16]" style={{ backgroundImage: "radial-gradient(28rem 14rem at 12% 0%, rgba(255,255,255,.9), transparent 60%), radial-gradient(22rem 12rem at 88% 10%, rgba(255,255,255,.45), transparent 60%)" }} />
+                <div className="relative flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <p className="inline-flex items-center gap-2 text-xs font-medium tracking-wide opacity-85"><SparklesIcon className="size-3.5" /> AI Exam Generator</p>
+                    <h1 className="mt-1 text-xl font-semibold tracking-tight sm:text-2xl">Create a premium exam</h1>
+                    <p className="mt-1 max-w-prose text-sm opacity-80">Curriculum-aware, proctored, and cost-transparent. Dropdowns keep the form compact and in sync.</p>
+                  </div>
+                  <Badge variant="secondary" className="hidden shrink-0 gap-1.5 bg-white/15 text-white backdrop-blur sm:inline-flex"><ZapIcon className="size-3" /> Gemini powered</Badge>
                 </div>
-
-                {level === "secondary" && (
-                  <Controller
-                    control={form.control}
-                    name="secondarySubLevel"
-                    render={({ field }) => (
-                      <Field>
-                        <FieldLabel>Secondary sub-level</FieldLabel>
-                        <ToggleGroup
-                          value={[field.value ?? "o_level"]}
-                          onValueChange={(v: readonly string[]) => {
-                            const next = v[0] as "o_level" | "a_level" | undefined;
-                            if (!next) return;
-                            field.onChange(next);
-                            // Snap the class into the new band and re-filter subjects.
-                            form.setValue("classLevel", next === "a_level" ? 5 : 2);
-                            if (
-                              !(
-                                SECONDARY_SUBJECTS_BY_SUB_LEVEL[next] as readonly string[]
-                              ).includes(form.getValues("subject"))
-                            ) {
-                              form.setValue(
-                                "subject",
-                                SECONDARY_SUBJECTS_BY_SUB_LEVEL.o_level[0] as FormValues["subject"],
-                              );
-                            }
-                          }}
-                          className="flex"
-                        >
-                          <ToggleGroupItem value="o_level" className="flex-1">
-                            {SUB_LEVEL_LABELS.o_level}
-                          </ToggleGroupItem>
-                          <ToggleGroupItem value="a_level" className="flex-1">
-                            {SUB_LEVEL_LABELS.a_level}
-                          </ToggleGroupItem>
-                        </ToggleGroup>
-                      </Field>
-                    )}
-                  />
-                )}
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Field data-invalid={form.formState.errors.subject ? true : undefined}>
-                    <FieldLabel htmlFor="subject">Subject</FieldLabel>
-                    <Controller
-                      control={form.control}
-                      name="subject"
-                      render={({ field }) => (
-                        <Select
-                          value={field.value}
-                          onValueChange={(v) => {
-                            field.onChange(v);
-                            const subs = SUBJECT_SUBSIDIARIES[v as keyof typeof SUBJECT_SUBSIDIARIES];
-                            if (!subs) form.setValue("subsidiary", null);
-                          }}
-                        >
-                          <SelectTrigger id="subject">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {subjects.map((s) => (
-                              <SelectItem key={s} value={s}>
-                                {SUBJECT_LABELS[s]}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      )}
-                    />
-                    {form.formState.errors.subject && (
-                      <FieldError>{form.formState.errors.subject.message}</FieldError>
-                    )}
-                  </Field>
-                  <Field data-invalid={form.formState.errors.topic ? true : undefined}>
-                    <FieldLabel htmlFor="topic">Topic / theme</FieldLabel>
-                    <Input
-                      id="topic"
-                      placeholder="e.g. Linear equations & word problems"
-                      aria-invalid={!!form.formState.errors.topic}
-                      {...form.register("topic")}
-                    />
-                    {form.formState.errors.topic && (
-                      <FieldError>{form.formState.errors.topic.message}</FieldError>
-                    )}
-                  </Field>
+                <div className="relative mt-5 flex items-center gap-2">
+                  {STEPS.map((s, i) => {
+                    const active = i === step;
+                    const done = i < step;
+                    return (
+                      <button key={s.id} type="button" onClick={() => go(i)} className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-all ${active ? "border-white bg-white text-primary shadow-glow" : done ? "border-white/30 bg-white/10 text-white" : "border-white/20 bg-white/10 text-white/70"}`}>
+                        <span className={`grid size-5 place-items-center rounded-full text-[10px] font-bold ${active ? "bg-primary text-white" : done ? "bg-white text-primary" : "bg-white/15"}`}>{done ? <CheckCircle2Icon className="size-3.5" /> : i + 1}</span>
+                        <span className="hidden sm:inline">{s.label}</span>
+                        <s.icon className="hidden size-3.5 sm:block opacity-80" />
+                      </button>
+                    );
+                  })}
+                  <div className="ml-auto hidden items-center gap-2 text-xs font-medium opacity-80 sm:flex">
+                    <span>Step {step + 1} of {STEPS.length}</span>
+                    <span className="size-1 rounded-full bg-white/60" />
+                    <span className="hidden sm:inline">{STEPS[step].desc}</span>
+                  </div>
                 </div>
-
-                {needsSubsidiary && (
-                  <Field data-invalid={form.formState.errors.subsidiary ? true : undefined}>
-                    <FieldLabel htmlFor="subsidiary">
-                      {SUBJECT_SUBSIDIARIES[subject as keyof typeof SUBJECT_SUBSIDIARIES]?.label}
-                    </FieldLabel>
-                    <Controller
-                      control={form.control}
-                      name="subsidiary"
-                      render={({ field }) => (
-                        <Select
-                          value={field.value ?? ""}
-                          onValueChange={field.onChange}
-                        >
-                          <SelectTrigger id="subsidiary">
-                            <SelectValue placeholder="Choose the branch" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {SUBJECT_SUBSIDIARIES[
-                              subject as keyof typeof SUBJECT_SUBSIDIARIES
-                            ]!.options.map((opt) => (
-                              <SelectItem key={opt} value={opt}>
-                                {SUBSIDIARY_LABELS[opt] ?? opt}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      )}
-                    />
-                    {form.formState.errors.subsidiary ? (
-                      <FieldError>
-                        {form.formState.errors.subsidiary.message}
-                      </FieldError>
-                    ) : (
-                      <FieldDescription>
-                        Questions will focus strictly on the chosen branch.
-                      </FieldDescription>
-                    )}
-                  </Field>
-                )}
-              </FieldGroup>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <SparklesIcon className="size-4" />
-                Format &amp; difficulty
-              </CardTitle>
-              <CardDescription>Shape of the assessment.</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <FieldGroup>
-                <Field data-invalid={form.formState.errors.questionTypes ? true : undefined}>
-                  <FieldLabel>Question types</FieldLabel>
-                  <Controller
-                    control={form.control}
-                    name="questionTypes"
-                    render={({ field }) => (
-                      <ToggleGroup
-                        value={field.value}
-                        onValueChange={(v: readonly string[]) =>
-                          field.onChange(v as ExamParamsInput["questionTypes"])
-                        }
-                        className="flex flex-wrap justify-start"
-                      >
-                        {QUESTION_TYPES.map((t) => (
-                          <ToggleGroupItem key={t} value={t}>
-                            {QUESTION_TYPE_LABELS[t]}
-                          </ToggleGroupItem>
-                        ))}
-                      </ToggleGroup>
-                    )}
-                  />
-                  {form.formState.errors.questionTypes && (
-                    <FieldError>{form.formState.errors.questionTypes.message}</FieldError>
-                  )}
-                </Field>
-
-                <Field data-invalid={form.formState.errors.difficulty ? true : undefined}>
-                  <FieldLabel>Difficulty</FieldLabel>
-                  <Controller
-                    control={form.control}
-                    name="difficulty"
-                    render={({ field }) => (
-                      <ToggleGroup
-                        value={[field.value]}
-                        onValueChange={(v: readonly string[]) => {
-                          if (v[0]) field.onChange(v[0]);
-                        }}
-                        className="flex"
-                      >
-                        {DIFFICULTIES.map((d) => (
-                          <ToggleGroupItem key={d} value={d} className="flex-1">
-                            {DIFFICULTY_LABELS[d]}
-                          </ToggleGroupItem>
-                        ))}
-                      </ToggleGroup>
-                    )}
-                  />
-                </Field>
-
-                <div className="grid gap-5 sm:grid-cols-2">
-                  <Field>
-                    <FieldLabel htmlFor="questionCount">
-                      Questions:{" "}
-                      <span className="text-foreground font-semibold">{questionCount}</span>
-                    </FieldLabel>
-                    <Controller
-                      control={form.control}
-                      name="questionCount"
-                      render={({ field }) => (
-                        <Slider
-                          id="questionCount"
-                          min={1}
-                          max={100}
-                          step={1}
-                          value={[field.value]}
-                          onValueChange={(v) => field.onChange((Array.isArray(v) ? v[0] : v) ?? field.value)}
-                        />
-                      )}
-                    />
-                    <FieldDescription>1–100 questions per exam.</FieldDescription>
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor="durationMinutes">
-                      Duration:{" "}
-                      <span className="text-foreground font-semibold">
-                        {form.watch("durationMinutes")} min
-                      </span>
-                    </FieldLabel>
-                    <Controller
-                      control={form.control}
-                      name="durationMinutes"
-                      render={({ field }) => (
-                        <Slider
-                          id="durationMinutes"
-                          min={5}
-                          max={240}
-                          step={5}
-                          value={[field.value]}
-                          onValueChange={(v) => field.onChange((Array.isArray(v) ? v[0] : v) ?? field.value)}
-                        />
-                      )}
-                    />
-                    <FieldDescription>Countdown is enforced server-side.</FieldDescription>
-                  </Field>
+                <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-white/15">
+                  <motion.div className="h-full rounded-full bg-white shadow-[0_0_12px_rgba(255,255,255,.6)]" initial={false} animate={{ width: `${((step + 1) / STEPS.length) * 100}%` }} transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }} />
                 </div>
-
-                <div className="grid gap-3 sm:grid-cols-3">
-                  {(
-                    [
-                      ["includeHints", "Hints"],
-                      ["includeExplanations", "Explanations"],
-                      ["includeWorkedExamples", "Worked examples"],
-                    ] as const
-                  ).map(([name, label]) => (
-                    <Field key={name}>
-                      <label
-                        htmlFor={name}
-                        className="hover:bg-accent/50 flex h-14 cursor-pointer items-center justify-between rounded-lg border px-4 transition-colors"
-                      >
-                        <span className="text-sm font-medium">{label}</span>
-                        <Controller
-                          control={form.control}
-                          name={name}
-                          render={({ field }) => (
-                            <Switch
-                              id={name}
-                              checked={field.value}
-                              onCheckedChange={field.onChange}
-                            />
-                          )}
-                        />
-                      </label>
-                    </Field>
-                  ))}
-                </div>
-
-                <Field>
-                  <FieldLabel htmlFor="instructions">
-                    Special instructions (optional)
-                  </FieldLabel>
-                  <Textarea
-                    id="instructions"
-                    rows={2}
-                    placeholder="e.g. Focus on past-paper style word problems, avoid geometry."
-                    {...form.register("instructions")}
-                  />
-                </Field>
-              </FieldGroup>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <UploadCloudIcon className="size-4" />
-                Source material (optional)
-              </CardTitle>
-              <CardDescription>
-                Upload past papers, textbook sections, or notes — the AI builds
-                the exam from them. PDF, DOCX, TXT up to 50 MB.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3">
-              <div
-                {...getRootProps()}
-                className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-6 py-8 text-center transition-colors ${
-                  isDragActive
-                    ? "border-primary bg-accent/50"
-                    : "hover:border-primary/50 hover:bg-accent/30"
-                }`}
-              >
-                <input {...getInputProps()} />
-                <UploadCloudIcon className="text-muted-foreground size-8" />
-                <p className="text-sm font-medium">
-                  {isDragActive ? "Drop files here…" : "Drag & drop or click to upload"}
-                </p>
-                <p className="text-muted-foreground text-xs">
-                  Questions will be grounded on your material
-                </p>
               </div>
 
-              <ul className="flex flex-col gap-2">
-                <AnimatePresence initial={false}>
-                  {docs.map((d) => (
-                    <motion.li
-                      key={d.documentId}
-                      initial={{ opacity: 0, y: 6 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.97 }}
-                      className="flex items-center gap-3 rounded-lg border px-3 py-2"
-                    >
-                      <FileTextIcon className="text-muted-foreground size-4 shrink-0" />
-                      <span className="min-w-0 flex-1 truncate text-sm">{d.name}</span>
-                      {d.uploading ? (
-                        <Loader2Icon className="text-muted-foreground size-4 animate-spin" />
-                      ) : d.parseStatus === "parsed" ? (
-                        <Badge variant="secondary" className="gap-1">
-                          <CheckCircle2Icon className="size-3" /> Ready
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline">Unreadable</Badge>
-                      )}
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-xs"
-                        aria-label={`Remove ${d.name}`}
-                        onClick={() => setDocs((prev) => prev.filter((x) => x.documentId !== d.documentId))}
-                      >
-                        <XIcon />
-                      </Button>
-                    </motion.li>
-                  ))}
+              {/* Wizard body */}
+              <div className="p-5 sm:p-6">
+                <AnimatePresence mode="wait" initial={false} custom={dir}>
+                  <motion.div key={STEPS[step].id} custom={dir} initial={slide.initial} animate={slide.animate} exit={slide.exit} transition={slide.transition} className="will-change-transform">
+                    {step === 0 && (
+                      <FieldGroup>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <Field>
+                            <FieldLabel className="flex items-center gap-1.5"><LayersIcon className="size-3.5 text-primary" /> Level</FieldLabel>
+                            <Controller
+                              control={form.control}
+                              name="level"
+                              render={({ field }) => (
+                                <Select
+                                  value={field.value}
+                                  onValueChange={(v) => {
+                                    const next = v as "primary" | "secondary";
+                                    field.onChange(next);
+                                    if (next === "primary") {
+                                      form.setValue("secondarySubLevel", null);
+                                      form.setValue("subsidiary", null);
+                                      form.setValue("classLevel", 5);
+                                      if (!(COUNTRY_CURRICULA.UG.primary as readonly string[]).includes(form.getValues("subject"))) {
+                                        form.setValue("subject", COUNTRY_CURRICULA.UG.primary[0]);
+                                      }
+                                    } else {
+                                      const sub = form.getValues("secondarySubLevel") === "a_level" ? "a_level" : "o_level";
+                                      form.setValue("secondarySubLevel", sub);
+                                      form.setValue("classLevel", sub === "a_level" ? 5 : 2);
+                                      if (!(SECONDARY_SUBJECTS_BY_SUB_LEVEL[sub] as readonly string[]).includes(form.getValues("subject"))) {
+                                        form.setValue("subject", SECONDARY_SUBJECTS_BY_SUB_LEVEL[sub][0] as FormValues["subject"]);
+                                      }
+                                    }
+                                  }}
+                                >
+                                  <SelectTrigger className={premiumTrigger}>
+                                    <span className="flex items-center gap-2"><LayersIcon className="size-4 text-muted-foreground group-data-[state=open]:text-primary transition-colors" /><SelectValue /></span>
+                                  </SelectTrigger>
+                                  <SelectContent className={premiumContent}>
+                                    <SelectItem value="primary"><span className="flex items-center gap-2"><span className="size-2 rounded-full bg-emerald-500" />Primary (P1–P7)</span></SelectItem>
+                                    <SelectItem value="secondary"><span className="flex items-center gap-2"><span className="size-2 rounded-full bg-violet-500" />Secondary (S1–S6)</span></SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              )}
+                            />
+                            <FieldDescription>Switching animates dependent dropdowns.</FieldDescription>
+                          </Field>
+
+                          <Field>
+                            <FieldLabel htmlFor="classLevel" className="flex items-center gap-1.5"><GraduationCapIcon className="size-3.5 text-primary" /> Class</FieldLabel>
+                            <Controller
+                              control={form.control}
+                              name="classLevel"
+                              render={({ field }) => (
+                                <Select value={String(field.value)} onValueChange={(v) => field.onChange(Number(v))}>
+                                  <SelectTrigger id="classLevel" className={premiumTrigger}>
+                                    <span className="flex items-center gap-2"><GraduationCapIcon className="size-4 text-muted-foreground group-data-[state=open]:text-primary transition-colors" /><SelectValue /></span>
+                                  </SelectTrigger>
+                                  <SelectContent className={premiumContent}>
+                                    {classLevelOptions(level, subLevel).map((opt) => (
+                                      <SelectItem key={opt.value} value={String(opt.value)}>{opt.label}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              )}
+                            />
+                          </Field>
+                        </div>
+
+                        <AnimatePresence>
+                          {level === "secondary" && (
+                            <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+                              <Controller
+                                control={form.control}
+                                name="secondarySubLevel"
+                                render={({ field }) => (
+                                  <Field>
+                                    <FieldLabel className="flex items-center gap-1.5"><LayersIcon className="size-3.5 text-primary" /> Secondary sub-level</FieldLabel>
+                                    <Select
+                                      value={field.value ?? "o_level"}
+                                      onValueChange={(v) => {
+                                        const next = v as "o_level" | "a_level";
+                                        field.onChange(next);
+                                        form.setValue("classLevel", next === "a_level" ? 5 : 2);
+                                        if (!(SECONDARY_SUBJECTS_BY_SUB_LEVEL[next] as readonly string[]).includes(form.getValues("subject"))) {
+                                          form.setValue("subject", SECONDARY_SUBJECTS_BY_SUB_LEVEL.o_level[0] as FormValues["subject"]);
+                                        }
+                                      }}
+                                    >
+                                      <SelectTrigger className={premiumTrigger}>
+                                        <span className="flex items-center gap-2"><LayersIcon className="size-4 text-muted-foreground group-data-[state=open]:text-primary transition-colors" /><SelectValue /></span>
+                                      </SelectTrigger>
+                                      <SelectContent className={premiumContent}>
+                                        <SelectItem value="o_level">{SUB_LEVEL_LABELS.o_level}</SelectItem>
+                                        <SelectItem value="a_level">{SUB_LEVEL_LABELS.a_level}</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </Field>
+                                )}
+                              />
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <Field data-invalid={form.formState.errors.subject ? true : undefined}>
+                            <FieldLabel htmlFor="subject" className="flex items-center gap-1.5"><BookOpenIcon className="size-3.5 text-primary" /> Subject</FieldLabel>
+                            <Controller
+                              control={form.control}
+                              name="subject"
+                              render={({ field }) => (
+                                <Select
+                                  value={field.value}
+                                  onValueChange={(v) => {
+                                    field.onChange(v);
+                                    const subs = SUBJECT_SUBSIDIARIES[v as keyof typeof SUBJECT_SUBSIDIARIES];
+                                    if (!subs) form.setValue("subsidiary", null);
+                                  }}
+                                >
+                                  <SelectTrigger id="subject" className={premiumTrigger}>
+                                    <span className="flex items-center gap-2"><BookOpenIcon className="size-4 text-muted-foreground group-data-[state=open]:text-primary transition-colors" /><SelectValue /></span>
+                                  </SelectTrigger>
+                                  <SelectContent className={premiumContent}>
+                                    {subjects.map((s) => (
+                                      <SelectItem key={s} value={s}>{SUBJECT_LABELS[s]}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              )}
+                            />
+                            {form.formState.errors.subject && <FieldError>{form.formState.errors.subject.message}</FieldError>}
+                          </Field>
+
+                          <Field data-invalid={form.formState.errors.topic ? true : undefined}>
+                            <FieldLabel htmlFor="topic" className="flex items-center gap-1.5"><FileTextIcon className="size-3.5 text-primary" /> Topic / theme</FieldLabel>
+                            <Input id="topic" placeholder="e.g. Linear equations & word problems" aria-invalid={!!form.formState.errors.topic} className="h-11 rounded-xl border bg-card shadow-card focus-visible:ring-2 focus-visible:ring-primary/20" {...form.register("topic")} />
+                            {form.formState.errors.topic && <FieldError>{form.formState.errors.topic.message}</FieldError>}
+                          </Field>
+                        </div>
+
+                        <AnimatePresence>
+                          {needsSubsidiary && (
+                            <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}>
+                              <Field data-invalid={form.formState.errors.subsidiary ? true : undefined}>
+                                <FieldLabel htmlFor="subsidiary" className="flex items-center gap-1.5"><TagIcon className="size-3.5 text-primary" />{SUBJECT_SUBSIDIARIES[subject as keyof typeof SUBJECT_SUBSIDIARIES]?.label}</FieldLabel>
+                                <Controller
+                                  control={form.control}
+                                  name="subsidiary"
+                                  render={({ field }) => (
+                                    <Select value={field.value ?? ""} onValueChange={field.onChange}>
+                                      <SelectTrigger id="subsidiary" className={premiumTrigger}>
+                                        <span className="flex items-center gap-2"><TagIcon className="size-4 text-muted-foreground group-data-[state=open]:text-primary transition-colors" /><SelectValue placeholder="Choose the branch" /></span>
+                                      </SelectTrigger>
+                                      <SelectContent className={premiumContent}>
+                                        {SUBJECT_SUBSIDIARIES[subject as keyof typeof SUBJECT_SUBSIDIARIES]!.options.map((opt) => (
+                                          <SelectItem key={opt} value={opt}>{SUBSIDIARY_LABELS[opt] ?? opt}</SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  )}
+                                />
+                                {form.formState.errors.subsidiary ? <FieldError>{form.formState.errors.subsidiary.message}</FieldError> : <FieldDescription>Questions will focus strictly on the chosen branch.</FieldDescription>}
+                              </Field>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </FieldGroup>
+                    )}
+
+                    {step === 1 && (
+                      <FieldGroup>
+                        <Field data-invalid={form.formState.errors.questionTypes ? true : undefined}>
+                          <FieldLabel className="flex items-center gap-1.5"><FileQuestionIcon className="size-3.5 text-primary" /> Question types</FieldLabel>
+                          <Controller
+                            control={form.control}
+                            name="questionTypes"
+                            render={({ field }) => {
+                              const selected = field.value as string[];
+                              return (
+                                <Popover>
+                                  <PopoverTrigger render={<Button variant="outline" className="h-auto min-h-11 w-full justify-between rounded-xl border bg-card px-3 py-2 shadow-card hover:shadow-lifted hover:border-primary/20 hover:bg-accent/30 transition-all group" />}>
+                                    <span className="flex flex-wrap gap-1.5">
+                                      {selected.length === 0 ? <span className="text-muted-foreground text-sm flex items-center gap-2"><FileQuestionIcon className="size-4" /> Select types…</span> : selected.map((t) => <Badge key={t} variant="secondary" className="gap-1 shadow-sm">{QUESTION_TYPE_LABELS[t as keyof typeof QUESTION_TYPE_LABELS]}</Badge>)}
+                                    </span>
+                                    <ChevronDownIcon className="size-4 text-muted-foreground group-data-[state=open]:rotate-180 transition-transform" />
+                                  </PopoverTrigger>
+                                  <PopoverContent align="start" className="w-[min(420px,95vw)] rounded-2xl p-3 shadow-lifted border bg-popover/95 backdrop-blur-xl">
+                                    <p className="mb-2 text-xs font-medium text-muted-foreground">Pick at least one — saves space as badges</p>
+                                    <div className="grid grid-cols-2 gap-2">
+                                      {QUESTION_TYPES.map((t) => {
+                                        const checked = selected.includes(t);
+                                        return (
+                                          <label key={t} className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2.5 text-sm transition-all hover:shadow-card ${checked ? "border-primary bg-primary/10 shadow-glow" : "hover:bg-accent/50 border-border"}`}>
+                                            <Checkbox checked={checked} onCheckedChange={(c) => {
+                                              const next = c ? [...selected, t] : selected.filter((x) => x !== t);
+                                              field.onChange(next);
+                                            }} />
+                                            <span className="text-sm font-medium">{QUESTION_TYPE_LABELS[t]}</span>
+                                          </label>
+                                        );
+                                      })}
+                                    </div>
+                                  </PopoverContent>
+                                </Popover>
+                              );
+                            }}
+                          />
+                          {form.formState.errors.questionTypes && <FieldError>{form.formState.errors.questionTypes.message}</FieldError>}
+                          <FieldDescription>Premium multi-select — compact badges, check to toggle.</FieldDescription>
+                        </Field>
+
+                        <Field data-invalid={form.formState.errors.difficulty ? true : undefined}>
+                          <FieldLabel className="flex items-center gap-1.5"><TargetIcon className="size-3.5 text-primary" /> Difficulty</FieldLabel>
+                          <Controller
+                            control={form.control}
+                            name="difficulty"
+                            render={({ field }) => (
+                              <Select value={field.value} onValueChange={field.onChange}>
+                                <SelectTrigger className={premiumTrigger}>
+                                  <span className="flex items-center gap-2"><TargetIcon className="size-4 text-muted-foreground group-data-[state=open]:text-primary transition-colors" /><SelectValue /></span>
+                                </SelectTrigger>
+                                <SelectContent className={premiumContent}>
+                                  {DIFFICULTIES.map((d) => (
+                                    <SelectItem key={d} value={d}>
+                                      <span className="inline-flex items-center gap-2"><span className={`size-2.5 rounded-full shadow-sm ${d === "easy" ? "bg-emerald-500" : d === "medium" ? "bg-amber-500" : d === "hard" ? "bg-orange-500" : "bg-red-500"}`} />{DIFFICULTY_LABELS[d]}</span>
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            )}
+                          />
+                        </Field>
+
+                        <div className="grid gap-5 sm:grid-cols-2">
+                          <Field>
+                            <FieldLabel htmlFor="questionCount" className="flex items-center gap-1.5"><FileQuestionIcon className="size-3.5 text-primary" /> Questions: <span className="text-foreground font-semibold tabular-nums">{questionCount}</span></FieldLabel>
+                            <Controller control={form.control} name="questionCount" render={({ field }) => <Slider id="questionCount" min={1} max={100} step={1} value={[field.value]} onValueChange={(v) => field.onChange((Array.isArray(v) ? v[0] : v) ?? field.value)} className="py-2" />} />
+                            <FieldDescription>1–100 questions per exam.</FieldDescription>
+                          </Field>
+                          <Field>
+                            <FieldLabel htmlFor="durationMinutes" className="flex items-center gap-1.5"><ClockIcon className="size-3.5 text-primary" /> Duration: <span className="text-foreground font-semibold tabular-nums">{durationMinutes} min</span></FieldLabel>
+                            <Controller control={form.control} name="durationMinutes" render={({ field }) => <Slider id="durationMinutes" min={5} max={240} step={5} value={[field.value]} onValueChange={(v) => field.onChange((Array.isArray(v) ? v[0] : v) ?? field.value)} className="py-2" />} />
+                            <FieldDescription>Countdown is enforced server-side.</FieldDescription>
+                          </Field>
+                        </div>
+
+                        <div className="grid gap-3 sm:grid-cols-3">
+                          {(["includeHints", "includeExplanations", "includeWorkedExamples"] as const).map((name) => {
+                            const labels: Record<string, string> = { includeHints: "Hints", includeExplanations: "Explanations", includeWorkedExamples: "Worked examples" };
+                            const icons: Record<string, typeof SparklesIcon> = { includeHints: SparklesIcon, includeExplanations: BookOpenIcon, includeWorkedExamples: LayersIcon };
+                            const Icon = icons[name] ?? SparklesIcon;
+                            return (
+                              <Field key={name}>
+                                <label htmlFor={name} className="group hover:bg-accent/40 flex h-14 cursor-pointer items-center justify-between rounded-xl border bg-card px-4 shadow-card hover:shadow-lifted transition-all">
+                                  <span className="flex items-center gap-2 text-sm font-medium"><Icon className="size-3.5 text-primary" />{labels[name]}</span>
+                                  <Controller control={form.control} name={name} render={({ field }) => <Switch id={name} checked={field.value as boolean} onCheckedChange={field.onChange} />} />
+                                </label>
+                              </Field>
+                            );
+                          })}
+                        </div>
+
+                        <Field>
+                          <FieldLabel htmlFor="instructions">Special instructions (optional)</FieldLabel>
+                          <Textarea id="instructions" rows={2} placeholder="e.g. Focus on past-paper style word problems, avoid geometry." className="rounded-xl border bg-card shadow-card focus-visible:ring-2 focus-visible:ring-primary/20" {...form.register("instructions")} />
+                        </Field>
+                      </FieldGroup>
+                    )}
+
+                    {step === 2 && (
+                      <FieldGroup>
+                        <div className="space-y-3">
+                          <FieldLabel>Exam session rules</FieldLabel>
+                          <p className="text-muted-foreground text-xs">Secure defaults: no backtrack, no review, skipping allowed, fullscreen required.</p>
+                          <div className="grid gap-3">
+                            {(
+                              [
+                                ["preventBacktrack", "Prevent going back", "Once Next is pressed you cannot see that question again.", LockIcon],
+                                ["allowReviewBeforeSubmit", "Allow review before submit", "Show review screen before final submit (off = direct submit).", ShieldCheckIcon],
+                                ["allowSkipping", "Allow skipping", "Students can Next without answering (blank = 0).", ZapIcon],
+                                ["requireFullscreen", "Require fullscreen", "Auto-enter fullscreen and block exit until submit.", MonitorIcon],
+                              ] as const
+                            ).map(([name, label, hint, Icon]) => (
+                              <Field key={name}>
+                                <label htmlFor={name} className="group hover:bg-accent/30 flex cursor-pointer items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3 shadow-card hover:shadow-lifted transition-all">
+                                  <span className="flex items-center gap-3">
+                                    <span className="grid size-8 place-items-center rounded-xl bg-primary/10 text-primary group-hover:bg-primary group-hover:text-primary-foreground transition-colors"><Icon className="size-4" /></span>
+                                    <span className="flex flex-col">
+                                      <span className="text-sm font-medium">{label}</span>
+                                      <span className="text-muted-foreground text-xs">{hint}</span>
+                                    </span>
+                                  </span>
+                                  <Controller control={form.control} name={name as keyof FormValues} render={({ field }) => <Switch id={name} checked={field.value as boolean} onCheckedChange={field.onChange} />} />
+                                </label>
+                              </Field>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl border bg-card p-4 shadow-card">
+                          <p className="flex items-center gap-2 text-sm font-medium"><UploadCloudIcon className="size-4 text-primary" /> Source material (optional)</p>
+                          <p className="text-muted-foreground mt-1 text-xs">PDF, DOCX, TXT up to 50 MB — grounded generation.</p>
+                          <div
+                            {...getRootProps()}
+                            className={`mt-3 flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-6 py-7 text-center transition-all ${isDragActive ? "border-primary bg-primary/5 shadow-glow scale-[1.01]" : "hover:border-primary/40 hover:bg-accent/20"}`}
+                          >
+                            <input {...getInputProps()} />
+                            <span className={`grid size-10 place-items-center rounded-xl transition-colors ${isDragActive ? "bg-primary text-primary-foreground shadow-glow" : "bg-muted text-muted-foreground"}`}><UploadCloudIcon className="size-5" /></span>
+                            <p className="text-sm font-medium">{isDragActive ? "Drop files here…" : "Drag & drop or click to upload"}</p>
+                            <p className="text-muted-foreground text-xs">Questions will be grounded on your material</p>
+                          </div>
+
+                          <ul className="mt-3 flex flex-col gap-3">
+                            <AnimatePresence initial={false}>
+                              {docs.map((d) => (
+                                <motion.li key={d.documentId} initial={{ opacity: 0, y: 8, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.97, y: -6 }} className="group overflow-hidden rounded-2xl border bg-card shadow-card hover:shadow-lifted transition-all">
+                                  <div className="flex items-center gap-3 px-3.5 py-3">
+                                    <span className={`grid size-9 place-items-center rounded-xl border shadow-sm transition-colors ${d.uploading ? "bg-brand text-primary-foreground border-primary shadow-glow" : d.parseStatus === "parsed" ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-600" : "bg-amber-500/10 border-amber-500/20 text-amber-600"}`}>
+                                      {d.uploading ? <Loader2Icon className="size-4 animate-spin" /> : d.parseStatus === "parsed" ? <CheckCircle2Icon className="size-4" /> : <FileTextIcon className="size-4" />}
+                                    </span>
+                                    <div className="min-w-0 flex-1">
+                                      <p className="truncate text-sm font-medium leading-none">{d.name}</p>
+                                      <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                                        <span className="tabular-nums">{d.sizeLabel}</span>
+                                        <span className="size-1 rounded-full bg-muted-foreground/30" />
+                                        {d.uploading ? <span className="inline-flex items-center gap-1 text-primary font-medium"><span className="size-1.5 animate-pulse rounded-full bg-primary" />Uploading {d.progress}%</span> : d.parseStatus === "parsed" ? <span className="text-emerald-600">Ready — grounded</span> : <span className="text-amber-600">Unreadable — will skip</span>}
+                                      </p>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      {d.uploading ? (
+                                        <Badge variant="secondary" className="tabular-nums bg-primary/10 text-primary border-primary/20">{d.progress}%</Badge>
+                                      ) : d.parseStatus === "parsed" ? (
+                                        <Badge variant="secondary" className="gap-1 bg-emerald-500/10 text-emerald-700 border-emerald-500/20 dark:text-emerald-300"><CheckCircle2Icon className="size-3" /> Ready</Badge>
+                                      ) : (
+                                        <Badge variant="outline" className="border-amber-500/30 text-amber-700">Unreadable</Badge>
+                                      )}
+                                      <Button type="button" variant="ghost" size="icon-xs" aria-label={`Remove ${d.name}`} onClick={() => setDocs((prev) => prev.filter((x) => x.documentId !== d.documentId))} className="opacity-60 group-hover:opacity-100"><XIcon className="size-3" /></Button>
+                                    </div>
+                                  </div>
+                                  {/* Beautiful progress */}
+                                  <div className="h-1.5 w-full bg-muted/30 overflow-hidden">
+                                    <motion.div
+                                      className={`h-full ${d.uploading ? "bg-brand shadow-glow bg-shimmer" : d.parseStatus === "parsed" ? "bg-emerald-500" : "bg-amber-500"}`}
+                                      initial={{ width: 0 }}
+                                      animate={{ width: `${d.uploading ? d.progress : 100}%` }}
+                                      transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+                                    />
+                                  </div>
+                                </motion.li>
+                              ))}
+                            </AnimatePresence>
+                          </ul>
+                        </div>
+                      </FieldGroup>
+                    )}
+                  </motion.div>
                 </AnimatePresence>
-              </ul>
-            </CardContent>
-          </Card>
+
+                {/* Wizard nav — explicit Generate button */}
+                <div className="mt-6 flex items-center justify-between gap-3 border-t pt-5">
+                  <Button type="button" variant="outline" onClick={() => go(step - 1)} disabled={step === 0} className="min-w-[96px] rounded-xl">
+                    <ChevronLeftIcon data-icon="inline-start" /> Back
+                  </Button>
+                  <div className="hidden items-center gap-1.5 sm:flex">
+                    {STEPS.map((_, i) => (
+                      <span key={i} className={`h-1.5 rounded-full transition-all ${i === step ? "w-6 bg-primary" : i < step ? "w-3 bg-primary/40" : "w-3 bg-muted-foreground/20"}`} />
+                    ))}
+                  </div>
+                  {step < STEPS.length - 1 ? (
+                    <Button
+                      type="button"
+                      onClick={async () => {
+                        if (await canNext()) go(step + 1);
+                      }}
+                      className="shadow-glow min-w-[108px] rounded-xl"
+                    >
+                      Next <ChevronRightIcon data-icon="inline-end" />
+                    </Button>
+                  ) : (
+                    <Button type="submit" size="lg" className="shadow-glow h-11 min-w-[168px] rounded-xl font-semibold" disabled={generating || docs.some((d) => d.uploading)}>
+                      {generating ? (
+                        <>
+                          <Loader2Icon data-icon="inline-start" className="animate-spin" /> Generating… {Math.round(genPct)}%
+                        </>
+                      ) : (
+                        <>
+                          <SparklesIcon data-icon="inline-start" /> Generate exam
+                        </>
+                      )}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </form>
         </div>
 
-        {/* Sticky action rail */}
-        <div className="lg:sticky lg:top-20 lg:self-start">
-          <Card className="overflow-hidden">
-            <div className="bg-brand-soft text-accent-foreground flex flex-col gap-1 p-5">
-              <p className="text-sm font-medium">Estimated cost</p>
-              <p className="text-3xl font-semibold tabular-nums">
-                {formatUsd(tokensToUsd(estimate))}
-              </p>
-              <p className="text-muted-foreground text-sm">
-                ≈ {formatUgx(usdToUgx(tokensToUsd(estimate)))} · ~
-                {estimate.toLocaleString()} tokens
-              </p>
+        {/* Right: Estimated cost — row on lg, stacked on mobile */}
+        <div className="lg:sticky lg:top-6 lg:self-start flex flex-col gap-6">
+          <Card className="shadow-lifted overflow-hidden rounded-2xl border">
+            <div className="bg-brand-soft relative overflow-hidden p-5">
+              <div aria-hidden className="pointer-events-none absolute inset-0 opacity-10" style={{ backgroundImage: "radial-gradient(20rem 10rem at 20% 0%, white, transparent 60%)" }} />
+              <p className="relative flex items-center gap-2 text-sm font-medium"><SparklesIcon className="size-4 text-primary" /> Estimated cost</p>
+              <p className="relative mt-1 text-3xl font-semibold tabular-nums">{formatUsd(tokensToUsd(estimate))}</p>
+              <p className="text-muted-foreground relative text-sm">≈ {formatUgx(usdToUgx(tokensToUsd(estimate)))} · ~{estimate.toLocaleString()} tokens</p>
+              <div className="relative mt-3 flex flex-wrap gap-1.5">
+                <Badge variant="secondary" className="gap-1"><LayersIcon className="size-3" /> {questionCount} Qs</Badge>
+                <Badge variant="secondary" className="gap-1"><ClockIcon className="size-3" /> {durationMinutes} min</Badge>
+                {docs.length > 0 && <Badge variant="secondary" className="gap-1"><FileTextIcon className="size-3" /> {docs.length} doc{docs.length > 1 ? "s" : ""}</Badge>}
+              </div>
             </div>
             <CardContent className="flex flex-col gap-4 p-5">
-              <p className="text-muted-foreground text-sm">
-                Final billing uses actual token usage from Gemini. You&apos;ll
-                see the exact figure after generation.
-              </p>
+              <p className="text-muted-foreground text-xs leading-relaxed">Final billing uses actual Gemini usage. Click <strong className="text-foreground">Generate exam</strong> explicitly — no auto-generation. Cost scales with questions + grounded docs.</p>
               <Separator />
+
+              {/* Explicit Generate CTA duplicated for large screens — also premium */}
               <Button
-                type="submit"
+                type="button"
                 size="lg"
-                className="shadow-glow h-11 w-full"
+                onClick={() => {
+                  // Validate all steps then submit from cost card as well
+                  void (async () => {
+                    const ok0 = await form.trigger(["level", "secondarySubLevel", "subject", "classLevel", "topic", "subsidiary"] as unknown as Parameters<typeof form.trigger>[0]);
+                    const ok1 = await form.trigger(["questionTypes", "difficulty", "questionCount", "durationMinutes"] as unknown as Parameters<typeof form.trigger>[0]);
+                    if (!ok0) {
+                      setStep(0);
+                      toast.error("Complete Curriculum step first.");
+                      return;
+                    }
+                    if (!ok1) {
+                      setStep(1);
+                      toast.error("Complete Format step first.");
+                      return;
+                    }
+                    await onSubmit();
+                  })();
+                }}
                 disabled={generating || docs.some((d) => d.uploading)}
+                className="shadow-glow hidden h-11 w-full rounded-xl font-semibold lg:inline-flex"
               >
                 {generating ? (
                   <>
-                    <Loader2Icon data-icon="inline-start" className="animate-spin" />
-                    Generating…
+                    <Loader2Icon className="animate-spin" /> Generating… {Math.round(genPct)}%
                   </>
                 ) : (
                   <>
-                    <SparklesIcon data-icon="inline-start" />
-                    Generate exam
+                    <SparklesIcon /> Generate exam
                   </>
                 )}
               </Button>
+              <p className="hidden text-center text-[11px] text-muted-foreground lg:block">Explicit click required — we never generate on step change.</p>
 
+              {/* Premium staged loader */}
               <AnimatePresence>
                 {generating && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className="overflow-hidden"
-                  >
-                    <div className="bg-muted space-y-2 rounded-lg p-4">
-                      <div className="bg-shimmer bg-primary/10 h-2 rounded-full" />
-                      <p className="text-muted-foreground text-xs">
-                        Gemini is drafting questions calibrated to your class
-                        level and difficulty…
-                      </p>
+                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+                    <div className="rounded-2xl border bg-card p-4 shadow-card">
+                      <div className="flex items-center justify-between">
+                        <p className="flex items-center gap-2 text-sm font-semibold"><SparklesIcon className="size-4 text-primary" /> Generating exam</p>
+                        <span className="rounded-full bg-primary px-2.5 py-1 text-xs font-bold tabular-nums text-primary-foreground shadow-glow">{Math.round(genPct)}%</span>
+                      </div>
+                      <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
+                        <motion.div className="bg-brand h-full rounded-full" animate={{ width: `${genPct}%` }} transition={{ duration: 0.3 }} />
+                      </div>
+                      <div className="mt-3 grid gap-2">
+                        {GEN_STAGES.map((s, i) => {
+                          const active = i === genStage;
+                          const done = genPct >= s.pct;
+                          const past = i < genStage;
+                          return (
+                            <div key={s.label} className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-xs transition-colors ${active ? "border-primary/30 bg-primary/5" : past || done ? "border-success/20 bg-success/5" : "border-border bg-muted/20"}`}>
+                              <span className={`grid size-6 place-items-center rounded-full border text-[11px] font-bold ${active ? "border-primary bg-primary text-primary-foreground animate-pulse" : past || done ? "border-success bg-success text-white" : "border-border bg-muted text-muted-foreground"}`}>
+                                {past || done ? <CheckCircle2Icon className="size-3.5" /> : <s.icon className="size-3.5" />}
+                              </span>
+                              <span className={`flex-1 text-sm ${active ? "font-medium text-primary" : past || done ? "text-success" : "text-muted-foreground"}`}>{s.label}</span>
+                              {active && <Loader2Icon className="size-3.5 animate-spin text-primary" />}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <p className="text-muted-foreground mt-3 text-center text-[11px]">Gemini is drafting questions calibrated to your level — don’t close this tab.</p>
                     </div>
                   </motion.div>
                 )}
               </AnimatePresence>
 
-              {result && (
-                <motion.div
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4"
-                >
-                  <p className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-400">
-                    <CheckCircle2Icon className="size-4" />
-                    {result.title}
-                  </p>
-                  <p className="text-muted-foreground mt-1 text-xs">
-                    {result.questions} questions ·{" "}
-                    {result.tokensUsed.toLocaleString()} tokens used
-                  </p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="mt-3"
-                    onClick={() => router.push("/admin/exams")}
-                  >
-                    Open exam library
-                  </Button>
-                </motion.div>
+              {/* Mobile: Generate button inside cost card as well (stacked) */}
+              <Button
+                type="button"
+                onClick={() => {
+                  // Validate all steps then submit — same logic as desktop CTA
+                  void (async () => {
+                    const ok0 = await form.trigger(["level", "secondarySubLevel", "subject", "classLevel", "topic", "subsidiary"] as unknown as Parameters<typeof form.trigger>[0]);
+                    const ok1 = await form.trigger(["questionTypes", "difficulty", "questionCount", "durationMinutes"] as unknown as Parameters<typeof form.trigger>[0]);
+                    if (!ok0) {
+                      setStep(0);
+                      toast.error("Complete Curriculum step first.");
+                      return;
+                    }
+                    if (!ok1) {
+                      setStep(1);
+                      toast.error("Complete Format step first.");
+                      return;
+                    }
+                    await onSubmit();
+                  })();
+                }}
+                disabled={generating || docs.some((d) => d.uploading)}
+                className="shadow-glow h-11 w-full rounded-xl font-semibold lg:hidden"
+              >
+                {generating ? (
+                  <>
+                    <Loader2Icon className="animate-spin" /> Generating… {Math.round(genPct)}%
+                  </>
+                ) : (
+                  <>
+                    <SparklesIcon /> Generate exam
+                  </>
+                )}
+              </Button>
+
+              {!generating && result && (
+                <div className="rounded-xl border border-dashed bg-muted/20 p-3 text-xs text-muted-foreground">After generation, preview appears below — full exam is saved to your library.</div>
               )}
             </CardContent>
           </Card>
         </div>
       </div>
-    </form>
+
+      {/* After generation — premium preview full-width */}
+      <AnimatePresence>
+        {result && !generating && (
+          <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 12 }} className="shadow-lifted overflow-hidden rounded-2xl border bg-card">
+            <div className="bg-brand relative overflow-hidden p-6 text-primary-foreground">
+              <div aria-hidden className="pointer-events-none absolute inset-0 opacity-15" style={{ backgroundImage: "radial-gradient(28rem 14rem at 12% 0%, rgba(255,255,255,.9), transparent 60%)" }} />
+              <div className="relative flex flex-wrap items-start justify-between gap-4">
+                <div className="min-w-0">
+                  <p className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-xs font-medium backdrop-blur"><CheckCircle2Icon className="size-3.5" /> Generated successfully</p>
+                  <h2 className="mt-3 text-xl font-semibold tracking-tight sm:text-2xl">{result.title}</h2>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Badge className="bg-white/15 text-white backdrop-blur border-white/20 gap-1"><FileQuestionIcon className="size-3" /> {result.questions} questions</Badge>
+                    <Badge className="bg-white/15 text-white backdrop-blur border-white/20 gap-1"><ClockIcon className="size-3" /> {durationMinutes} min</Badge>
+                    <Badge className="bg-white/15 text-white backdrop-blur border-white/20 gap-1"><EyeIcon className="size-3" /> {form.getValues("subject")} · {DIFFICULTY_LABELS[form.getValues("difficulty") as keyof typeof DIFFICULTY_LABELS]}</Badge>
+                    <Badge className="bg-white text-primary shadow-glow gap-1">{formatUsd(tokensToUsd(result.tokensUsed))} · {result.tokensUsed.toLocaleString()} tokens</Badge>
+                  </div>
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <Button variant="secondary" className="rounded-xl bg-white text-primary hover:bg-white/90 shadow-glow" onClick={() => router.push("/admin/exams")}><EyeIcon className="size-4" /> Open in library</Button>
+                  <Button variant="outline" className="rounded-xl border-white/30 bg-white/10 text-white backdrop-blur hover:bg-white/20" onClick={() => router.push(`/admin/exams?assign=${result.examId}`)}><GraduationCapIcon className="size-4" /> Assign</Button>
+                </div>
+              </div>
+            </div>
+            <div className="p-6">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="flex items-center gap-2 text-sm font-semibold"><SparklesIcon className="size-4 text-primary" /> Exam preview — premium</h3>
+                <Badge variant="outline" className="gap-1"><LockIcon className="size-3" /> Draft · not yet assigned</Badge>
+              </div>
+
+              {previewQuestions && previewQuestions.length > 0 ? (
+                <div className="mt-4 grid gap-3">
+                  {previewQuestions.map((q, idx) => (
+                    <motion.div key={q.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.05 }} className="rounded-2xl border bg-card p-4 shadow-card hover:shadow-lifted transition-shadow">
+                      <div className="flex items-start justify-between gap-3">
+                        <Badge variant="secondary" className="tabular-nums">Q{idx + 1} · {q.points} {q.points === 1 ? "mark" : "marks"}</Badge>
+                        <Badge variant="outline" className="capitalize">{q.type.replace(/_/g, " ")}</Badge>
+                      </div>
+                      <div className="prose prose-sm mt-3 max-w-none dark:prose-invert"><Markdown>{q.prompt}</Markdown></div>
+                      {q.options && q.options.length > 0 && (
+                        <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+                          {q.options.map((opt, i) => (
+                            <li key={i} className="flex gap-2 rounded-xl border bg-muted/30 px-3 py-2 text-sm"><span className="font-bold text-muted-foreground">{String.fromCharCode(65 + i)}.</span><span className="line-clamp-2"><Markdown>{opt}</Markdown></span></li>
+                          ))}
+                        </ul>
+                      )}
+                    </motion.div>
+                  ))}
+                  {result.questions > previewQuestions.length && (
+                    <p className="text-center text-xs text-muted-foreground">Showing {previewQuestions.length} of {result.questions} — open library to see all.</p>
+                  )}
+                </div>
+              ) : previewFailed ? (
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/70 p-4 text-center dark:border-amber-900/30 dark:bg-amber-950/20">
+                  <p className="text-sm text-amber-800 dark:text-amber-200">Preview could not be loaded — exam was generated successfully. Open in library to view all questions.</p>
+                </div>
+              ) : (
+                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  {Array.from({ length: Math.min(3, result.questions) }).map((_, i) => (
+                    <div key={i} className="rounded-2xl border bg-muted/30 p-4">
+                      <div className="h-3 w-16 rounded bg-muted" />
+                      <div className="mt-3 space-y-2">
+                        <div className="h-2 w-full rounded bg-muted" />
+                        <div className="h-2 w-5/6 rounded bg-muted" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="mt-6 flex flex-wrap gap-2">
+                <Button onClick={() => router.push("/admin/exams")} className="shadow-glow rounded-xl"><EyeIcon /> View full exam</Button>
+                <Button variant="outline" onClick={() => { setResult(null); setPreviewQuestions(null); }} className="rounded-xl">Create another</Button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 
 /** Parse the voice builder's query-param hand-off. */
 function readVoiceParams(sp: ReadonlyURLSearchParams) {
   const level = (sp.get("level") as "primary" | "secondary" | null) ?? "secondary";
-  const subLevel =
-    level === "secondary"
-      ? ((sp.get("sublevel") as "o_level" | "a_level" | null) ?? "o_level")
-      : null;
+  const subLevel = level === "secondary" ? ((sp.get("sublevel") as "o_level" | "a_level" | null) ?? "o_level") : null;
   const types = sp.get("types")?.split(",").filter(Boolean);
   return {
     level,
@@ -766,8 +1066,6 @@ function readVoiceParams(sp: ReadonlyURLSearchParams) {
     difficulty: (sp.get("difficulty") as FormValues["difficulty"] | null) ?? "medium",
     durationMinutes: Number(sp.get("duration")) || 45,
     questionCount: Number(sp.get("count")) || 20,
-    questionTypes: (types?.length
-      ? types
-      : ["multiple_choice", "short_answer"]) as FormValues["questionTypes"],
+    questionTypes: (types?.length ? types : ["multiple_choice", "short_answer"]) as FormValues["questionTypes"],
   };
 }

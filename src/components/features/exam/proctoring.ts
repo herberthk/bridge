@@ -160,17 +160,40 @@ export function useProctoring(
       return false;
     }
     try {
+      // Strict: require entire screen ("monitor"), not window/tab.
       const screen = await navigator.mediaDevices.getDisplayMedia({
-        video: { frameRate: 5 },
+        video: { displaySurface: "monitor" as unknown as string, frameRate: 5 } as unknown as MediaTrackConstraints,
         audio: false,
-      });
-      screen.getVideoTracks()[0]?.addEventListener("ended", () => {
+        preferCurrentTab: false as unknown as boolean,
+        selfBrowserSurface: "exclude" as unknown as string,
+        systemAudio: "exclude" as unknown as string,
+      } as unknown as DisplayMediaStreamOptions);
+      const track = screen.getVideoTracks()[0];
+      const settings = (track?.getSettings?.() as unknown as { displaySurface?: string }) ?? {};
+      const surface = settings.displaySurface;
+      // Enforce entire screen: reject any stream whose displaySurface is absent or not exactly "monitor"
+      if (!surface || surface !== "monitor") {
+        screen.getTracks().forEach((t) => t.stop());
+        setPermissionError(
+          "You must share your ENTIRE SCREEN — Window and Tab sharing are not allowed. When prompted, select \"Entire screen\" and click Share.",
+        );
+        setCameraStream((cam) => {
+          cam?.getTracks().forEach((t) => t.stop());
+          return null;
+        });
+        return false;
+      }
+      track?.addEventListener("ended", () => {
         void report("fullscreen_exit", "high", { source: "screen-share-stopped" });
       });
       setScreenStream(screen);
-    } catch {
+    } catch (err) {
+      // User cancelled or browser blocked
+      const cancelled = err instanceof DOMException && err.name === "NotAllowedError";
       setPermissionError(
-        "Screen sharing is required for proctoring. Choose your screen/window and try again.",
+        cancelled
+          ? "Screen sharing was cancelled. You must share your ENTIRE SCREEN to start — pick “Entire screen”, not Window or Tab, then click Share."
+          : "Screen sharing is required for proctoring. You must share your ENTIRE SCREEN — choose “Entire screen” in the picker and try again.",
       );
       setCameraStream((cam) => {
         cam?.getTracks().forEach((t) => t.stop());

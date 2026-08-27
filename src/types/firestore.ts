@@ -147,6 +147,11 @@ export interface ExamParams {
   includeExplanations: boolean;
   includeWorkedExamples: boolean;
   instructions: string | null;
+  /** Strict controls — see examParamsSchema defaults: no backtrack, no review, allow skip, require fullscreen. */
+  preventBacktrack: boolean;
+  allowReviewBeforeSubmit: boolean;
+  allowSkipping: boolean;
+  requireFullscreen: boolean;
 }
 
 export interface MatchingPair {

@@ -9,21 +9,47 @@ service firebase.storage {
     function isAdmin() { return isSignedIn() && role() == 'admin'; }
     function mySchool() { return request.auth.token.schoolId; }
 
-    /* Proctoring recordings: attempts/{attemptId}/camera.webm | screen.webm
+    /* Proctoring recordings — two layouts supported:
+       Legacy: recordings/{attemptId}/{file}
+       Preferred (UID-isolated, no Firestore lookup): recordings/{uid}/{attemptId}/{file}
        Students upload their own; school admins + super review them. */
     match /recordings/{attemptId}/{file} {
       function attempt() {
         return firestore.get(/databases/(default)/documents/attempts/$(attemptId));
       }
+      function isAttemptOwner() {
+        return isSignedIn() && attempt() != null && attempt().data.studentId == request.auth.uid;
+      }
+      function isStudent() {
+        return isSignedIn() && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'student';
+      }
+      // Read: owner, admins/super
       allow read: if isSuper()
         || (isAdmin()
+            && attempt() != null
             && ((attempt().data.schoolId != null && attempt().data.schoolId == mySchool())
                 || (attempt().data.schoolId == null
-                    && firestore.get(/databases/(default)/documents/users/$(attempt().data.studentId)).data.createdBy == request.auth.uid)));
+                    && firestore.get(/databases/(default)/documents/users/$(attempt().data.studentId)).data.createdBy == request.auth.uid)))
+        || isAttemptOwner();
+      // Write: owner only, size and content-type validated
       allow write: if isSignedIn()
-        && attempt().data.studentId == request.auth.uid
+        && request.resource.size < 500 * 1024 * 1024
+        && request.resource.contentType.matches('video/webm')
+        && isAttemptOwner();
+    }
+
+    // Preferred UID-isolated layout — no Firestore lookup, works with plain Firebase Auth
+    match /recordings/{uid}/{attemptId}/{file} {
+      function attemptForUid() {
+        return firestore.get(/databases/(default)/documents/attempts/$(attemptId));
+      }
+      allow write: if isSignedIn()
+        && request.auth.uid == uid
         && request.resource.size < 500 * 1024 * 1024
         && request.resource.contentType.matches('video/webm');
+      allow read: if isSuper()
+        || (isSignedIn() && request.auth.uid == uid)
+        || (isAdmin() && attemptForUid() != null && attemptForUid().data.schoolId != null && attemptForUid().data.schoolId == mySchool());
     }
 
     /* Uploaded source documents (past papers etc.): docs/{ownerId}/{docId}.pdf */
