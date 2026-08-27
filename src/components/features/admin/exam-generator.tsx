@@ -141,6 +141,7 @@ export function ExamGenerator() {
     tokensUsed: number;
   } | null>(null);
   const [previewQuestions, setPreviewQuestions] = useState<PreviewQuestion[] | null>(null);
+  const [previewFailed, setPreviewFailed] = useState(false);
   const [step, setStep] = useState(0);
   const [dir, setDir] = useState(1);
   const genTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -196,10 +197,29 @@ export function ExamGenerator() {
     const load = async () => {
       try {
         const res = await fetch(`/api/exams/${result.examId}`, { cache: "no-store" });
-        if (!res.ok) return;
+        if (!res.ok) {
+          if (!cancelled) {
+            setPreviewQuestions(null);
+            setPreviewFailed(true);
+          }
+          return;
+        }
         const data = (await res.json()) as { exam?: { questions: PreviewQuestion[] } };
-        if (!cancelled && data.exam?.questions) setPreviewQuestions(data.exam.questions.slice(0, 6));
-      } catch {}
+        if (!cancelled) {
+          if (data.exam?.questions && Array.isArray(data.exam.questions)) {
+            setPreviewQuestions(data.exam.questions.slice(0, 6));
+            setPreviewFailed(false);
+          } else {
+            setPreviewQuestions(null);
+            setPreviewFailed(true);
+          }
+        }
+      } catch {
+        if (!cancelled) {
+          setPreviewQuestions(null);
+          setPreviewFailed(true);
+        }
+      }
     };
     void load();
     return () => {
@@ -910,7 +930,24 @@ export function ExamGenerator() {
               {/* Mobile: Generate button inside cost card as well (stacked) */}
               <Button
                 type="button"
-                onClick={() => void onSubmit()}
+                onClick={() => {
+                  // Validate all steps then submit — same logic as desktop CTA
+                  void (async () => {
+                    const ok0 = await form.trigger(["level", "secondarySubLevel", "subject", "classLevel", "topic", "subsidiary"] as unknown as Parameters<typeof form.trigger>[0]);
+                    const ok1 = await form.trigger(["questionTypes", "difficulty", "questionCount", "durationMinutes"] as unknown as Parameters<typeof form.trigger>[0]);
+                    if (!ok0) {
+                      setStep(0);
+                      toast.error("Complete Curriculum step first.");
+                      return;
+                    }
+                    if (!ok1) {
+                      setStep(1);
+                      toast.error("Complete Format step first.");
+                      return;
+                    }
+                    await onSubmit();
+                  })();
+                }}
                 disabled={generating || docs.some((d) => d.uploading)}
                 className="shadow-glow h-11 w-full rounded-xl font-semibold lg:hidden"
               >
@@ -983,6 +1020,10 @@ export function ExamGenerator() {
                   {result.questions > previewQuestions.length && (
                     <p className="text-center text-xs text-muted-foreground">Showing {previewQuestions.length} of {result.questions} — open library to see all.</p>
                   )}
+                </div>
+              ) : previewFailed ? (
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/70 p-4 text-center dark:border-amber-900/30 dark:bg-amber-950/20">
+                  <p className="text-sm text-amber-800 dark:text-amber-200">Preview could not be loaded — exam was generated successfully. Open in library to view all questions.</p>
                 </div>
               ) : (
                 <div className="mt-4 grid gap-3 sm:grid-cols-3">

@@ -375,17 +375,26 @@ export function ExamOnboarding({
     return [...base, ...extra];
   }, [effectivePolicy]);
   const STORAGE_KEY = "bridge:onboarding-step";
-  const [step, setStep] = useState(() => {
-    if (typeof window === "undefined") return 0;
+  const [step, setStep] = useState(0);
+  const restoredRef = useRef(false);
+
+  // Restore step from sessionStorage after hydration to avoid SSR mismatch
+  useEffect(() => {
+    if (restoredRef.current) return;
     try {
       const saved = sessionStorage.getItem(STORAGE_KEY);
       if (saved) {
         const n = Number(saved);
-        if (Number.isFinite(n) && n >= 0 && n < STEPS.length) return n;
+        if (Number.isFinite(n) && n >= 0 && n < STEPS.length) {
+          // Legitimate use of setState in effect: restoring persisted UI state after mount
+          // to avoid SSR/hydration mismatch (recommended pattern per React docs).
+          // eslint-disable-next-line react-hooks/set-state-in-effect
+          setStep(n);
+        }
       }
     } catch {}
-    return 0;
-  });
+    restoredRef.current = true;
+  }, []);
   const [dir, setDir] = useState(1);
   const [rulesAck, setRulesAck] = useState<ReadonlySet<string>>(() => new Set());
   const [envAck, setEnvAck] = useState<ReadonlySet<string>>(() => new Set());
@@ -397,6 +406,7 @@ export function ExamOnboarding({
 
   // Persist step in sessionStorage (resume after accidental refresh).
   useEffect(() => {
+    if (!restoredRef.current) return;
     try {
       sessionStorage.setItem(STORAGE_KEY, String(step));
     } catch {}

@@ -535,10 +535,10 @@ export function ExamRunner({
           );
         });
 
-      const tryUpload = async (path: string, blob: Blob, onPct: (p: number) => void) => {
+      const tryUpload = async (path: string, blob: Blob, onPct: (p: number) => void): Promise<string | null> => {
         try {
           await uploadWithProgress(path, blob, onPct);
-          return true;
+          return path;
         } catch (err: unknown) {
           const code = (err as { code?: string })?.code ?? "";
           const msg = err instanceof Error ? err.message : String(err);
@@ -550,20 +550,18 @@ export function ExamRunner({
               console.warn(`[exam] retrying upload to legacy path ${legacy}`);
               try {
                 await uploadWithProgress(legacy, blob, onPct);
-                // Use the legacy path that actually succeeded for the DB reference
-                if (path.includes("camera.webm")) cameraPath = legacy;
-                if (path.includes("screen.webm")) screenPath = legacy;
-                return true;
+                // Return the legacy path that actually succeeded for the DB reference
+                return legacy;
               } catch (retryErr) {
                 console.warn("[exam] legacy retry also failed", retryErr);
                 // Non-fatal: answers are already secured, recordings are secondary
                 toast.error("Recordings could not be uploaded — your answers are safe. An admin can still grade without video.");
-                return false;
+                return null;
               }
             }
             toast.error("Recording upload blocked by Storage rules — your answers are safe. Tell an admin to run: firebase deploy --only storage");
           }
-          return false;
+          return null;
         }
       };
 
@@ -571,18 +569,18 @@ export function ExamRunner({
       const ts = Date.now();
       const rnd = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID().slice(0, 8) : Math.random().toString(36).slice(2, 8);
       if (cameraBlob) {
-        cameraPath = `${basePath}/camera-${ts}-${rnd}.webm`;
-        const ok = await tryUpload(cameraPath, cameraBlob, (p) => setUploadProgress((s) => ({ ...s, camera: p })));
-        if (!ok) cameraPath = null;
+        const initialPath = `${basePath}/camera-${ts}-${rnd}.webm`;
+        const effectivePath = await tryUpload(initialPath, cameraBlob, (p) => setUploadProgress((s) => ({ ...s, camera: p })));
+        cameraPath = effectivePath;
       } else {
         setUploadProgress((s) => ({ ...s, camera: 100 }));
       }
       if (screenBlob) {
         // Use same ts/rnd prefix but distinct file kind for easy grouping, still unique per file
         const screenRnd = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID().slice(0, 8) : Math.random().toString(36).slice(2, 8);
-        screenPath = `${basePath}/screen-${ts}-${screenRnd}.webm`;
-        const ok = await tryUpload(screenPath, screenBlob, (p) => setUploadProgress((s) => ({ ...s, screen: p })));
-        if (!ok) screenPath = null;
+        const initialPath = `${basePath}/screen-${ts}-${screenRnd}.webm`;
+        const effectivePath = await tryUpload(initialPath, screenBlob, (p) => setUploadProgress((s) => ({ ...s, screen: p })));
+        screenPath = effectivePath;
       } else {
         setUploadProgress((s) => ({ ...s, screen: 100 }));
       }
@@ -690,7 +688,8 @@ export function ExamRunner({
   const current = questions[session.current];
   const answered = session.answeredCount();
   const progressPct = questions.length ? (answered / questions.length) * 100 : 0;
-  const hasAnswer = current ? current.id in session.answers : false;
+  const answerValue = current ? session.answers[current.id] : undefined;
+  const hasAnswer = current ? (answerValue !== undefined && answerValue !== null && answerValue !== "") : false;
   const canGoNext = effectivePolicy.allowSkipping || hasAnswer;
   const isLast = session.current === questions.length - 1;
 
@@ -701,9 +700,12 @@ export function ExamRunner({
     } catch {}
   }, []);
 
+  const [confirmSubmit, setConfirmSubmit] = useState(false);
+
   const handleNext = useCallback(() => {
     const cur = session.questions[session.current];
-    const answeredNow = cur ? cur.id in useExamSession.getState().answers : false;
+    const answerNow = cur ? useExamSession.getState().answers[cur.id] : undefined;
+    const answeredNow = answerNow !== undefined && answerNow !== null && answerNow !== "";
     const canProceed = effectivePolicy.allowSkipping || answeredNow;
     if (!canProceed) {
       toast.error("Answer required before continuing.", { description: "This exam does not allow skipping." });
@@ -711,11 +713,11 @@ export function ExamRunner({
     }
     const last = session.current === session.questions.length - 1;
     if (last) {
-      void doSubmit(false);
+      setConfirmSubmit(true);
     } else {
       session.setCurrent(session.current + 1);
     }
-  }, [effectivePolicy.allowSkipping, session, doSubmit]);
+  }, [effectivePolicy.allowSkipping, session]);
 
   const handlePrevious = useCallback(() => {
     if (effectivePolicy.preventBacktrack) return;
@@ -918,14 +920,15 @@ export function ExamRunner({
           {/* Progress dots — interactive only when backtrack allowed, else read-only */}
           <div className="flex items-center gap-1.5">
             {questions.map((q, i) => {
-              const answeredQ = q.id in session.answers;
+              const ansVal = session.answers[q.id];
+              const answeredQ = ansVal !== undefined && ansVal !== null && ansVal !== "";
               const flagged = session.flagged.has(q.id);
               const isPast = i < session.current;
-              const clickable = !effectivePolicy.preventBacktrack;
+              const clickable = !effectivePolicy.preventBacktrack && !isPast;
               return (
                 <button
                   key={q.id}
-                  disabled={!clickable || isPast || i > session.current}
+                  disabled={!clickable || i > session.current}
                   onClick={() => clickable && session.setCurrent(i)}
                   aria-label={`Go to question ${i + 1}`}
                   className={`size-2.5 rounded-full transition-all sm:size-3 ${
@@ -948,7 +951,7 @@ export function ExamRunner({
           <Button className="shadow-glow min-w-[124px]" onClick={handleNext} disabled={!canGoNext}>
             {isLast ? (
               <>
-                <SendIcon data-icon="inline-start" /> {effectivePolicy.allowReviewBeforeSubmit ? "Review & submit" : "Submit exam"}
+                <SendIcon data-icon="inline-start" /> Submit exam
               </>
             ) : (
               <>
@@ -983,6 +986,27 @@ export function ExamRunner({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogAction render={<Button />}>I understand</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Submit confirmation modal */}
+      <AlertDialog open={confirmSubmit} onOpenChange={setConfirmSubmit}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <SendIcon className="size-5" />
+              Ready to submit?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              You are about to submit your exam. This action cannot be undone. Make sure you have answered all the questions you wanted to complete.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel render={<Button variant="outline" />}>Go back</AlertDialogCancel>
+            <AlertDialogAction render={<Button />} onClick={() => { setConfirmSubmit(false); void doSubmit(false); }}>
+              Submit exam
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

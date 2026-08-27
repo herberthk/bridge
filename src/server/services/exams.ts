@@ -54,7 +54,12 @@ export async function generateExam(
     input.params.questionCount,
     input.documentIds.length > 0,
   );
-  await assertCanAfford(walletId, estimate);
+  // Reserve maximum budget for all retries and chunked fallback
+  const maxAttempts = 3;
+  const maxChunks = Math.ceil(input.params.questionCount / 5);
+  const maxRetries = maxAttempts + maxChunks * 2;
+  const reservedBudget = estimate * maxRetries;
+  await assertCanAfford(walletId, reservedBudget);
 
   const excerpts = input.documentIds.length
     ? await loadDocumentExcerpts(actor, input.documentIds)
@@ -95,7 +100,6 @@ export async function generateExam(
 
   // Phase 1: try full generation up to 3 times (transient truncation usually
   // succeeds on retry — don't immediately chunk).
-  const maxAttempts = 3;
   for (let attempt = 1; attempt <= maxAttempts && !output; attempt += 1) {
     try {
       const { out: candidate, tokens } = await genSingle(input.params, excerpts, attempt);

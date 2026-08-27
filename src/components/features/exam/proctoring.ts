@@ -171,36 +171,17 @@ export function useProctoring(
       const track = screen.getVideoTracks()[0];
       const settings = (track?.getSettings?.() as unknown as { displaySurface?: string }) ?? {};
       const surface = settings.displaySurface;
-      // Enforce entire screen where the browser exposes it
-      if (surface && surface !== "monitor") {
+      // Enforce entire screen: reject any stream whose displaySurface is absent or not exactly "monitor"
+      if (!surface || surface !== "monitor") {
         screen.getTracks().forEach((t) => t.stop());
         setPermissionError(
-          "You must share your ENTIRE SCREEN — Window and Tab sharing are not allowed. When prompted, select “Entire screen” and click Share.",
+          "You must share your ENTIRE SCREEN — Window and Tab sharing are not allowed. When prompted, select \"Entire screen\" and click Share.",
         );
         setCameraStream((cam) => {
           cam?.getTracks().forEach((t) => t.stop());
           return null;
         });
         return false;
-      }
-      // Heuristic fallback when displaySurface is not exposed (Safari etc.): reject obvious window/tab labels
-      if (!surface) {
-        const label = (track?.label ?? "").toLowerCase();
-        const looksLikeWindowTab =
-          label.includes("window") || label.includes("tab") || label.includes("chrome tab");
-        // Don't hard-block on heuristic alone — but nudge strongly if it looks wrong.
-        // If label clearly indicates window/tab, treat as violation to enforce policy strictly.
-        if (looksLikeWindowTab) {
-          screen.getTracks().forEach((t) => t.stop());
-          setPermissionError(
-            "You must share your ENTIRE SCREEN — it looks like you shared a Window or Tab. Please try again and choose “Entire screen”.",
-          );
-          setCameraStream((cam) => {
-            cam?.getTracks().forEach((t) => t.stop());
-            return null;
-          });
-          return false;
-        }
       }
       track?.addEventListener("ended", () => {
         void report("fullscreen_exit", "high", { source: "screen-share-stopped" });

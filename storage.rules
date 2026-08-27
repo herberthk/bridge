@@ -23,39 +23,33 @@ service firebase.storage {
       function isStudent() {
         return isSignedIn() && firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'student';
       }
-      // Read: owner, admins/super, or any signed-in student (for his own attempt via isAttemptOwner)
+      // Read: owner, admins/super
       allow read: if isSuper()
         || (isAdmin()
             && attempt() != null
             && ((attempt().data.schoolId != null && attempt().data.schoolId == mySchool())
                 || (attempt().data.schoolId == null
                     && firestore.get(/databases/(default)/documents/users/$(attempt().data.studentId)).data.createdBy == request.auth.uid)))
-        || isAttemptOwner()
-        || (isSignedIn() && isStudent());
-      // Write: primary owner check, plus fallback for any signed-in student
-      // The fallback (isStudent) unblocks uploads when firestore.get races or custom claims are missing,
-      // while still requiring authentication + video/webm + size. Tighten later by removing it.
+        || isAttemptOwner();
+      // Write: owner only, size and content-type validated
       allow write: if isSignedIn()
         && request.resource.size < 500 * 1024 * 1024
         && request.resource.contentType.matches('video/webm')
-        && (isAttemptOwner() || isStudent());
-      // Final safety fallback: any signed-in user can upload video/webm <500MB to recordings/{attemptId}
-      // This guarantees the exam submission never hard-fails on Storage rules alone (answers are primary).
-      // Remove this rule once UID-isolated paths are fully migrated and Auth is confirmed.
-      allow write: if isSignedIn()
-        && request.resource.size < 500 * 1024 * 1024
-        && request.resource.contentType.matches('video/webm');
+        && isAttemptOwner();
     }
 
     // Preferred UID-isolated layout — no Firestore lookup, works with plain Firebase Auth
     match /recordings/{uid}/{attemptId}/{file} {
+      function attemptForUid() {
+        return firestore.get(/databases/(default)/documents/attempts/$(attemptId));
+      }
       allow write: if isSignedIn()
         && request.auth.uid == uid
         && request.resource.size < 500 * 1024 * 1024
         && request.resource.contentType.matches('video/webm');
       allow read: if isSuper()
         || (isSignedIn() && request.auth.uid == uid)
-        || (isAdmin() && isSignedIn());
+        || (isAdmin() && attemptForUid() != null && attemptForUid().data.schoolId != null && attemptForUid().data.schoolId == mySchool());
     }
 
     /* Uploaded source documents (past papers etc.): docs/{ownerId}/{docId}.pdf */
