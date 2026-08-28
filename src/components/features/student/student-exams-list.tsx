@@ -135,20 +135,21 @@ export function StudentExamsList({ items }: { items: AttemptWithExam[] }) {
           <h2 className="font-medium">Completed</h2>
           <div className="shadow-card flex flex-col divide-y rounded-xl border bg-card">
             {past.map(({ attempt, exam }) => (
-              <Link
+              <div
                 key={attempt.id}
-                href={`/student/results/${attempt.id}`}
-                className="hover:bg-accent/40 flex items-center gap-4 p-4 transition-colors"
+                className="group relative flex items-center gap-4 p-4 transition-colors hover:bg-accent/40"
               >
-                <FileCheck2Icon className="text-muted-foreground size-5 shrink-0" />
-                <div className="min-w-0 flex-1">
+                <Link
+                  href={`/student/results/${attempt.id}`}
+                  aria-label={`View results for ${exam?.title ?? "exam"}`}
+                  className="absolute inset-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+                <FileCheck2Icon className="text-muted-foreground pointer-events-none relative size-5 shrink-0" />
+                <div className="pointer-events-none relative min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <p className="truncate text-sm font-medium">{exam?.title ?? "Exam"}</p>
                     {(attempt as unknown as { retakeOf?: string | null }).retakeOf && (
                       <Badge variant="outline" className="border-amber-500/20 text-amber-700 text-[10px] px-1.5 py-0">Retake</Badge>
-                    )}
-                    {exam && (
-                      <Link href={`/student/exams/${exam.id}`} className="text-primary text-[11px] hover:underline hidden sm:inline" onClick={(e) => e.stopPropagation()}>history</Link>
                     )}
                   </div>
                   <p className="text-muted-foreground text-xs">
@@ -157,8 +158,11 @@ export function StudentExamsList({ items }: { items: AttemptWithExam[] }) {
                       : "—"}
                   </p>
                 </div>
+                {exam && (
+                  <Link href={`/student/exams/${exam.id}`} className="relative z-10 hidden text-[11px] text-primary hover:underline sm:inline">history</Link>
+                )}
                 {attempt.score ? (
-                  <div className="flex w-32 flex-col gap-1.5">
+                  <div className="pointer-events-none relative flex w-32 flex-col gap-1.5">
                     <div className="flex items-center justify-between text-xs">
                       <span className="text-muted-foreground">Score</span>
                       <span className="font-semibold tabular-nums">
@@ -171,11 +175,11 @@ export function StudentExamsList({ items }: { items: AttemptWithExam[] }) {
                     />
                   </div>
                 ) : (
-                  <Badge variant={STATUS_META[attempt.status]?.variant ?? "outline"}>
+                  <Badge className="pointer-events-none relative" variant={STATUS_META[attempt.status]?.variant ?? "outline"}>
                     {STATUS_META[attempt.status]?.label ?? attempt.status}
                   </Badge>
                 )}
-              </Link>
+              </div>
             ))}
           </div>
         </div>

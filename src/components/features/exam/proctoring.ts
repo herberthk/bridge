@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { StreamRecorder } from "@/lib/exam/recording";
+import { stopMediaStreams } from "@/lib/exam/media-streams";
 import { PROCTORING } from "@/lib/constants";
 import type { ProctoringSeverity } from "@/types/firestore";
 
@@ -45,6 +46,8 @@ export function useProctoring(
   const [permissionError, setPermissionError] = useState<string | null>(null);
 
   const snapshotVideoRef = useRef<HTMLVideoElement | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  const screenStreamRef = useRef<MediaStream | null>(null);
   const camRecorderRef = useRef<StreamRecorder | null>(null);
   const screenRecorderRef = useRef<StreamRecorder | null>(null);
   const workerRef = useRef<Worker | null>(null);
@@ -154,6 +157,7 @@ export function useProctoring(
         video: { width: 640, height: 480, facingMode: "user" },
         audio: true,
       });
+      cameraStreamRef.current = cam;
       setCameraStream(cam);
     } catch {
       setPermissionError(
@@ -183,11 +187,13 @@ export function useProctoring(
           cam?.getTracks().forEach((t) => t.stop());
           return null;
         });
+        cameraStreamRef.current = null;
         return false;
       }
       track?.addEventListener("ended", () => {
         void report("fullscreen_exit", "high", { source: "screen-share-stopped" });
       });
+      screenStreamRef.current = screen;
       setScreenStream(screen);
     } catch (err) {
       // User cancelled or browser blocked
@@ -201,6 +207,7 @@ export function useProctoring(
         cam?.getTracks().forEach((t) => t.stop());
         return null;
       });
+      cameraStreamRef.current = null;
       return false;
     }
     return true;
@@ -262,12 +269,25 @@ export function useProctoring(
     if (snapshotTimerRef.current) clearInterval(snapshotTimerRef.current);
     snapshotTimerRef.current = null;
 
+    const stopRecorder = async (recorder: StreamRecorder | null) => {
+      try {
+        return (await recorder?.stop()) ?? null;
+      } catch (err) {
+        console.warn("[proctoring] recorder cleanup failed", err);
+        return null;
+      }
+    };
     const [cameraBlob, screenBlob] = await Promise.all([
-      camRecorderRef.current?.stop() ?? null,
-      screenRecorderRef.current?.stop() ?? null,
+      stopRecorder(camRecorderRef.current),
+      stopRecorder(screenRecorderRef.current),
     ]);
     camRecorderRef.current = null;
     screenRecorderRef.current = null;
+    stopMediaStreams(cameraStreamRef.current, screenStreamRef.current);
+    cameraStreamRef.current = null;
+    screenStreamRef.current = null;
+    setCameraStream(null);
+    setScreenStream(null);
 
     workerRef.current?.terminate();
     workerRef.current = null;

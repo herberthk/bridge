@@ -58,7 +58,7 @@ export default async function AdminHomePage() {
           suffix="%"
           hint="Across graded attempts"
         />
-        <KpiCard title="Retakes" value={data?.retakesTotal ?? 0} hint={data?.retakeRate !== null ? `${data?.retakeRate}% of attempts` : "No retakes"} />
+        <KpiCard title="Retakes" value={data?.retakesTotal ?? 0} hint={data?.retakeRate != null ? `${data.retakeRate}% of attempts` : "No retakes"} />
         <KpiCard title="Retake rate" value={data?.retakeRate ?? 0} suffix="%" hint="Approved retakes" />
       </div>
 

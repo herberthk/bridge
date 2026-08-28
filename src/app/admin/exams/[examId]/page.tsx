@@ -2,18 +2,17 @@ export const dynamic = "force-dynamic";
 
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { format } from "date-fns";
 import { ArrowLeftIcon, RotateCcwIcon, TrophyIcon, UsersIcon } from "lucide-react";
 
 import { requireRole } from "@/server/auth/session";
 import { getExamForActor } from "@/server/services/exams";
-import { attemptsCol, examDoc } from "@/server/firebase/collections";
+import { attemptsCol } from "@/server/firebase/collections";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SUBJECT_LABELS } from "@/lib/constants";
-import { parseDate } from "@/lib/serialize";
 import type { Subject } from "@/lib/constants";
+import type { AttemptDoc, WithId } from "@/types/firestore";
 
 export default async function AdminExamDetailPage({ params }: { params: Promise<{ examId: string }> }) {
   const { examId } = await params;
@@ -39,13 +38,21 @@ export default async function AdminExamDetailPage({ params }: { params: Promise<
       return attemptsCol().where("examId", "==", examId).limit(100).get();
     });
 
-  const attempts = snap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
-  const graded = attempts.filter((a: any) => a.score !== null);
-  const retakes = attempts.filter((a: any) => a.retakeOf);
-  const avgScore = graded.length ? Math.round(graded.reduce((n: number, a: any) => n + a.score.percentage, 0) / graded.length) : null;
+  const attempts: WithId<AttemptDoc>[] = snap.docs.map((d) => ({
+    id: d.id,
+    ...d.data(),
+  }));
+  const graded = attempts.filter((a) => a.score !== null);
+  const retakes = attempts.filter((a) => a.retakeOf);
+  const avgScore = graded.length
+    ? Math.round(
+        graded.reduce((n, a) => n + (a.score?.percentage ?? 0), 0) /
+          graded.length,
+      )
+    : null;
 
   // Group by student for improvement
-  const byStudent = new Map<string, any[]>();
+  const byStudent = new Map<string, WithId<AttemptDoc>[]>();
   for (const a of attempts) {
     const list = byStudent.get(a.studentId) ?? [];
     list.push(a);
@@ -73,7 +80,7 @@ export default async function AdminExamDetailPage({ params }: { params: Promise<
 
       <div className="grid gap-4 sm:grid-cols-3">
         <Card><CardHeader><CardTitle className="text-sm flex items-center gap-2"><UsersIcon className="size-4" /> Students attempted</CardTitle></CardHeader><CardContent><p className="text-2xl font-semibold">{byStudent.size}</p></CardContent></Card>
-        <Card><CardHeader><CardTitle className="text-sm flex items-center gap-2"><RotateCcwIcon className="size-4" /> Retakes</CardTitle></CardHeader><CardContent><p className="text-2xl font-semibold">{retakes.length}</p><p className="text-muted-foreground text-xs">{retakes.length ? `${new Set(retakes.map((a: any) => a.studentId)).size} students retook` : "No retakes"}</p></CardContent></Card>
+        <Card><CardHeader><CardTitle className="text-sm flex items-center gap-2"><RotateCcwIcon className="size-4" /> Retakes</CardTitle></CardHeader><CardContent><p className="text-2xl font-semibold">{retakes.length}</p><p className="text-muted-foreground text-xs">{retakes.length ? `${new Set(retakes.map((a) => a.studentId)).size} students retook` : "No retakes"}</p></CardContent></Card>
         <Card><CardHeader><CardTitle className="text-sm flex items-center gap-2"><TrophyIcon className="size-4" /> Avg score</CardTitle></CardHeader><CardContent><p className="text-2xl font-semibold">{avgScore !== null ? `${avgScore}%` : "—"}</p></CardContent></Card>
       </div>
 
@@ -114,7 +121,7 @@ export default async function AdminExamDetailPage({ params }: { params: Promise<
           {exam.questions.slice(0, 20).map((q) => {
             let fails = 0, skips = 0, total = 0;
             for (const att of graded) {
-              const ans = att.answers.find((x: any) => x.questionId === q.id);
+              const ans = att.answers.find((x) => x.questionId === q.id);
               const isSkipped = !ans || ans.response === null || ans.response === "" || (Array.isArray(ans.response) && ans.response.length === 0);
               if (isSkipped) skips++; else if (ans?.graded?.correct === false) fails++;
               total++;

@@ -257,7 +257,19 @@ export async function adminDashboard(
   }).sort((a, b) => b.count - a.count);
 
   // Per-exam detailed assessment — for each exam, compute avg score, retake count, failed/skipped rates per question
-  const perExamDetailed = examsList.slice(0, 20).map((exam) => {
+  const attemptCountsByExam = new Map<string, number>();
+  for (const attempt of attempts) {
+    attemptCountsByExam.set(
+      attempt.examId,
+      (attemptCountsByExam.get(attempt.examId) ?? 0) + 1,
+    );
+  }
+  const examsByAttemptCount = [...examsList].sort(
+    (a, b) =>
+      (attemptCountsByExam.get(b.id) ?? 0) -
+      (attemptCountsByExam.get(a.id) ?? 0),
+  );
+  const perExamDetailed = examsByAttemptCount.slice(0, 20).map((exam) => {
     const exAttempts = attempts.filter((a) => a.examId === exam.id);
     const exGraded = exAttempts.filter((a) => a.score !== null);
     const avgScore = exGraded.length ? Math.round(exGraded.reduce((n, a) => n + a.score!.percentage, 0) / exGraded.length) : null;

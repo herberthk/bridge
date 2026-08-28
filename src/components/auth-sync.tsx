@@ -33,7 +33,13 @@ export function AuthSync() {
 /** Clear client-side session artifacts (exam drafts, cached auth). */
 export function clearClientSession(): void {
   try {
-    sessionStorage.clear();
+    sessionStorage.removeItem("bridge:onboarding-step");
+    const draftKeys: string[] = [];
+    for (let i = 0; i < sessionStorage.length; i += 1) {
+      const key = sessionStorage.key(i);
+      if (key?.startsWith("bridge:exam-draft:")) draftKeys.push(key);
+    }
+    draftKeys.forEach((key) => sessionStorage.removeItem(key));
   } catch {}
   try {
     const keysToRemove: string[] = [];
@@ -48,6 +54,7 @@ export function clearClientSession(): void {
 /** Sign out everywhere: Firebase client + session cookie and clear local session. Navigation is handled by the caller via useRouter().push('/login'). */
 export async function logout(): Promise<void> {
   await fbSignOut(authClient()).catch(() => undefined);
-  await fetch("/api/auth/session", { method: "DELETE" }).catch(() => undefined);
+  const response = await fetch("/api/auth/session", { method: "DELETE" });
+  if (!response.ok) throw new Error("Could not clear the server session.");
   if (typeof window !== "undefined") clearClientSession();
 }

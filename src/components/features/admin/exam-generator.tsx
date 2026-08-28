@@ -128,8 +128,24 @@ const STEPS = [
  */
 const STEP_FIELDS: readonly (readonly (keyof FormValues)[])[] = [
   ["level", "secondarySubLevel", "subject", "classLevel", "topic", "subsidiary"],
-  ["questionTypes", "difficulty", "questionCount", "durationMinutes"],
-  [],
+  [
+    "questionTypes",
+    "difficulty",
+    "questionCount",
+    "durationMinutes",
+    "includeHints",
+    "includeExplanations",
+    "includeWorkedExamples",
+    "instructions",
+  ],
+  [
+    "preventBacktrack",
+    "allowReviewBeforeSubmit",
+    "allowSkipping",
+    "requireFullscreen",
+    "enableCameraRecording",
+    "enableScreenRecording",
+  ],
 ];
 
 /**

@@ -183,7 +183,7 @@ function DetailedAssessment({
   const missing = possible - earned;
   const feedback = attempt.feedback;
 
-  if (failed.length === 0 && skipped.length === 0) {
+  if (total > 0 && correct.length === total) {
     return (
       <Card className="border-emerald-500/20 bg-emerald-500/5">
         <CardHeader>
@@ -255,7 +255,7 @@ function DetailedAssessment({
                   <div key={q.id} className="rounded-xl border bg-card p-3">
                     <p className="text-sm font-medium line-clamp-2">{q.prompt.replace(/[#*$_`]/g, "").slice(0, 120)}</p>
                     <div className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
-                      <div className="rounded-lg bg-muted p-2.5"><span className="text-muted-foreground">Your answer</span><p className="font-medium mt-0.5">{formatResponse(ans?.response)} — <span className="text-destructive">0/{q.points}</span></p></div>
+                      <div className="rounded-lg bg-muted p-2.5"><span className="text-muted-foreground">Your answer</span><p className="font-medium mt-0.5">{formatResponse(ans?.response)} — <span className="text-destructive">{ans?.graded?.earned ?? 0}/{q.points}</span></p></div>
                       <div className="rounded-lg bg-emerald-500/10 p-2.5"><span className="text-muted-foreground">Correct</span><p className="font-medium mt-0.5">{correctText ?? "—"}</p></div>
                     </div>
                     {(q.explanation || perQ) && <p className="text-muted-foreground mt-2 text-xs"><span className="font-medium">Tip:</span> {perQ ?? q.explanation}</p>}

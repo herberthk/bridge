@@ -326,6 +326,18 @@ export function ExamOnboarding({
       },
     [policy],
   );
+  const recordsCamera = effectivePolicy.enableCameraRecording;
+  const recordsScreen = effectivePolicy.enableScreenRecording;
+  const recordingLabel = recordsCamera && recordsScreen
+    ? "camera and entire-screen video"
+    : recordsCamera
+      ? "camera video"
+      : recordsScreen
+        ? "entire-screen video"
+        : null;
+  const recordingDisclosure = recordingLabel
+    ? `${recordingLabel[0]!.toUpperCase()}${recordingLabel.slice(1)} ${recordsCamera && recordsScreen ? "are" : "is"} recorded, uploaded after submission, and never shared outside your school.`
+    : "No continuous video is recorded; the camera feed is used only for periodic AI snapshots.";
   // Dynamic rules reflect admin-configured policy so the acknowledgement is truthful
   type Rule = { id: string; icon: React.ElementType; title: string; detail: string };
   const displayRules: Rule[] = useMemo(() => {
@@ -906,7 +918,7 @@ export function ExamOnboarding({
 
                     <div className="rounded-xl border bg-muted/20 p-3 text-xs leading-relaxed text-muted-foreground">
                       <p className="font-medium text-foreground">Why entire screen?</p>
-                      Camera + mic feed AI snapshot analysis every 30s; <strong className="text-foreground">entire-screen</strong> recording proves no outside help on any app. Tab/Window sharing is blocked because it hides other apps. Recordings are uploaded after you submit and never shared outside your school.
+                      Camera feed supplies AI snapshot analysis every 30s; <strong className="text-foreground">entire-screen</strong> sharing helps detect outside apps. Tab/Window sharing is blocked because it hides other apps. {recordingDisclosure}
                     </div>
 
                     {/* Visual picker guide — premium, explicit */}
@@ -956,8 +968,8 @@ export function ExamOnboarding({
                       <h2 className="text-base font-semibold tracking-tight">Ready to start?</h2>
                       <p className="text-muted-foreground mt-1 text-sm">
                         {effectivePolicy.allowReviewBeforeSubmit
-                          ? "Review the settings and confirm — the timer and recording start immediately."
-                          : "Final confirmation — there is no review screen after this. The timer and recording start immediately."}
+                          ? `Review the settings and confirm — the timer and ${recordingLabel ? `continuous ${recordingLabel} recording` : "snapshot monitoring"} start immediately.`
+                          : `Final confirmation — there is no review screen after this. The timer and ${recordingLabel ? `continuous ${recordingLabel} recording` : "snapshot monitoring"} start immediately.`}
                       </p>
                     </div>
 
@@ -989,7 +1001,7 @@ export function ExamOnboarding({
                         className="mt-0.5 size-4 accent-primary"
                       />
                       <span className="text-sm leading-relaxed">
-                        I understand this exam is <strong>AI-proctored and recorded</strong>, I have a stable connection and quiet environment,
+                        I understand this exam is <strong>AI-proctored{recordingLabel ? ` with continuous ${recordingLabel} recording` : " with periodic camera snapshots only and no continuous video recording"}</strong>, I have a stable connection and quiet environment,
                         and I accept the strict rules above. I know violations auto-submit the exam.
                         {effectivePolicy.preventBacktrack && <> I know I cannot go back after pressing Next.</>}
                         {effectivePolicy.requireFullscreen && <> Fullscreen will lock on start.</>}
@@ -1012,7 +1024,7 @@ export function ExamOnboarding({
                     )}
 
                     <div className="rounded-lg bg-muted px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
-                      By starting you agree to fullscreen + continuous <strong>entire-screen</strong> recording. You’ll be asked to enter fullscreen; staying there avoids warnings. Tab/Window sharing is not permitted.
+                      By starting you agree to fullscreen + {recordingLabel ? <>continuous <strong>{recordingLabel}</strong> recording</> : <>periodic camera snapshots only; no continuous video is recorded</>}. You’ll be asked to enter fullscreen; staying there avoids warnings. Tab/Window sharing is not permitted.
                     </div>
                   </div>
                 )}

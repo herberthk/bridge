@@ -82,7 +82,7 @@ export async function gradeAttemptWithAi(attemptId: string): Promise<void> {
       }),
       output: Output.object({ schema: essayGradeSchema }),
       temperature: 0.3,
-      // maxOutputTokens: 12_000,
+      maxOutputTokens: 12_000,
     });
     output = result.output;
     const usage = result.usage;

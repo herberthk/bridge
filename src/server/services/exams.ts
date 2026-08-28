@@ -22,7 +22,11 @@ import {
   usersCol,
 } from "@/server/firebase/collections";
 import { writeAudit } from "@/server/services/audit";
-import { assertCanAfford, consumeTokens } from "@/server/services/billing";
+import {
+  assertCanAfford,
+  consumeTokens,
+  InsufficientTokensError,
+} from "@/server/services/billing";
 import { loadDocumentExcerpts } from "@/server/services/documents";
 import type { SessionUser } from "@/server/auth/session";
 import type {
@@ -872,6 +876,21 @@ export async function generateExam(
   let outputTokensUsed = 0;
   let lastFailure: ExamsServiceError | null = null;
 
+  const recordBillingFailure = async (
+    targetId: string | null,
+    error: unknown,
+  ) => {
+    const reason = error instanceof Error ? error.message : String(error);
+    await writeAudit({
+      actorId: actor.uid,
+      actorRole: actor.role,
+      action: "exam.billing_failed",
+      targetType: "exam",
+      targetId,
+      meta: { walletId, tokensUsed, reason },
+    });
+  };
+
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const jitter = (ms: number) => ms + Math.floor(Math.random() * 400);
 
@@ -1348,11 +1367,17 @@ export async function generateExam(
         }
       }),
     );
-    if (poolErr !== null) throw poolErr;
-
     tokensUsed += chunkTokens;
     inputTokensUsed += chunkInputTokens;
     outputTokensUsed += chunkOutputTokens;
+    if (poolErr !== null) {
+      // Successful chunk calls have already spent provider tokens even though
+      // the incomplete exam cannot be saved. Keep their totals and record the
+      // unrecoverable, unbilled spend before propagating the original failure.
+      if (tokensUsed > 0) await recordBillingFailure(null, poolErr);
+      throw poolErr;
+    }
+
     lastFailure = null; // every chunk landed
     output = {
       title: chunkTitle ?? `Exam: ${input.params.topic}`,
@@ -1466,22 +1491,23 @@ export async function generateExam(
       actorId: actor.uid,
     });
   } catch (err) {
-    // The exam is already durably saved, so throwing here would report a
-    // failure for work that succeeded and push the admin into regenerating —
-    // spending the tokens a second time. Record it for reconciliation instead.
-    const reason = err instanceof Error ? err.message : String(err);
     console.error("[exams] billing failed for exam", ref.id, err, { walletId, tokensUsed });
+    await recordBillingFailure(ref.id, err);
+    if (err instanceof InsufficientTokensError) {
+      // A concurrent charge may consume the preflight balance before the final
+      // deduction. Do not expose a successfully generated, unpaid draft in that
+      // case; reject the request and roll back the document best-effort.
+      await ref.delete().catch((deleteErr) => {
+        console.error("[exams] failed to remove unbilled exam", ref.id, deleteErr);
+      });
+      throw err;
+    }
+    // Other billing failures may be transient. The exam is already durable, so
+    // return it with a reconciliation warning instead of encouraging a costly
+    // regeneration.
     warnings.push(
       `The exam was saved but ${tokensUsed.toLocaleString()} tokens could not be deducted from the wallet. Your balance may be adjusted later.`,
     );
-    await writeAudit({
-      actorId: actor.uid,
-      actorRole: actor.role,
-      action: "exam.billing_failed",
-      targetType: "exam",
-      targetId: ref.id,
-      meta: { walletId, tokensUsed, reason },
-    });
   }
 
   await writeAudit({

@@ -219,8 +219,9 @@ export const examOutputSchema = z.object({
   // set of questions because the title ran to 170 characters is a bad trade.
   title: z
     .string()
+    .trim()
     .min(3)
-    .transform((s) => s.trim().slice(0, 160)),
+    .transform((s) => s.slice(0, 160)),
   questions: z.array(questionOutput).min(1),
 });
 

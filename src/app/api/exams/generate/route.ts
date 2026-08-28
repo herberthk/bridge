@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
     const message =
       err instanceof ExamsServiceError || err instanceof BillingError
         ? err.message
-        : `Generation failed: ${err instanceof Error ? err.message : String(err)}`;
+        : "Generation failed";
     return NextResponse.json({ error: message }, { status });
   }
 }

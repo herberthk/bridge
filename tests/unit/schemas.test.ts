@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { examParamsSchema, generateExamSchema } from "@/lib/schemas/exam";
+import {
+  examOutputSchema,
+  examParamsSchema,
+  generateExamSchema,
+} from "@/lib/schemas/exam";
 import { setupSchema, loginSchema } from "@/lib/schemas/auth";
 import { parseUserAgent } from "@/lib/user-agent";
 import {
@@ -74,6 +78,22 @@ describe("exam params schema", () => {
   it("generateExamSchema defaults documentIds to []", () => {
     const parsed = generateExamSchema.parse({ params: validParams });
     expect(parsed.documentIds).toEqual([]);
+  });
+});
+
+describe("exam output schema", () => {
+  const output = (title: string) => ({
+    title,
+    questions: [{ type: "essay", prompt: "Explain.", points: 1 }],
+  });
+
+  it("rejects titles that are empty after trimming", () => {
+    expect(examOutputSchema.safeParse(output("   ")).success).toBe(false);
+  });
+
+  it("trims titles and preserves the stored 160-character ceiling", () => {
+    const parsed = examOutputSchema.parse(output(`  ${"x".repeat(170)}  `));
+    expect(parsed.title).toBe("x".repeat(160));
   });
 });
 
