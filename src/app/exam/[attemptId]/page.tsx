@@ -34,19 +34,26 @@ export default async function ExamRunnerPage({
     redirect(`/student/results/${attemptId}`);
   }
 
+  if (!exam) notFound();
+  if (typeof exam.params.durationMinutes !== "number") {
+    throw new Error("Exam duration not configured — admin must set duration when generating the exam.");
+  }
+
   const policy = {
     preventBacktrack: (exam?.params as unknown as { preventBacktrack?: boolean } | undefined)?.preventBacktrack ?? true,
     allowReviewBeforeSubmit: (exam?.params as unknown as { allowReviewBeforeSubmit?: boolean } | undefined)?.allowReviewBeforeSubmit ?? false,
     allowSkipping: (exam?.params as unknown as { allowSkipping?: boolean } | undefined)?.allowSkipping ?? true,
     requireFullscreen: (exam?.params as unknown as { requireFullscreen?: boolean } | undefined)?.requireFullscreen ?? true,
+    enableCameraRecording: (exam?.params as unknown as { enableCameraRecording?: boolean } | undefined)?.enableCameraRecording ?? false,
+    enableScreenRecording: (exam?.params as unknown as { enableScreenRecording?: boolean } | undefined)?.enableScreenRecording ?? false,
   };
 
   return (
     <ExamRunner
       attemptId={attemptId}
-      examTitle={exam?.title ?? "Exam"}
-      durationMinutes={exam?.params.durationMinutes ?? 45}
-      questionCount={exam?.questions.length ?? 0}
+      examTitle={exam.title}
+      durationMinutes={exam.params.durationMinutes}
+      questionCount={exam.questions.length}
       policy={policy}
     />
   );

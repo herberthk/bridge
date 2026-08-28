@@ -321,6 +321,8 @@ export function ExamOnboarding({
         allowReviewBeforeSubmit: false,
         allowSkipping: true,
         requireFullscreen: true,
+        enableCameraRecording: false,
+        enableScreenRecording: false,
       },
     [policy],
   );

@@ -152,12 +152,45 @@ export interface ExamParams {
   allowReviewBeforeSubmit: boolean;
   allowSkipping: boolean;
   requireFullscreen: boolean;
+  /** Optional recordings — disabled by default; permissions/snapshots still enforced. */
+  enableCameraRecording: boolean;
+  enableScreenRecording: boolean;
 }
 
 export interface MatchingPair {
   left: string;
   right: string;
 }
+
+export type QuestionVisualChart = {
+  kind: "chart";
+  chartType: "bar" | "line" | "pie" | "area";
+  title?: string;
+  caption?: string | null;
+  data: Array<Record<string, string | number>>;
+  xKey?: string;
+  yKey?: string;
+};
+
+export type QuestionVisualTable = {
+  kind: "table";
+  title?: string;
+  caption?: string | null;
+  headers: string[];
+  /**
+   * One entry per row, each wrapping its cells in a map.
+   *
+   * Firestore rejects an array whose elements are themselves arrays
+   * (`INVALID_ARGUMENT: Property array contains an invalid nested entity`), and
+   * every question already lives inside the `questions` array — so a plain
+   * `string[][]` here fails the whole exam write. Wrapping each row in a map
+   * makes the nesting array → map → array, which Firestore allows (the same
+   * shape that lets `options` and `pairs` persist).
+   */
+  rows: { cells: string[] }[];
+};
+
+export type QuestionVisual = QuestionVisualChart | QuestionVisualTable;
 
 export interface Question {
   id: string;
@@ -177,6 +210,8 @@ export interface Question {
   hint: string | null;
   explanation: string | null;
   workedExample: string | null;
+  /** Optional visual aid: responsive chart or table rendered alongside the prompt. */
+  visual?: QuestionVisual | null;
 }
 
 export interface ExamUsage {

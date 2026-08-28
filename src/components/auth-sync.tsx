@@ -30,8 +30,24 @@ export function AuthSync() {
   return null;
 }
 
-/** Sign out everywhere: Firebase client + session cookie. */
+/** Clear client-side session artifacts (exam drafts, cached auth). */
+export function clearClientSession(): void {
+  try {
+    sessionStorage.clear();
+  } catch {}
+  try {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const k = localStorage.key(i);
+      if (k && (k.startsWith("bridge:") || k.startsWith("firebase:"))) keysToRemove.push(k);
+    }
+    keysToRemove.forEach((k) => localStorage.removeItem(k));
+  } catch {}
+}
+
+/** Sign out everywhere: Firebase client + session cookie and clear local session. Navigation is handled by the caller via useRouter().push('/login'). */
 export async function logout(): Promise<void> {
   await fbSignOut(authClient()).catch(() => undefined);
   await fetch("/api/auth/session", { method: "DELETE" }).catch(() => undefined);
+  if (typeof window !== "undefined") clearClientSession();
 }

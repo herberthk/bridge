@@ -2,6 +2,8 @@ import { z } from "zod";
 
 import { QUESTION_TYPES } from "@/lib/constants";
 
+import type { QuestionVisual } from "@/types/firestore";
+
 /**
  * Question shape safe to expose to the student client — correct answers,
  * explanations, and worked examples are stripped server-side.
@@ -14,6 +16,7 @@ export interface SafeQuestion {
   pairs: { left: string; right: string }[] | null;
   points: number;
   hint: string | null;
+  visual?: QuestionVisual | null;
 }
 
 export interface ExamSessionPolicy {
@@ -21,6 +24,8 @@ export interface ExamSessionPolicy {
   allowReviewBeforeSubmit: boolean;
   allowSkipping: boolean;
   requireFullscreen: boolean;
+  enableCameraRecording: boolean;
+  enableScreenRecording: boolean;
 }
 
 export interface StartedExam {

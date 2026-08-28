@@ -68,6 +68,27 @@ export function estimateGenerationTokens(questionCount: number, hasDocuments: bo
   return questionCount * perQuestion + docOverhead;
 }
 
+/**
+ * Head-room multiplier applied to the pre-flight affordability check.
+ *
+ * The reservation must cover the *typical* worst case, not the theoretical one:
+ * retries and the chunked fallback re-spend roughly a generation's worth of
+ * tokens each, but they are mutually exclusive in practice (a run that succeeds
+ * on attempt 1 never chunks). Actual usage is billed after the fact, so
+ * under-reserving costs at most one over-spent generation while over-reserving
+ * blocks the feature outright.
+ *
+ * Lives here rather than in the exams service so the wizard can quote the same
+ * number the server will demand — a cost card that shows 1× while
+ * `assertCanAfford` requires 3× sends admins into an avoidable 402.
+ */
+export const GENERATION_RESERVE_MULTIPLIER = 3;
+
+/** Tokens a wallet must hold before a generation is allowed to start. */
+export function reserveForGeneration(estimatedTokens: number): number {
+  return estimatedTokens * GENERATION_RESERVE_MULTIPLIER;
+}
+
 /** Rough pre-flight estimate for AI-grading an attempt of n answers. */
 export function estimateGradingTokens(questionCount: number): number {
   return questionCount * 500 + 800;

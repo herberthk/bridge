@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 
 import { requireRole } from "@/server/auth/session";
 import { getAttemptDetail, AttemptsServiceError } from "@/server/services/attempts";
+import { hasOpenRetakeAttempt, hasPendingRetakeRequest } from "@/server/services/retakes";
 import { ResultsView } from "@/components/features/student/results-view";
 import { serializeDoc } from "@/lib/serialize";
 import type { WithId, AttemptDoc, ExamDoc } from "@/types/firestore";
@@ -28,10 +29,24 @@ export default async function ResultsPage({
     throw err;
   }
 
+  let hasPending = false;
+  let hasOpenRetake = false;
+  try {
+    [hasPending, hasOpenRetake] = await Promise.all([
+      hasPendingRetakeRequest(attemptId, user.uid),
+      hasOpenRetakeAttempt(attemptId, user.uid),
+    ]);
+  } catch {
+    hasPending = false;
+    hasOpenRetake = false;
+  }
+
   return (
     <ResultsView
       attempt={serializeDoc(data.attempt)}
       exam={data.exam ? serializeDoc(data.exam) : null}
+      hasPendingRequest={hasPending}
+      hasOpenRetake={hasOpenRetake}
     />
   );
 }

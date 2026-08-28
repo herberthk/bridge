@@ -3,13 +3,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ReadonlyURLSearchParams } from "next/navigation";
-import { useForm, Controller } from "react-hook-form";
+import { useForm, useWatch, Controller } from "react-hook-form";
+import type { FieldErrors } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useDropzone } from "react-dropzone";
 import { toast } from "sonner";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import {
   BookOpenIcon,
+  CameraIcon,
   CheckCircle2Icon,
   ChevronDownIcon,
   ChevronLeftIcon,
@@ -25,6 +27,7 @@ import {
   TagIcon,
   TargetIcon,
   UploadCloudIcon,
+  VideoIcon,
   XIcon,
   ZapIcon,
   EyeIcon,
@@ -37,7 +40,10 @@ import {
   COUNTRY_CURRICULA,
   DIFFICULTIES,
   DIFFICULTY_LABELS,
-  PRIMARY_CLASSES,
+  EXAM_DURATION_MAX,
+  EXAM_DURATION_MIN,
+  EXAM_QUESTIONS_MAX,
+  EXAM_QUESTIONS_MIN,
   QUESTION_TYPES,
   QUESTION_TYPE_LABELS,
   SECONDARY_SUBJECTS_BY_SUB_LEVEL,
@@ -50,8 +56,10 @@ import {
 import { classLevelOptions } from "@/lib/schemas/users";
 import {
   estimateGenerationTokens,
+  formatTokens,
   formatUgx,
   formatUsd,
+  reserveForGeneration,
   tokensToUsd,
   usdToUgx,
 } from "@/lib/pricing";
@@ -113,6 +121,35 @@ const STEPS = [
   { id: "rules", label: "Rules & Source", icon: ShieldCheckIcon, desc: "Policy & docs" },
 ] as const;
 
+/**
+ * Which fields live on which wizard step — indexed by step, parallel to STEPS.
+ * Single source of truth for both the "next" gate and the invalid-submit
+ * handler, so a validation error can always be traced back to a visible step.
+ */
+const STEP_FIELDS: readonly (readonly (keyof FormValues)[])[] = [
+  ["level", "secondarySubLevel", "subject", "classLevel", "topic", "subsidiary"],
+  ["questionTypes", "difficulty", "questionCount", "durationMinutes"],
+  [],
+];
+
+/**
+ * Client-side ceiling on a generation request. Sits just above the route's
+ * `maxDuration = 180`, so anything past it is a dead socket — abort with a useful
+ * message instead of leaving the wizard spinning forever.
+ *
+ * Has to stay *above* `maxDuration`, not below it. At 125s against a 180s route
+ * this aborted a 60-question exam the server was still generating — the wallet
+ * already reserved, the exam about to be written, and the admin told it timed out.
+ */
+const GENERATION_TIMEOUT_MS = 185_000;
+
+/**
+ * Mirrors `generateExamSchema`'s `documentIds.max(10)`. Without a client cap the
+ * 11th upload succeeds, costs storage and a parse, and then fails the whole
+ * generation on a validation error the admin can't tie back to a file.
+ */
+const MAX_SOURCE_DOCS = 10;
+
 const GEN_STAGES = [
   { label: "Parsing source documents", pct: 18, icon: FileTextIcon },
   { label: "Analyzing curriculum context", pct: 32, icon: BookOpenIcon },
@@ -139,6 +176,10 @@ export function ExamGenerator() {
     title: string;
     questions: number;
     tokensUsed: number;
+    /** Snapshot of what was actually submitted — the form stays editable. */
+    subject: Subject;
+    difficulty: keyof typeof DIFFICULTY_LABELS;
+    durationMinutes: number;
   } | null>(null);
   const [previewQuestions, setPreviewQuestions] = useState<PreviewQuestion[] | null>(null);
   const [previewFailed, setPreviewFailed] = useState(false);
@@ -146,7 +187,11 @@ export function ExamGenerator() {
   const [dir, setDir] = useState(1);
   const genTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const voice = readVoiceParams(searchParams);
+  // Voice-builder handoff only seeds `defaultValues`, which React Hook Form
+  // reads once. Parsing on every render was wasted work; a lazy initializer
+  // pins it to mount so a later URL change can't silently diverge from the
+  // form the user is already editing.
+  const [voice] = useState(() => readVoiceParams(searchParams));
 
   const form = useForm<FormValues, unknown, ExamParamsInput>({
     resolver: zodResolver(examParamsSchema),
@@ -169,14 +214,20 @@ export function ExamGenerator() {
       allowReviewBeforeSubmit: false,
       allowSkipping: true,
       requireFullscreen: true,
+      enableCameraRecording: false,
+      enableScreenRecording: false,
     },
   });
 
-  const level = form.watch("level");
-  const subLevel = form.watch("secondarySubLevel") ?? "o_level";
-  const subject = form.watch("subject");
-  const questionCount = form.watch("questionCount");
-  const durationMinutes = form.watch("durationMinutes");
+  // `useWatch` subscribes to individual fields. `form.watch()` re-renders on
+  // every keystroke in the form and opts this component out of React Compiler
+  // memoization entirely (react-hooks/incompatible-library).
+  const control = form.control;
+  const level = useWatch({ control, name: "level" });
+  const subLevel = useWatch({ control, name: "secondarySubLevel" }) ?? "o_level";
+  const subject = useWatch({ control, name: "subject" });
+  const questionCount = useWatch({ control, name: "questionCount" });
+  const durationMinutes = useWatch({ control, name: "durationMinutes" });
   const subjects =
     level === "primary"
       ? COUNTRY_CURRICULA.UG.primary
@@ -185,10 +236,23 @@ export function ExamGenerator() {
     SUBJECT_SUBSIDIARIES[subject as keyof typeof SUBJECT_SUBSIDIARIES],
   );
 
+  // Mirror the submit-time filter exactly: a document that failed to parse is
+  // dropped from `documentIds`, so it must not inflate the quoted price either.
+  const hasGroundingDoc = docs.some((d) => !d.uploading && d.parseStatus === "parsed");
   const estimate = useMemo(
-    () => estimateGenerationTokens(questionCount, docs.some((d) => !d.uploading)),
-    [questionCount, docs],
+    () => estimateGenerationTokens(questionCount, hasGroundingDoc),
+    [questionCount, hasGroundingDoc],
   );
+  /** What `assertCanAfford` will actually demand — quote it, don't surprise them with a 402. */
+  const reserve = reserveForGeneration(estimate);
+
+  /**
+   * `generating` flips inside the submit callback, but `handleSubmit` awaits
+   * validation first — a second click inside that window starts a second
+   * request and bills a second generation. `isSubmitting` covers the gap.
+   */
+  const busy = generating || form.formState.isSubmitting;
+  const uploadsPending = docs.some((d) => d.uploading);
 
   // Fetch preview questions after generation
   useEffect(() => {
@@ -233,22 +297,26 @@ export function ExamGenerator() {
       if (genTimerRef.current) clearInterval(genTimerRef.current);
       return;
     }
-    setGenPct(2);
-    setGenStage(0);
+    // genPct/genStage are reset by `onSubmit` before `generating` flips, so this
+    // effect only owns the interval.
     const started = Date.now();
-    const durationMs = 22_000 + Math.min(questionCount * 260, 18_000);
+    // Tracks how the server actually paces itself: five questions per chunk, six
+    // chunks in flight, ~30s a wave. The old `22s + count × 260ms` capped at 40s,
+    // so a 60-question exam parked the bar at 96% for the remaining minute and
+    // read as stalled. Waves rather than a per-question rate, because chunks run
+    // concurrently — 20 questions and 30 questions cost the same wall clock.
+    const waves = Math.max(1, Math.ceil(Math.ceil(questionCount / 5) / 6));
+    const durationMs = 12_000 + waves * 30_000;
     genTimerRef.current = setInterval(() => {
       const elapsed = Date.now() - started;
       const t = Math.min(elapsed / durationMs, 0.96);
       const eased = 1 - Math.pow(1 - t, 3);
-      const target = 96 * eased;
-      setGenPct((prev) => {
-        const next = Math.max(prev, Math.min(target, 96));
-        const stageIdx = GEN_STAGES.findIndex((s) => next < s.pct);
-        const idx = stageIdx === -1 ? GEN_STAGES.length - 1 : Math.max(0, stageIdx);
-        setGenStage(idx);
-        return next;
-      });
+      const target = Math.min(96 * eased, 96);
+      // Both derived from `target`, so the state updater stays pure — calling
+      // setGenStage from inside setGenPct fires twice under StrictMode.
+      setGenPct((prev) => Math.max(prev, target));
+      const stageIdx = GEN_STAGES.findIndex((s) => target < s.pct);
+      setGenStage(stageIdx === -1 ? GEN_STAGES.length - 1 : Math.max(0, stageIdx));
     }, 120);
     return () => {
       if (genTimerRef.current) clearInterval(genTimerRef.current);
@@ -284,7 +352,22 @@ export function ExamGenerator() {
     });
 
   const onDrop = async (files: File[]) => {
-    for (const file of files) {
+    // `docs` is this render's list, which already includes any still-uploading
+    // placeholders from an earlier drop — so room is accurate at drop time.
+    // The batch is sliced up front because the loop's closure never sees the
+    // appends it makes.
+    const room = MAX_SOURCE_DOCS - docs.length;
+    if (room <= 0) {
+      toast.error(`You can attach at most ${MAX_SOURCE_DOCS} source documents.`);
+      return;
+    }
+    const batch = files.slice(0, room);
+    if (files.length > batch.length) {
+      toast.warning(
+        `Only ${batch.length} of ${files.length} files were added — the limit is ${MAX_SOURCE_DOCS} source documents.`,
+      );
+    }
+    for (const file of batch) {
       const id = crypto.randomUUID();
       const sizeLabel = formatBytes(file.size);
       setDocs((prev) => [
@@ -324,20 +407,71 @@ export function ExamGenerator() {
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
+    // Without this, `accept`/`maxSize` rejections are dropped silently and the
+    // file just never appears — indistinguishable from a broken drop target.
+    onDropRejected: (rejections) => {
+      for (const rejection of rejections) {
+        const code = rejection.errors[0]?.code;
+        const reason =
+          code === "file-too-large"
+            ? "it's larger than 50 MB"
+            : code === "file-invalid-type"
+              ? "only PDF, DOCX, and TXT are supported"
+              : (rejection.errors[0]?.message ?? "it was rejected");
+        toast.error(`${rejection.file.name} was skipped — ${reason}.`);
+      }
+    },
     accept: {
       "application/pdf": [".pdf"],
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
       "text/plain": [".txt"],
     },
     maxSize: 50 * 1024 * 1024,
-    disabled: generating,
+    disabled: busy || docs.length >= MAX_SOURCE_DOCS,
   });
+
+  /**
+   * A validation failure anywhere in the form must land the user on the step
+   * that owns the offending field. Reachable from three entry points (wizard
+   * footer, desktop CTA, mobile CTA), so it lives on `handleSubmit` rather
+   * than being re-implemented per button.
+   */
+  const onInvalid = (errors: FieldErrors<FormValues>) => {
+    const bad = Object.keys(errors) as (keyof FormValues)[];
+    if (bad.length === 0) {
+      toast.error("Fix the highlighted fields before generating.");
+      return;
+    }
+    // Land on the *earliest* broken step, not whichever key the resolver
+    // enumerated first — `Object.keys` order has nothing to do with step order,
+    // so jumping to step 2 while step 1 is also invalid makes the user fix an
+    // error, resubmit, and get thrown backwards.
+    const stepOf = (field: keyof FormValues) => {
+      const idx = STEP_FIELDS.findIndex((fields) => fields.includes(field));
+      return idx < 0 ? STEP_FIELDS.length : idx;
+    };
+    const firstBad = bad.reduce((earliest, field) =>
+      stepOf(field) < stepOf(earliest) ? field : earliest,
+    );
+    const stepIdx = stepOf(firstBad);
+    if (stepIdx < STEP_FIELDS.length && stepIdx !== step) {
+      setDir(stepIdx > step ? 1 : -1);
+      setStep(stepIdx);
+    }
+    const message = (errors as Record<string, { message?: string } | undefined>)[firstBad]
+      ?.message;
+    toast.error(message ?? "Fix the highlighted fields before generating.");
+  };
 
   const onSubmit = form.handleSubmit(async (values) => {
     setGenerating(true);
     setResult(null);
     setPreviewQuestions(null);
+    setPreviewFailed(false);
+    // Reset the progress simulation here rather than in the effect that drives
+    // it — setState inside an effect body triggers a cascading render.
     setGenPct(2);
+    setGenStage(0);
     try {
       const res = await fetch("/api/exams/generate", {
         method: "POST",
@@ -346,9 +480,17 @@ export function ExamGenerator() {
           params: { ...values, instructions: values.instructions || null },
           documentIds: docs.filter((d) => !d.uploading && d.parseStatus === "parsed").map((d) => d.documentId),
         }),
+        signal: AbortSignal.timeout(GENERATION_TIMEOUT_MS),
       });
       const data = (await res.json().catch(() => null)) as
-        | { ok: true; examId: string; title: string; questions: number; tokensUsed: number }
+        | {
+            ok: true;
+            examId: string;
+            title: string;
+            questions: number;
+            tokensUsed: number;
+            warnings?: string[];
+          }
         | { error: string }
         | null;
       if (!res.ok || !data || !("ok" in data)) {
@@ -358,17 +500,48 @@ export function ExamGenerator() {
       setGenPct(100);
       setGenStage(GEN_STAGES.length - 1);
       await new Promise((r) => setTimeout(r, 420));
-      setResult(data);
+      // Freeze the submitted params into the result — the form below stays
+      // editable, so reading live values here would mislabel the exam.
+      setResult({
+        examId: data.examId,
+        title: data.title,
+        questions: data.questions,
+        tokensUsed: data.tokensUsed,
+        subject: values.subject as Subject,
+        difficulty: values.difficulty,
+        durationMinutes: values.durationMinutes,
+      });
       toast.success("Exam generated — premium preview ready!", {
         description: `${data.questions} questions · ${data.tokensUsed.toLocaleString()} tokens`,
       });
+      // Degradations from *after* the exam was saved (visuals dropped, tokens
+      // not deducted). The generation itself succeeded, so these sit beside the
+      // success toast rather than replacing it — and get longer to be read.
+      for (const warning of data.warnings ?? []) {
+        toast.warning(warning, { duration: 10_000 });
+      }
       router.refresh();
-    } catch {
-      toast.error("Network error — check your connection and retry.");
+    } catch (err) {
+      const timedOut =
+        err instanceof DOMException &&
+        (err.name === "TimeoutError" || err.name === "AbortError");
+      toast.error(
+        timedOut
+          ? "Generation timed out after about two minutes."
+          : "Network error — check your connection and retry.",
+        {
+          description: timedOut
+            ? "The exam may still have saved — check the library before retrying, or try fewer questions."
+            : undefined,
+        },
+      );
+      // The request may well have completed server-side after the client gave
+      // up, so refresh the library the message tells them to check.
+      if (timedOut) router.refresh();
     } finally {
       setGenerating(false);
     }
-  });
+  }, onInvalid);
 
   const go = (next: number) => {
     if (next < 0 || next >= STEPS.length) return;
@@ -377,17 +550,9 @@ export function ExamGenerator() {
   };
 
   const canNext = async () => {
-    const fieldsByStep: Record<number, (keyof FormValues)[]> = {
-      0: ["level", "secondarySubLevel", "subject", "classLevel", "topic", "subsidiary"],
-      1: ["questionTypes", "difficulty", "questionCount", "durationMinutes"],
-      2: [],
-    };
-    const fields = fieldsByStep[step] ?? [];
-    if (fields.length) {
-      const ok = await form.trigger(fields as unknown as Parameters<typeof form.trigger>[0]);
-      return ok;
-    }
-    return true;
+    const fields = STEP_FIELDS[step] ?? [];
+    if (!fields.length) return true;
+    return form.trigger(fields as unknown as Parameters<typeof form.trigger>[0]);
   };
 
   const slide = prefersReducedMotion
@@ -423,7 +588,7 @@ export function ExamGenerator() {
                     const active = i === step;
                     const done = i < step;
                     return (
-                      <button key={s.id} type="button" onClick={() => go(i)} className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-all ${active ? "border-white bg-white text-primary shadow-glow" : done ? "border-white/30 bg-white/10 text-white" : "border-white/20 bg-white/10 text-white/70"}`}>
+                      <button key={s.id} type="button" onClick={() => go(i)} disabled={busy} className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-all disabled:cursor-not-allowed disabled:opacity-60 ${active ? "border-white bg-white text-primary shadow-glow" : done ? "border-white/30 bg-white/10 text-white" : "border-white/20 bg-white/10 text-white/70"}`}>
                         <span className={`grid size-5 place-items-center rounded-full text-[10px] font-bold ${active ? "bg-primary text-white" : done ? "bg-white text-primary" : "bg-white/15"}`}>{done ? <CheckCircle2Icon className="size-3.5" /> : i + 1}</span>
                         <span className="hidden sm:inline">{s.label}</span>
                         <s.icon className="hidden size-3.5 sm:block opacity-80" />
@@ -443,6 +608,14 @@ export function ExamGenerator() {
 
               {/* Wizard body */}
               <div className="p-5 sm:p-6">
+                {/*
+                  A generation is already paid for by the time it returns, so the
+                  params must not drift under it — an edit mid-flight would label
+                  the saved exam with values it wasn't generated from. `min-w-0`
+                  defuses the fieldset's `min-inline-size: min-content` default,
+                  which otherwise stops the grid children from shrinking.
+                */}
+                <fieldset disabled={busy} className="min-w-0">
                 <AnimatePresence mode="wait" initial={false} custom={dir}>
                   <motion.div key={STEPS[step].id} custom={dir} initial={slide.initial} animate={slide.animate} exit={slide.exit} transition={slide.transition} className="will-change-transform">
                     {step === 0 && (
@@ -507,6 +680,7 @@ export function ExamGenerator() {
                                 </Select>
                               )}
                             />
+                            {form.formState.errors.classLevel && <FieldError>{form.formState.errors.classLevel.message}</FieldError>}
                           </Field>
                         </div>
 
@@ -526,7 +700,7 @@ export function ExamGenerator() {
                                         field.onChange(next);
                                         form.setValue("classLevel", next === "a_level" ? 5 : 2);
                                         if (!(SECONDARY_SUBJECTS_BY_SUB_LEVEL[next] as readonly string[]).includes(form.getValues("subject"))) {
-                                          form.setValue("subject", SECONDARY_SUBJECTS_BY_SUB_LEVEL.o_level[0] as FormValues["subject"]);
+                                          form.setValue("subject", SECONDARY_SUBJECTS_BY_SUB_LEVEL[next][0] as FormValues["subject"]);
                                         }
                                       }}
                                     >
@@ -675,15 +849,15 @@ export function ExamGenerator() {
                         </Field>
 
                         <div className="grid gap-5 sm:grid-cols-2">
-                          <Field>
+                          <Field data-invalid={form.formState.errors.questionCount ? true : undefined}>
                             <FieldLabel htmlFor="questionCount" className="flex items-center gap-1.5"><FileQuestionIcon className="size-3.5 text-primary" /> Questions: <span className="text-foreground font-semibold tabular-nums">{questionCount}</span></FieldLabel>
-                            <Controller control={form.control} name="questionCount" render={({ field }) => <Slider id="questionCount" min={1} max={100} step={1} value={[field.value]} onValueChange={(v) => field.onChange((Array.isArray(v) ? v[0] : v) ?? field.value)} className="py-2" />} />
-                            <FieldDescription>1–100 questions per exam.</FieldDescription>
+                            <Controller control={form.control} name="questionCount" render={({ field }) => <Slider id="questionCount" min={EXAM_QUESTIONS_MIN} max={EXAM_QUESTIONS_MAX} step={1} value={[field.value]} onValueChange={(v) => field.onChange((Array.isArray(v) ? v[0] : v) ?? field.value)} disabled={busy} className="py-2" />} />
+                            {form.formState.errors.questionCount ? <FieldError>{form.formState.errors.questionCount.message}</FieldError> : <FieldDescription>{EXAM_QUESTIONS_MIN}–{EXAM_QUESTIONS_MAX} questions per exam.</FieldDescription>}
                           </Field>
-                          <Field>
+                          <Field data-invalid={form.formState.errors.durationMinutes ? true : undefined}>
                             <FieldLabel htmlFor="durationMinutes" className="flex items-center gap-1.5"><ClockIcon className="size-3.5 text-primary" /> Duration: <span className="text-foreground font-semibold tabular-nums">{durationMinutes} min</span></FieldLabel>
-                            <Controller control={form.control} name="durationMinutes" render={({ field }) => <Slider id="durationMinutes" min={5} max={240} step={5} value={[field.value]} onValueChange={(v) => field.onChange((Array.isArray(v) ? v[0] : v) ?? field.value)} className="py-2" />} />
-                            <FieldDescription>Countdown is enforced server-side.</FieldDescription>
+                            <Controller control={form.control} name="durationMinutes" render={({ field }) => <Slider id="durationMinutes" min={EXAM_DURATION_MIN} max={EXAM_DURATION_MAX} step={5} value={[field.value]} onValueChange={(v) => field.onChange((Array.isArray(v) ? v[0] : v) ?? field.value)} disabled={busy} className="py-2" />} />
+                            {form.formState.errors.durationMinutes ? <FieldError>{form.formState.errors.durationMinutes.message}</FieldError> : <FieldDescription>Countdown is enforced server-side.</FieldDescription>}
                           </Field>
                         </div>
 
@@ -714,7 +888,7 @@ export function ExamGenerator() {
                       <FieldGroup>
                         <div className="space-y-3">
                           <FieldLabel>Exam session rules</FieldLabel>
-                          <p className="text-muted-foreground text-xs">Secure defaults: no backtrack, no review, skipping allowed, fullscreen required.</p>
+                          <p className="text-muted-foreground text-xs">Secure defaults: no backtrack, no review, skipping allowed, fullscreen required. Recording is off by default.</p>
                           <div className="grid gap-3">
                             {(
                               [
@@ -722,6 +896,8 @@ export function ExamGenerator() {
                                 ["allowReviewBeforeSubmit", "Allow review before submit", "Show review screen before final submit (off = direct submit).", ShieldCheckIcon],
                                 ["allowSkipping", "Allow skipping", "Students can Next without answering (blank = 0).", ZapIcon],
                                 ["requireFullscreen", "Require fullscreen", "Auto-enter fullscreen and block exit until submit.", MonitorIcon],
+                                ["enableCameraRecording", "Record camera", "Save camera video to review after exam. Disabled by default.", CameraIcon],
+                                ["enableScreenRecording", "Record screen", "Save entire-screen video to review after exam. Disabled by default.", VideoIcon],
                               ] as const
                             ).map(([name, label, hint, Icon]) => (
                               <Field key={name}>
@@ -820,8 +996,8 @@ export function ExamGenerator() {
                       Next <ChevronRightIcon data-icon="inline-end" />
                     </Button>
                   ) : (
-                    <Button type="submit" size="lg" className="shadow-glow h-11 min-w-[168px] rounded-xl font-semibold" disabled={generating || docs.some((d) => d.uploading)}>
-                      {generating ? (
+                    <Button type="submit" size="lg" className="shadow-glow h-11 min-w-[168px] rounded-xl font-semibold" disabled={busy || uploadsPending}>
+                      {busy ? (
                         <>
                           <Loader2Icon data-icon="inline-start" className="animate-spin" /> Generating… {Math.round(genPct)}%
                         </>
@@ -833,6 +1009,7 @@ export function ExamGenerator() {
                     </Button>
                   )}
                 </div>
+                </fieldset>
               </div>
             </div>
           </form>
@@ -854,44 +1031,39 @@ export function ExamGenerator() {
             </div>
             <CardContent className="flex flex-col gap-4 p-5">
               <p className="text-muted-foreground text-xs leading-relaxed">Final billing uses actual Gemini usage. Click <strong className="text-foreground">Generate exam</strong> explicitly — no auto-generation. Cost scales with questions + grounded docs.</p>
+              <p className="text-muted-foreground text-xs leading-relaxed">
+                Your wallet needs <strong className="text-foreground">{formatTokens(reserve)} tokens</strong> free to start — a
+                hold that covers retries. Anything unused is never charged.
+              </p>
               <Separator />
 
-              {/* Explicit Generate CTA duplicated for large screens — also premium */}
-              <Button
-                type="button"
-                size="lg"
-                onClick={() => {
-                  // Validate all steps then submit from cost card as well
-                  void (async () => {
-                    const ok0 = await form.trigger(["level", "secondarySubLevel", "subject", "classLevel", "topic", "subsidiary"] as unknown as Parameters<typeof form.trigger>[0]);
-                    const ok1 = await form.trigger(["questionTypes", "difficulty", "questionCount", "durationMinutes"] as unknown as Parameters<typeof form.trigger>[0]);
-                    if (!ok0) {
-                      setStep(0);
-                      toast.error("Complete Curriculum step first.");
-                      return;
-                    }
-                    if (!ok1) {
-                      setStep(1);
-                      toast.error("Complete Format step first.");
-                      return;
-                    }
-                    await onSubmit();
-                  })();
-                }}
-                disabled={generating || docs.some((d) => d.uploading)}
-                className="shadow-glow hidden h-11 w-full rounded-xl font-semibold lg:inline-flex"
-              >
-                {generating ? (
-                  <>
-                    <Loader2Icon className="animate-spin" /> Generating… {Math.round(genPct)}%
-                  </>
-                ) : (
-                  <>
-                    <SparklesIcon /> Generate exam
-                  </>
-                )}
-              </Button>
-              <p className="hidden text-center text-[11px] text-muted-foreground lg:block">Explicit click required — we never generate on step change.</p>
+              {/* Explicit Generate CTA duplicated for large screens — only on last step per requirements */}
+              {step === STEPS.length - 1 ? (
+                <>
+                  <Button
+                    type="button"
+                    size="lg"
+                    // This CTA sits outside the <form>, so submit programmatically.
+                    // `onInvalid` handles jumping to the offending step.
+                    onClick={() => void onSubmit()}
+                    disabled={busy || uploadsPending}
+                    className="shadow-glow hidden h-11 w-full rounded-xl font-semibold lg:inline-flex"
+                  >
+                    {busy ? (
+                      <>
+                        <Loader2Icon className="animate-spin" /> Generating… {Math.round(genPct)}%
+                      </>
+                    ) : (
+                      <>
+                        <SparklesIcon /> Generate exam
+                      </>
+                    )}
+                  </Button>
+                  <p className="hidden text-center text-[11px] text-muted-foreground lg:block">Explicit click required — we never generate on step change.</p>
+                </>
+              ) : (
+                <p className="hidden text-center text-xs text-muted-foreground lg:block">Complete Curriculum and Format steps first — generation unlocks on the last step.</p>
+              )}
 
               {/* Premium staged loader */}
               <AnimatePresence>
@@ -927,40 +1099,27 @@ export function ExamGenerator() {
                 )}
               </AnimatePresence>
 
-              {/* Mobile: Generate button inside cost card as well (stacked) */}
-              <Button
-                type="button"
-                onClick={() => {
-                  // Validate all steps then submit — same logic as desktop CTA
-                  void (async () => {
-                    const ok0 = await form.trigger(["level", "secondarySubLevel", "subject", "classLevel", "topic", "subsidiary"] as unknown as Parameters<typeof form.trigger>[0]);
-                    const ok1 = await form.trigger(["questionTypes", "difficulty", "questionCount", "durationMinutes"] as unknown as Parameters<typeof form.trigger>[0]);
-                    if (!ok0) {
-                      setStep(0);
-                      toast.error("Complete Curriculum step first.");
-                      return;
-                    }
-                    if (!ok1) {
-                      setStep(1);
-                      toast.error("Complete Format step first.");
-                      return;
-                    }
-                    await onSubmit();
-                  })();
-                }}
-                disabled={generating || docs.some((d) => d.uploading)}
-                className="shadow-glow h-11 w-full rounded-xl font-semibold lg:hidden"
-              >
-                {generating ? (
-                  <>
-                    <Loader2Icon className="animate-spin" /> Generating… {Math.round(genPct)}%
-                  </>
-                ) : (
-                  <>
-                    <SparklesIcon /> Generate exam
-                  </>
-                )}
-              </Button>
+              {/* Mobile: Generate button inside cost card as well (stacked) — only on last step */}
+              {step === STEPS.length - 1 ? (
+                <Button
+                  type="button"
+                  onClick={() => void onSubmit()}
+                  disabled={busy || uploadsPending}
+                  className="shadow-glow h-11 w-full rounded-xl font-semibold lg:hidden"
+                >
+                  {busy ? (
+                    <>
+                      <Loader2Icon className="animate-spin" /> Generating… {Math.round(genPct)}%
+                    </>
+                  ) : (
+                    <>
+                      <SparklesIcon /> Generate exam
+                    </>
+                  )}
+                </Button>
+              ) : (
+                <p className="text-center text-xs text-muted-foreground lg:hidden">Generation unlocks on the last step (Rules & Source).</p>
+              )}
 
               {!generating && result && (
                 <div className="rounded-xl border border-dashed bg-muted/20 p-3 text-xs text-muted-foreground">After generation, preview appears below — full exam is saved to your library.</div>
@@ -982,8 +1141,8 @@ export function ExamGenerator() {
                   <h2 className="mt-3 text-xl font-semibold tracking-tight sm:text-2xl">{result.title}</h2>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <Badge className="bg-white/15 text-white backdrop-blur border-white/20 gap-1"><FileQuestionIcon className="size-3" /> {result.questions} questions</Badge>
-                    <Badge className="bg-white/15 text-white backdrop-blur border-white/20 gap-1"><ClockIcon className="size-3" /> {durationMinutes} min</Badge>
-                    <Badge className="bg-white/15 text-white backdrop-blur border-white/20 gap-1"><EyeIcon className="size-3" /> {form.getValues("subject")} · {DIFFICULTY_LABELS[form.getValues("difficulty") as keyof typeof DIFFICULTY_LABELS]}</Badge>
+                    <Badge className="bg-white/15 text-white backdrop-blur border-white/20 gap-1"><ClockIcon className="size-3" /> {result.durationMinutes} min</Badge>
+                    <Badge className="bg-white/15 text-white backdrop-blur border-white/20 gap-1"><EyeIcon className="size-3" /> {SUBJECT_LABELS[result.subject] ?? result.subject} · {DIFFICULTY_LABELS[result.difficulty]}</Badge>
                     <Badge className="bg-white text-primary shadow-glow gap-1">{formatUsd(tokensToUsd(result.tokensUsed))} · {result.tokensUsed.toLocaleString()} tokens</Badge>
                   </div>
                 </div>
@@ -1051,21 +1210,86 @@ export function ExamGenerator() {
   );
 }
 
-/** Parse the voice builder's query-param hand-off. */
+/** Clamp a query-param integer into range, falling back when absent/garbage. */
+function readInt(raw: string | null, fallback: number, lo: number, hi: number): number {
+  if (!raw) return fallback;
+  const n = Math.round(Number(raw));
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(hi, Math.max(lo, n));
+}
+
+/**
+ * Parse the voice builder's query-param hand-off.
+ *
+ * Every value is untrusted: these params are user-editable in the address bar
+ * and previously flowed straight into `defaultValues` behind `as` casts. An
+ * out-of-range `count`/`duration`, or a subject that doesn't exist on the
+ * chosen level, seeded a form that could only fail validation — with the error
+ * pointing at a field the user never touched.
+ */
 function readVoiceParams(sp: ReadonlyURLSearchParams) {
-  const level = (sp.get("level") as "primary" | "secondary" | null) ?? "secondary";
-  const subLevel = level === "secondary" ? ((sp.get("sublevel") as "o_level" | "a_level" | null) ?? "o_level") : null;
-  const types = sp.get("types")?.split(",").filter(Boolean);
+  const level: FormValues["level"] = sp.get("level") === "primary" ? "primary" : "secondary";
+  const subLevel: "o_level" | "a_level" | null =
+    level === "secondary" ? (sp.get("sublevel") === "a_level" ? "a_level" : "o_level") : null;
+
+  const allowedSubjects = (
+    level === "primary"
+      ? COUNTRY_CURRICULA.UG.primary
+      : SECONDARY_SUBJECTS_BY_SUB_LEVEL[subLevel ?? "o_level"]
+  ) as readonly string[];
+  const requestedSubject = sp.get("subject");
+  const subject = (
+    requestedSubject && allowedSubjects.includes(requestedSubject)
+      ? requestedSubject
+      : (allowedSubjects.includes("mathematics") ? "mathematics" : allowedSubjects[0])
+  ) as FormValues["subject"];
+
+  const allowedClasses: readonly number[] = classLevelOptions(level, subLevel ?? "o_level").map(
+    (o) => o.value,
+  );
+  const requestedClass = Number(sp.get("classLevel"));
+  const classLevel = allowedClasses.includes(requestedClass)
+    ? requestedClass
+    : level === "primary" || subLevel === "a_level"
+      ? 5
+      : 2;
+
+  const requestedDifficulty = sp.get("difficulty");
+  const difficulty = (
+    (DIFFICULTIES as readonly string[]).includes(requestedDifficulty ?? "")
+      ? requestedDifficulty
+      : "medium"
+  ) as FormValues["difficulty"];
+
+  const requestedTypes = sp
+    .get("types")
+    ?.split(",")
+    .filter((t) => (QUESTION_TYPES as readonly string[]).includes(t));
+  const questionTypes = (
+    requestedTypes?.length ? requestedTypes : ["multiple_choice", "short_answer"]
+  ) as FormValues["questionTypes"];
+
+  // Only offer a subsidiary the chosen subject actually has.
+  const subsidiaryOptions =
+    SUBJECT_SUBSIDIARIES[subject as keyof typeof SUBJECT_SUBSIDIARIES]?.options as
+      | readonly string[]
+      | undefined;
+  const requestedSubsidiary = sp.get("subsidiary");
+  const subsidiary =
+    requestedSubsidiary && subsidiaryOptions?.includes(requestedSubsidiary)
+      ? requestedSubsidiary
+      : null;
+
   return {
     level,
     subLevel,
-    subject: (sp.get("subject") as FormValues["subject"] | null) ?? "mathematics",
-    classLevel: Number(sp.get("classLevel")) || (subLevel === "a_level" ? 5 : level === "primary" ? 5 : 2),
-    topic: sp.get("topic") ?? "",
-    subsidiary: sp.get("subsidiary") || null,
-    difficulty: (sp.get("difficulty") as FormValues["difficulty"] | null) ?? "medium",
-    durationMinutes: Number(sp.get("duration")) || 45,
-    questionCount: Number(sp.get("count")) || 20,
-    questionTypes: (types?.length ? types : ["multiple_choice", "short_answer"]) as FormValues["questionTypes"],
+    subject,
+    classLevel,
+    topic: (sp.get("topic") ?? "").slice(0, 200),
+    subsidiary,
+    difficulty,
+    durationMinutes: readInt(sp.get("duration"), 45, EXAM_DURATION_MIN, EXAM_DURATION_MAX),
+    questionCount: readInt(sp.get("count"), 20, EXAM_QUESTIONS_MIN, EXAM_QUESTIONS_MAX),
+    questionTypes,
   };
 }

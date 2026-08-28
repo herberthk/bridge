@@ -82,7 +82,7 @@ export default async function StudentHomePage() {
         </div>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-4">
         <KpiCard title="Exams taken" value={data?.taken ?? 0} accent />
         <KpiCard
           title="Average score"
@@ -91,7 +91,29 @@ export default async function StudentHomePage() {
           hint={data?.strongest ? `Strongest: ${data.strongest}` : undefined}
         />
         <KpiCard title="Waiting for you" value={data?.pending ?? 0} hint="Assigned, not yet taken" />
+        <KpiCard title="Retakes" value={data?.retakes ?? 0} hint={data?.retakes ? "Approved retakes" : "No retakes yet"} />
       </div>
+
+      {(data?.retakesByExam?.length ?? 0) > 0 && (
+        <div className="shadow-card rounded-xl border bg-card p-5">
+          <h3 className="text-sm font-semibold">Retakes per exam</h3>
+          <p className="text-muted-foreground text-xs mt-1">Approved retakes only — grouped by exam (tap for history)</p>
+          <div className="mt-3 flex flex-col divide-y">
+            {data!.retakesByExam.map((r) => (
+              <Link key={r.examId} href={`/student/exams/${r.examId}`} className="flex items-center justify-between py-2.5 hover:bg-accent/20 -mx-2 px-2 rounded-lg">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{r.title}</p>
+                  <p className="text-muted-foreground text-xs">{r.subject} · {r.count} retake{r.count !== 1 ? "s" : ""}{r.improvement !== null ? ` · ${r.improvement > 0 ? "+" : ""}${r.improvement}% vs first` : ""}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-semibold tabular-nums">{r.count}</p>
+                  {r.latestScore !== null && <p className="text-muted-foreground text-xs">{r.latestScore}% latest</p>}
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <ChartCard title="Score trend" description="Your last 8 graded exams">

@@ -38,6 +38,7 @@ export interface ProctoringRig {
 export function useProctoring(
   attemptId: string | null,
   handlers: ProctoringHandlers,
+  options?: { enableCameraRecording?: boolean; enableScreenRecording?: boolean },
 ): ProctoringRig {
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
@@ -52,11 +53,12 @@ export function useProctoring(
   const lastViolationRef = useRef(0);
   const attemptIdRef = useRef(attemptId);
   const handlersRef = useRef(handlers);
-
+  const optionsRef = useRef(options);
   // Keep refs fresh for the long-lived listeners below.
   useEffect(() => {
     attemptIdRef.current = attemptId;
     handlersRef.current = handlers;
+    optionsRef.current = options ?? {};
   });
 
   const report = useCallback(
@@ -206,13 +208,25 @@ export function useProctoring(
 
   const beginExamCapture = useCallback(async () => {
     if (!cameraStream || !screenStream) return;
+    const enableCamera = optionsRef.current?.enableCameraRecording ?? false;
+    const enableScreen = optionsRef.current?.enableScreenRecording ?? false;
+    // Only start MediaRecorder for enabled streams — permissions are still required per requirements,
+    // but blobs are not recorded/uploaded when disabled. Snapshots remain active.
     try {
-      camRecorderRef.current = new StreamRecorder(cameraStream);
-      screenRecorderRef.current = new StreamRecorder(screenStream, { videoBitrate: 300_000 });
-      await Promise.all([
-        camRecorderRef.current.start(),
-        screenRecorderRef.current.start(),
-      ]);
+      const tasks: Promise<void>[] = [];
+      if (enableCamera) {
+        camRecorderRef.current = new StreamRecorder(cameraStream);
+        tasks.push(camRecorderRef.current.start());
+      } else {
+        camRecorderRef.current = null;
+      }
+      if (enableScreen) {
+        screenRecorderRef.current = new StreamRecorder(screenStream, { videoBitrate: 300_000 });
+        tasks.push(screenRecorderRef.current.start());
+      } else {
+        screenRecorderRef.current = null;
+      }
+      if (tasks.length) await Promise.all(tasks);
     } catch (err) {
       console.warn("[proctoring] recorders failed to start", err);
     }

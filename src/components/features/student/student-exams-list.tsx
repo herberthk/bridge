@@ -84,9 +84,14 @@ export function StudentExamsList({ items }: { items: AttemptWithExam[] }) {
                     {exam?.questionCount ?? "–"} questions
                   </p>
                 </div>
-                <Badge variant={STATUS_META[attempt.status]?.variant ?? "outline"}>
-                  {STATUS_META[attempt.status]?.label ?? attempt.status}
-                </Badge>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {(attempt as unknown as { retakeOf?: string | null }).retakeOf && (
+                    <Badge variant="outline" className="border-amber-500/20 text-amber-700">Retake</Badge>
+                  )}
+                  <Badge variant={STATUS_META[attempt.status]?.variant ?? "outline"}>
+                    {STATUS_META[attempt.status]?.label ?? attempt.status}
+                  </Badge>
+                </div>
               </div>
               <div className="text-muted-foreground mt-3 flex items-center gap-4 text-xs">
                 <span className="flex items-center gap-1">
@@ -137,7 +142,15 @@ export function StudentExamsList({ items }: { items: AttemptWithExam[] }) {
               >
                 <FileCheck2Icon className="text-muted-foreground size-5 shrink-0" />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{exam?.title ?? "Exam"}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="truncate text-sm font-medium">{exam?.title ?? "Exam"}</p>
+                    {(attempt as unknown as { retakeOf?: string | null }).retakeOf && (
+                      <Badge variant="outline" className="border-amber-500/20 text-amber-700 text-[10px] px-1.5 py-0">Retake</Badge>
+                    )}
+                    {exam && (
+                      <Link href={`/student/exams/${exam.id}`} className="text-primary text-[11px] hover:underline hidden sm:inline" onClick={(e) => e.stopPropagation()}>history</Link>
+                    )}
+                  </div>
                   <p className="text-muted-foreground text-xs">
                     {attempt.submittedAt
                       ? format(parseDate(attempt.submittedAt)!, "d MMM yyyy, HH:mm")

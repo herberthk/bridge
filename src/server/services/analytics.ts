@@ -24,6 +24,8 @@ export interface StudentDashboardData {
   bySubject: { subject: string; score: number; taken: number }[];
   strongest: string | null;
   weakest: string | null;
+  retakes: number;
+  retakesByExam: { examId: string; title: string; subject: string; count: number; latestScore: number | null; improvement: number | null }[];
 }
 
 export async function studentDashboard(
@@ -70,6 +72,55 @@ export async function studentDashboard(
       score: a.score!.percentage,
     }));
 
+  // Retakes approved per exam for this student — count AttemptDocs where retakeOf != null grouped by examId
+  const retakeAttempts = attempts.filter((a) => a.retakeOf !== null && a.retakeOf !== undefined);
+  const retakesByExamMap = new Map<string, typeof retakeAttempts>();
+  for (const ra of retakeAttempts) {
+    const list = retakesByExamMap.get(ra.examId) ?? [];
+    list.push(ra);
+    retakesByExamMap.set(ra.examId, list);
+  }
+  const retakesByExam = [...retakesByExamMap.entries()].map(([examId, list]) => {
+    return {
+      examId,
+      title: examId,
+      subject: examSubjects.get(examId) ?? "other",
+      count: list.length,
+      latestScore: list.filter((a) => a.score).sort((a, b) => (b.submittedAt?.toMillis?.() ?? 0) - (a.submittedAt?.toMillis?.() ?? 0))[0]?.score?.percentage ?? null,
+      improvement: null as number | null,
+    };
+  });
+  // Enrich titles/subjects properly — fetch exam titles for retake exams
+  if (retakesByExam.length > 0) {
+    const retakeExamIds = [...retakesByExamMap.keys()];
+    const titleMap = new Map<string, { title: string; subject: string }>();
+    await Promise.all(
+      retakeExamIds.map(async (examId) => {
+        const e = await examsCol().doc(examId).get().catch(() => null);
+        if (e?.exists) {
+          const d = e.data()!;
+          titleMap.set(examId, { title: d.title, subject: d.params.subject });
+        }
+      }),
+    );
+    for (const entry of retakesByExam) {
+      const meta = titleMap.get(entry.examId);
+      if (meta) {
+        entry.title = meta.title;
+        entry.subject = SUBJECT_LABELS[meta.subject as Subject] ?? meta.subject;
+      } else {
+        entry.subject = SUBJECT_LABELS[entry.subject as Subject] ?? entry.subject;
+      }
+      // improvement: latest retake vs first attempt of same exam
+      const allForExam = attempts.filter((a) => a.examId === entry.examId && a.score !== null).sort((a, b) => (a.createdAt?.toMillis?.() ?? 0) - (b.createdAt?.toMillis?.() ?? 0));
+      if (allForExam.length >= 2) {
+        const first = allForExam[0]!.score!.percentage;
+        const latest = allForExam[allForExam.length - 1]!.score!.percentage;
+        entry.improvement = latest - first;
+      }
+    }
+  }
+
   return {
     taken: graded.length,
     pending: attempts.filter((a) => a.status === "pending" || a.status === "in_progress").length,
@@ -80,6 +131,8 @@ export async function studentDashboard(
     bySubject,
     strongest: bySubject[0]?.subject ?? null,
     weakest: bySubject.length > 1 ? bySubject[bySubject.length - 1].subject : null,
+    retakes: retakeAttempts.length,
+    retakesByExam: retakesByExam.sort((a, b) => b.count - a.count),
   };
 }
 
@@ -94,6 +147,20 @@ export interface AdminDashboardData {
   bySubject: { subject: string; attempts: number }[];
   walletBalance: number;
   tokensConsumed: number;
+  retakesTotal: number;
+  retakeRate: number | null;
+  retakesByExam: { examId: string; title: string; subject: string; count: number; uniqueRetakers: number; avgImprovement: number | null }[];
+  // Per-exam detailed assessment for each exam (graded) — used for admin exam detail expansion
+  perExamDetailed: {
+    examId: string;
+    title: string;
+    subject: string;
+    totalAttempts: number;
+    gradedCount: number;
+    avgScore: number | null;
+    retakeCount: number;
+    failedQuestionRates: { questionId: string; prompt: string; failRate: number; skippedRate: number }[];
+  }[];
 }
 
 export async function adminDashboard(
@@ -135,10 +202,104 @@ export async function adminDashboard(
 
   // Subject distribution from exams of these attempts.
   const bySubjectMap = new Map<string, number>();
+  const examsList = examsSnap.docs.map((d) => ({ id: d.id, ...d.data()! })) as WithId<import("@/types/firestore").ExamDoc>[];
   for (const a of attempts) {
-    const subject = subjectOfExamSync(a.examId, examsSnap.docs.map((d) => ({ id: d.id, ...d.data()! })));
+    const subject = subjectOfExamSync(a.examId, examsList);
     bySubjectMap.set(subject, (bySubjectMap.get(subject) ?? 0) + 1);
   }
+
+  // Retake analytics — approved retakes only (retakeOf != null)
+  const retakeAttempts = attempts.filter((a) => a.retakeOf !== null && (a as unknown as { retakeOf?: string | null }).retakeOf !== undefined);
+  const retakesTotal = retakeAttempts.length;
+  const retakeRate = attempts.length ? Math.round((retakesTotal / attempts.length) * 100) : null;
+
+  const retakesByExamMap = new Map<string, typeof retakeAttempts>();
+  for (const ra of retakeAttempts) {
+    const list = retakesByExamMap.get(ra.examId) ?? [];
+    list.push(ra);
+    retakesByExamMap.set(ra.examId, list);
+  }
+  const examById = new Map(examsList.map((e) => [e.id, e]));
+  const retakesByExam = [...retakesByExamMap.entries()].map(([examId, list]) => {
+    const exam = examById.get(examId);
+    const uniqueRetakers = new Set(list.map((a) => a.studentId)).size;
+    // avg improvement per retaker for this exam
+    const byStudent = new Map<string, typeof list>();
+    for (const a of attempts.filter((x) => x.examId === examId && x.score !== null)) {
+      const s = byStudent.get(a.studentId) ?? [];
+      s.push(a);
+      byStudent.set(a.studentId, s);
+    }
+    const improvements: number[] = [];
+    for (const [, arr] of byStudent) {
+      if (arr.length >= 2) {
+        const sorted = arr.slice().sort((x, y) => (x.createdAt as unknown as Timestamp)?.toMillis?.() ?? 0 - ((y.createdAt as unknown as Timestamp)?.toMillis?.() ?? 0));
+        // fallback sort by createdAt millis
+        sorted.sort((x, y) => {
+          const xm = (x.createdAt as unknown as { toMillis?: () => number })?.toMillis?.() ?? 0;
+          const ym = (y.createdAt as unknown as { toMillis?: () => number })?.toMillis?.() ?? 0;
+          return xm - ym;
+        });
+        const first = sorted[0]!.score!.percentage;
+        const last = sorted[sorted.length - 1]!.score!.percentage;
+        improvements.push(last - first);
+      }
+    }
+    const avgImprovement = improvements.length ? Math.round(improvements.reduce((n, v) => n + v, 0) / improvements.length) : null;
+    return {
+      examId,
+      title: exam?.title ?? examId,
+      subject: SUBJECT_LABELS[(exam?.params.subject as Subject) ?? "other"] ?? exam?.params.subject ?? "other",
+      count: list.length,
+      uniqueRetakers,
+      avgImprovement,
+    };
+  }).sort((a, b) => b.count - a.count);
+
+  // Per-exam detailed assessment — for each exam, compute avg score, retake count, failed/skipped rates per question
+  const perExamDetailed = examsList.slice(0, 20).map((exam) => {
+    const exAttempts = attempts.filter((a) => a.examId === exam.id);
+    const exGraded = exAttempts.filter((a) => a.score !== null);
+    const avgScore = exGraded.length ? Math.round(exGraded.reduce((n, a) => n + a.score!.percentage, 0) / exGraded.length) : null;
+    const retakeCount = exAttempts.filter((a) => (a as unknown as { retakeOf?: string | null }).retakeOf !== null && (a as unknown as { retakeOf?: string | null }).retakeOf !== undefined).length;
+    const failedQuestionRates = exam.questions.slice(0, 12).map((q) => {
+      let fails = 0;
+      let skips = 0;
+      let total = 0;
+      for (const att of exGraded) {
+        const ans = att.answers.find((x) => x.questionId === q.id);
+        if (!ans) {
+          skips += 1;
+          total += 1;
+          continue;
+        }
+        const r = ans.response;
+        const isSkipped = r === null || r === undefined || r === "" || (Array.isArray(r) && r.length === 0) || (Array.isArray(r) && r.every((v) => v === "" || v === null));
+        if (isSkipped) skips += 1;
+        else if (ans.graded && ans.graded.correct === false) fails += 1;
+        else if (ans.graded && ans.graded.correct === null) {
+          // essay pending — count as not failed for rate
+        }
+        total += 1;
+      }
+      return {
+        questionId: q.id,
+        prompt: q.prompt.slice(0, 80).replace(/[#*$_`]/g, ""),
+        failRate: total ? Math.round((fails / total) * 100) : 0,
+        skippedRate: total ? Math.round((skips / total) * 100) : 0,
+      };
+    });
+    return {
+      examId: exam.id,
+      title: exam.title,
+      subject: SUBJECT_LABELS[exam.params.subject as Subject] ?? exam.params.subject,
+      totalAttempts: exAttempts.length,
+      gradedCount: exGraded.length,
+      avgScore,
+      retakeCount,
+      failedQuestionRates,
+    };
+  }).sort((a, b) => b.totalAttempts - a.totalAttempts);
 
   return {
     studentCount: studentsSnap.size,
@@ -160,6 +321,10 @@ export async function adminDashboard(
       .slice(0, 8),
     walletBalance: walletSnap.exists ? walletSnap.data()!.balanceTokens : 0,
     tokensConsumed: walletSnap.exists ? walletSnap.data()!.totalConsumedTokens : 0,
+    retakesTotal,
+    retakeRate,
+    retakesByExam: retakesByExam.slice(0, 10),
+    perExamDetailed: perExamDetailed.slice(0, 10),
   };
 }
 

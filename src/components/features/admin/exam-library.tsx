@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState, useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
@@ -149,9 +150,11 @@ function AssignDialog({ exam, students }: { exam: SerializedWithId<ExamDoc>; stu
 export function ExamLibrary({
   exams,
   students,
+  retakeCounts = {},
 }: {
   exams: SerializedWithId<ExamDoc>[];
   students: SerializedWithId<UserDoc>[];
+  retakeCounts?: Record<string, number>;
 }) {
   const router = useRouter();
   return (
@@ -187,6 +190,7 @@ export function ExamLibrary({
                 <TableHead>Class</TableHead>
                 <TableHead>Questions</TableHead>
                 <TableHead>Duration</TableHead>
+                <TableHead>Retakes</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Created</TableHead>
                 <TableHead className="w-28" />
@@ -201,7 +205,7 @@ export function ExamLibrary({
                 <TableRow key={e.id}>
                   <TableCell className="max-w-64">
                     <div className="flex flex-col">
-                      <span className="truncate font-medium">{e.title}</span>
+                      <Link href={`/admin/exams/${e.id}`} className="truncate font-medium hover:underline">{e.title}</Link>
                       <span className="text-muted-foreground truncate text-xs">
                         {e.params.topic}
                       </span>
@@ -215,6 +219,13 @@ export function ExamLibrary({
                   </TableCell>
                   <TableCell className="tabular-nums">{e.questions.length}</TableCell>
                   <TableCell className="tabular-nums">{e.params.durationMinutes} min</TableCell>
+                  <TableCell className="tabular-nums">
+                    {retakeCounts[e.id] ? (
+                      <Badge variant="secondary" className="tabular-nums">{retakeCounts[e.id]} retake{retakeCounts[e.id] !== 1 ? "s" : ""}</Badge>
+                    ) : (
+                      <span className="text-muted-foreground text-xs">—</span>
+                    )}
+                  </TableCell>
                   <TableCell>
                     <Badge variant={STATUS_VARIANT[e.status as ExamStatus] ?? "outline"}>
                       {e.status}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect, useRef, useTransition } from "react";
 import { toast } from "sonner";
 import { CheckIcon, InboxIcon, XIcon } from "lucide-react";
 
@@ -24,14 +24,26 @@ export function RetakeRequests({
     decideRetakeAction,
     null,
   );
+  const [, startTransition] = useTransition();
+  const lastApproveRef = useRef<boolean | null>(null);
+
+  useEffect(() => {
+    if (!state) return;
+    if (state.ok) {
+      toast.success(lastApproveRef.current ? "Retake approved" : "Retake rejected");
+    } else {
+      toast.error(state.error);
+    }
+  }, [state]);
 
   const submit = (requestId: string, approve: boolean) => {
     const fd = new FormData();
     fd.set("requestId", requestId);
     fd.set("approve", String(approve));
-    formAction(fd);
-    if (state?.ok === false) toast.error(state.error);
-    else toast.success(approve ? "Retake approved" : "Retake rejected");
+    lastApproveRef.current = approve;
+    startTransition(() => {
+      formAction(fd);
+    });
   };
 
   return (

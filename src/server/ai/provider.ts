@@ -20,10 +20,28 @@ export function google(): GoogleProvider {
   return cached;
 }
 
-/** Model id used for a call — recorded on docs for transparency. */
+/**
+ * Model id used for a call — recorded on docs for transparency.
+ *
+ * The defaults track what the exam pipeline's timing envelope was actually
+ * measured on. `exams.ts` derives its slices from a throughput figure taken off a
+ * real `gemini-3.7-flash` round trip, and `thinkingOptions` branches on the major
+ * version — 3.x takes `thinkingLevel`, 2.5 takes a numeric `thinkingBudget` — so a
+ * default from the other generation would silently plan against numbers nothing
+ * measured. Overridable per environment via `BRIDGE_MODEL_*`.
+ */
 export const modelIds = {
-  text: () => process.env.BRIDGE_MODEL_TEXT ?? "gemini-3.6-flash",
-  textPro: () => process.env.BRIDGE_MODEL_TEXT_PRO ?? "gemini-3.1-pro-preview",
+  text: () => process.env.BRIDGE_MODEL_TEXT ?? "gemini-3.7-flash",
+  /**
+   * The escalation target for a chunk that has already failed twice.
+   *
+   * Deliberately another flash model rather than a Pro one: the escalation reuses
+   * the chunk's slice, and that slice is sized from flash throughput. A Pro model
+   * reasons for considerably longer, so pointing this at one turns the last
+   * attempt into a guaranteed abort — an escalation that cannot finish is worse
+   * than no escalation. Raising it means raising the slice too.
+   */
+  textPro: () => process.env.BRIDGE_MODEL_TEXT_PRO ?? "gemini-3.7-flash",
   live: () => process.env.BRIDGE_MODEL_LIVE ?? "gemini-live-2.5-flash-native-audio",
 };
 
@@ -34,5 +52,8 @@ export function textModel() {
 
 /** Pro model for harder tasks (optional, switch per call). */
 export function textProModel() {
-  return google()(process.env.BRIDGE_MODEL_TEXT_PRO ?? "gemini-3.1-pro-preview");
+  // Reads through `modelIds` rather than re-reading the env: the id recorded on
+  // the document and the id actually called have to be the same string, and an
+  // inline duplicate is one edit away from making them differ.
+  return google()(modelIds.textPro());
 }
