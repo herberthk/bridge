@@ -121,11 +121,14 @@ export async function startAttempt(
   const deadlineMs = startedMs + exam.params.durationMinutes * 60_000;
 
   // Backwards compat: exams created before the policy fields get secure defaults.
+  // Recording is disabled by default (per requirements) even for old exams.
   const policy = {
     preventBacktrack: (exam.params as unknown as { preventBacktrack?: boolean }).preventBacktrack ?? true,
     allowReviewBeforeSubmit: (exam.params as unknown as { allowReviewBeforeSubmit?: boolean }).allowReviewBeforeSubmit ?? false,
     allowSkipping: (exam.params as unknown as { allowSkipping?: boolean }).allowSkipping ?? true,
     requireFullscreen: (exam.params as unknown as { requireFullscreen?: boolean }).requireFullscreen ?? true,
+    enableCameraRecording: (exam.params as unknown as { enableCameraRecording?: boolean }).enableCameraRecording ?? false,
+    enableScreenRecording: (exam.params as unknown as { enableScreenRecording?: boolean }).enableScreenRecording ?? false,
   };
 
   return {
@@ -148,6 +151,7 @@ function toSafeQuestion(q: Question): SafeQuestion {
     pairs: q.pairs,
     points: q.points,
     hint: q.hint,
+    visual: (q as Question).visual ?? null,
   };
 }
 
@@ -418,6 +422,7 @@ type AttemptListFields = Pick<
   | "scheduledFor"
   | "autoSubmitted"
   | "createdAt"
+  | "retakeOf"
 >;
 export type StudentAttemptListItem = WithId<AttemptListFields>;
 
@@ -440,6 +445,7 @@ export async function listStudentAttempts(actor: SessionUser): Promise<
       "scheduledFor",
       "autoSubmitted",
       "createdAt",
+      "retakeOf",
     )
     .get();
   const attempts = snap.docs.map(

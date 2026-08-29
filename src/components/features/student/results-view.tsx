@@ -5,18 +5,22 @@ import { motion } from "motion/react";
 import {
   AlertTriangleIcon,
   ArrowLeftIcon,
+  BookOpenIcon,
   CheckCircle2Icon,
   ClockIcon,
   FileDownIcon,
+  LightbulbIcon,
   RotateCcwIcon,
   ShieldAlertIcon,
   SparklesIcon,
   TargetIcon,
+  TrendingUpIcon,
   XCircleIcon,
 } from "lucide-react";
 
 import { requestRetakeAction } from "@/app/student/actions";
 import { Markdown } from "@/components/markdown";
+import { QuestionVisualView } from "@/components/features/exam/question-visual";
 import { useActionToast } from "@/components/features/super/schools-manager";
 import type { AttemptDoc, ExamDoc } from "@/types/firestore";
 import type { SerializedWithId } from "@/lib/serialize";
@@ -55,7 +59,7 @@ const RETAKE_CHIPS = [
   "Proctoring flagged incorrectly",
 ] as const;
 
-function RetakeDialog({ attemptId, flagged }: { attemptId: string; flagged?: boolean }) {
+function RetakeDialog({ attemptId, flagged, disabled, pendingLabel, hasOpenRetake }: { attemptId: string; flagged?: boolean; disabled?: boolean; pendingLabel?: boolean; hasOpenRetake?: boolean }) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [state, formAction, pending] = useActionState<
@@ -64,6 +68,23 @@ function RetakeDialog({ attemptId, flagged }: { attemptId: string; flagged?: boo
   >(requestRetakeAction, null);
   const closeDialog = useCallback(() => setOpen(false), []);
   useActionToast(state, closeDialog, "Retake requested — your teacher will review it.");
+
+  if (disabled) {
+    if (hasOpenRetake) {
+      return (
+        <Button variant="outline" disabled className="min-w-37 opacity-80">
+          <CheckCircle2Icon data-icon="inline-start" className="size-4 text-emerald-600" />
+          Approved — complete retake
+        </Button>
+      );
+    }
+    return (
+      <Button variant="outline" disabled className="min-w-37 opacity-80">
+        <ClockIcon data-icon="inline-start" className="size-4" />
+        {pendingLabel ? "Pending" : "Request sent"}
+      </Button>
+    );
+  }
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -134,12 +155,150 @@ function RetakeDialog({ attemptId, flagged }: { attemptId: string; flagged?: boo
   );
 }
 
-export function ResultsView({
+function DetailedAssessment({
   attempt,
   exam,
 }: {
   attempt: SerializedWithId<AttemptDoc>;
+  exam: SerializedWithId<ExamDoc>;
+}) {
+  const isSkipped = (resp: unknown) => {
+    if (resp === null || resp === undefined || resp === "") return true;
+    if (Array.isArray(resp)) return resp.length === 0 || resp.every((v) => v === "" || v === null || v === undefined);
+    return false;
+  };
+  const failed: { q: (typeof exam.questions)[number]; ans: (typeof attempt.answers)[number] | undefined }[] = [];
+  const skipped: { q: (typeof exam.questions)[number]; ans: (typeof attempt.answers)[number] | undefined }[] = [];
+  const correct: typeof failed = [];
+  for (const q of exam.questions) {
+    const ans = attempt.answers.find((a) => a.questionId === q.id);
+    const skippedFlag = !ans || isSkipped(ans.response);
+    if (skippedFlag) skipped.push({ q, ans });
+    else if (ans?.graded?.correct === false) failed.push({ q, ans });
+    else if (ans?.graded?.correct === true) correct.push({ q, ans });
+  }
+  const total = exam.questions.length;
+  const earned = attempt.score?.earned ?? 0;
+  const possible = attempt.score?.possible ?? total;
+  const missing = possible - earned;
+  const feedback = attempt.feedback;
+
+  if (total > 0 && correct.length === total) {
+    return (
+      <Card className="border-emerald-500/20 bg-emerald-500/5">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300">
+            <CheckCircle2Icon className="size-5" /> Perfect — 100% achieved
+          </CardTitle>
+          <CardDescription>You answered every question correctly. Keep this momentum for the next exam!</CardDescription>
+        </CardHeader>
+      </Card>
+    );
+  }
+
+  const suggestions: string[] = [];
+  if (failed.length > 0) suggestions.push(`Revise ${failed.length} failed question${failed.length > 1 ? "s" : ""}: focus on understanding the correct approach, not just the answer.`);
+  if (skipped.length > 0) suggestions.push(`Attempt ${skipped.length} skipped question${skipped.length > 1 ? "s" : ""} next time — even educated guesses earn marks.`);
+  if (feedback?.improvements?.length) suggestions.push(...feedback.improvements.slice(0, 2));
+  // Type-specific tip
+  const typeCounts = failed.reduce((m, { q }) => m.set(q.type, (m.get(q.type) ?? 0) + 1), new Map<string, number>());
+  const topType = [...typeCounts.entries()].sort((a, b) => b[1] - a[1])[0];
+  if (topType) suggestions.push(`Practice more "${topType[0].replace(/_/g, " ")}" questions — you missed ${topType[1]} of that type.`);
+
+  return (
+    <Card className="border-amber-500/20">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <BookOpenIcon className="size-5 text-amber-600" /> Detailed assessment — roadmap to 100%
+        </CardTitle>
+        <CardDescription>
+          {failed.length} failed · {skipped.length} skipped · {correct.length} correct of {total} — you’re <span className="font-semibold">{missing} mark{missing !== 1 ? "s" : ""}</span> from 100%. {attempt.retakeOf ? "This is a retake — compare with your previous attempt above." : "Review below to close the gap."}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-5">
+        {/* KPI row */}
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 text-center">
+            <p className="text-2xl font-semibold text-emerald-600">{correct.length}</p>
+            <p className="text-muted-foreground text-xs">Correct</p>
+          </div>
+          <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-center">
+            <p className="text-2xl font-semibold text-destructive">{failed.length}</p>
+            <p className="text-muted-foreground text-xs">Failed</p>
+          </div>
+          <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-center">
+            <p className="text-2xl font-semibold text-amber-700">{skipped.length}</p>
+            <p className="text-muted-foreground text-xs">Skipped</p>
+          </div>
+        </div>
+
+        {/* Suggestions */}
+        <div className="rounded-xl border bg-amber-500/5 p-4">
+          <p className="flex items-center gap-2 text-sm font-semibold"><LightbulbIcon className="size-4 text-amber-600" /> How to reach 100%</p>
+          <ul className="mt-2 flex flex-col gap-1.5">
+            {suggestions.slice(0, 5).map((s, i) => (
+              <li key={i} className="flex gap-2 text-sm"><TrendingUpIcon className="mt-0.5 size-3.5 shrink-0 text-emerald-600" /> <span>{s}</span></li>
+            ))}
+          </ul>
+          {feedback?.perQuestion && <p className="text-muted-foreground mt-2 text-xs">Tapped per-question AI feedback is also shown in the review below.</p>}
+        </div>
+
+        {/* Failed list */}
+        {failed.length > 0 && (
+          <div>
+            <p className="text-sm font-semibold flex items-center gap-1.5"><XCircleIcon className="size-4 text-destructive" /> Failed questions — what to fix</p>
+            <div className="mt-2 flex flex-col gap-2">
+              {failed.map(({ q, ans }) => {
+                const correctText = q.type === "multiple_choice" && q.correctOptionIndex !== null ? q.options?.[q.correctOptionIndex] : q.type === "true_false" ? (q.correctBool ? "True" : "False") : q.acceptableAnswers?.join(" / ") ?? q.pairs?.map((p) => p.right).join(", ");
+                const perQ = feedback?.perQuestion?.[q.id] ?? ans?.graded?.feedback ?? null;
+                return (
+                  <div key={q.id} className="rounded-xl border bg-card p-3">
+                    <p className="text-sm font-medium line-clamp-2">{q.prompt.replace(/[#*$_`]/g, "").slice(0, 120)}</p>
+                    <div className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
+                      <div className="rounded-lg bg-muted p-2.5"><span className="text-muted-foreground">Your answer</span><p className="font-medium mt-0.5">{formatResponse(ans?.response)} — <span className="text-destructive">{ans?.graded?.earned ?? 0}/{q.points}</span></p></div>
+                      <div className="rounded-lg bg-emerald-500/10 p-2.5"><span className="text-muted-foreground">Correct</span><p className="font-medium mt-0.5">{correctText ?? "—"}</p></div>
+                    </div>
+                    {(q.explanation || perQ) && <p className="text-muted-foreground mt-2 text-xs"><span className="font-medium">Tip:</span> {perQ ?? q.explanation}</p>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Skipped list */}
+        {skipped.length > 0 && (
+          <div>
+            <p className="text-sm font-semibold flex items-center gap-1.5"><AlertTriangleIcon className="size-4 text-amber-600" /> Skipped questions — easy gains</p>
+            <div className="mt-2 flex flex-col gap-2">
+              {skipped.map(({ q, ans }) => {
+                const perQ = feedback?.perQuestion?.[q.id] ?? null;
+                return (
+                  <div key={q.id} className="rounded-xl border border-dashed bg-amber-500/5 p-3">
+                    <p className="text-sm font-medium line-clamp-2">{q.prompt.replace(/[#*$_`]/g, "").slice(0, 120)}</p>
+                    <p className="text-muted-foreground mt-1 text-xs">Skipped — you left this blank (0/{q.points}). Next time attempt it; even partial credit helps.</p>
+                    {(q.explanation || perQ) && <p className="text-muted-foreground mt-1.5 text-xs"><span className="font-medium">Study:</span> {perQ ?? q.explanation ?? `Review ${exam.title} — ${q.type.replace(/_/g, " ")}`}</p>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+export function ResultsView({
+  attempt,
+  exam,
+  hasPendingRequest = false,
+  hasOpenRetake = false,
+}: {
+  attempt: SerializedWithId<AttemptDoc>;
   exam: SerializedWithId<ExamDoc> | null;
+  hasPendingRequest?: boolean;
+  hasOpenRetake?: boolean;
 }) {
   const score = attempt.score;
   const feedback = attempt.feedback;
@@ -171,8 +330,20 @@ export function ResultsView({
               <FileDownIcon data-icon="inline-start" />
               Download PDF
             </Button>
-            <RetakeDialog attemptId={attempt.id} flagged={flagged} />
+            <RetakeDialog attemptId={attempt.id} flagged={flagged} disabled={hasPendingRequest || hasOpenRetake} pendingLabel={hasPendingRequest} hasOpenRetake={hasOpenRetake} />
           </div>
+        )}
+        {hasOpenRetake && (
+          <Card className="border-emerald-500/20 bg-emerald-500/5">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-emerald-700 dark:text-emerald-300 text-sm">
+                <CheckCircle2Icon className="size-4" /> Approved retake pending
+              </CardTitle>
+              <CardDescription className="text-emerald-700/80 dark:text-emerald-300/80">
+                An approved retake for this exam is still waiting to be completed. Finish that attempt before you can request another retake.
+              </CardDescription>
+            </CardHeader>
+          </Card>
         )}
         {pending && (
           <Badge variant="secondary" className="hidden sm:inline-flex gap-1.5">
@@ -299,6 +470,11 @@ export function ResultsView({
         </Card>
       )}
 
+      {/* Individual detailed assessment — roadmap to 100% based on this attempt */}
+      {exam && attempt.answers.length > 0 && (attempt.status === "graded" || attempt.status === "flagged") && (
+        <DetailedAssessment attempt={attempt} exam={exam} />
+      )}
+
       {/* Per-question review */}
       {exam && attempt.answers.length > 0 && (
         <Card>
@@ -345,6 +521,9 @@ export function ResultsView({
                     <div className="text-sm">
                       <Markdown>{q.prompt}</Markdown>
                     </div>
+                    {(q as unknown as { visual?: import("@/types/firestore").QuestionVisual | null }).visual && (
+                      <QuestionVisualView visual={(q as unknown as { visual?: import("@/types/firestore").QuestionVisual | null }).visual} />
+                    )}
                     <div className="grid gap-3 text-sm sm:grid-cols-2">
                       <div className="rounded-lg bg-muted p-3">
                         <p className="text-muted-foreground text-xs">Your answer</p>

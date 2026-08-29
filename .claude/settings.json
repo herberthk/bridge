@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *)",
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "Bash(echo \"===EXIT:$?===\")",
+      "Bash(echo \"TSC_EXIT=$?\")",
+      "Read(//tmp/**)",
+      "Bash(./node_modules/.bin/eslint src/app/admin/generate/page.tsx src/components/features/admin/exam-generator.tsx)",
+      "Bash(npx vitest *)"
+    ]
+  }
+}

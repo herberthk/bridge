@@ -203,7 +203,18 @@ export const EXAM_DURATION_MAX = 240;
 
 /** Question count bounds per exam. */
 export const EXAM_QUESTIONS_MIN = 1;
-export const EXAM_QUESTIONS_MAX = 100;
+/**
+ * Lowered from 100 because 100 was never generatable.
+ *
+ * The ceiling has to be a number the pipeline can actually deliver *with every
+ * extra enabled* — hints, explanations and worked examples roughly quadruple the
+ * output tokens per question, and that is the shape admins pick. 60 with all
+ * extras is ~31,000 output tokens: twelve five-question chunks over six lanes,
+ * which fits the generation budget with a wave of retries still in reserve. 100
+ * of the same shape does not fit at all, so allowing it here only moved the
+ * refusal from the form to a 504 several minutes later.
+ */
+export const EXAM_QUESTIONS_MAX = 60;
 
 /** Billing constants — pay-as-you-go token metering. */
 export const BILLING = {

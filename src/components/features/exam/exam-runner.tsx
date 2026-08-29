@@ -26,6 +26,7 @@ import { Markdown } from "@/components/markdown";
 import { useExamSession } from "@/stores/exam-session";
 import { useProctoring } from "@/components/features/exam/proctoring";
 import { ExamOnboarding } from "@/components/features/exam/exam-onboarding";
+import { QuestionVisualView } from "@/components/features/exam/question-visual";
 import type { ExamSessionPolicy, StartedExam } from "@/lib/schemas/attempt";
 import type { SafeQuestion } from "@/lib/schemas/attempt";
 import { Badge } from "@/components/ui/badge";
@@ -171,6 +172,11 @@ function QuestionView({
             </div>
           )}
         </div>
+        {question.visual && (
+          <div className="mt-4">
+            <QuestionVisualView visual={question.visual} />
+          </div>
+        )}
       </div>
 
       {question.type === "multiple_choice" && question.options && (
@@ -182,7 +188,7 @@ function QuestionView({
                 key={i}
                 className={`group relative flex cursor-pointer items-start gap-3 rounded-2xl border p-4 pr-3 text-left transition-all duration-200 will-change-transform hover:shadow-lifted ${
                   selected
-                    ? "border-primary bg-primary/[0.06] shadow-glow"
+                    ? "border-primary bg-primary/6 shadow-glow"
                     : "bg-card hover:bg-accent/40"
                 }`}
               >
@@ -371,6 +377,8 @@ const DEFAULT_POLICY: ExamSessionPolicy = {
   allowReviewBeforeSubmit: false,
   allowSkipping: true,
   requireFullscreen: true,
+  enableCameraRecording: false,
+  enableScreenRecording: false,
 };
 
 export function ExamRunner({
@@ -408,14 +416,23 @@ export function ExamRunner({
   const [submitStage, setSubmitStage] = useState<"answers" | "recordings" | "finalizing">("answers");
   const [uploadProgress, setUploadProgress] = useState({ camera: 0, screen: 0 });
 
-  const rig = useProctoring(attemptId, {
-    onWarning: (count, violation) =>
-      setWarning({ count, reason: violation.reason ?? violation.type.replace(/_/g, " ") }),
-    onTerminate: () => {
-      setPhase("terminated");
-      void doSubmitRef.current?.(true);
+  const recordingEnabled = effectivePolicy.enableCameraRecording || effectivePolicy.enableScreenRecording;
+
+  const rig = useProctoring(
+    attemptId,
+    {
+      onWarning: (count, violation) =>
+        setWarning({ count, reason: violation.reason ?? violation.type.replace(/_/g, " ") }),
+      onTerminate: () => {
+        setPhase("terminated");
+        void doSubmitRef.current?.(true);
+      },
     },
-  });
+    {
+      enableCameraRecording: effectivePolicy.enableCameraRecording,
+      enableScreenRecording: effectivePolicy.enableScreenRecording,
+    },
+  );
 
   // Camera PIP preview.
   useEffect(() => {
@@ -650,12 +667,16 @@ export function ExamRunner({
           sessionStorage.removeItem(draftKey(attemptId));
         } catch {}
 
-        setSubmitStage("recordings");
-
-        // 2) Recordings — stop capture after successful answers
-        const { cameraBlob, screenBlob } = await rig.stopEverything();
-        // Fire upload but keep submitting screen visible with progress
-        await uploadRecordings(cameraBlob, screenBlob);
+        // 2) Recordings — stop capture after successful answers (only if admin enabled)
+        if (recordingEnabled) {
+          setSubmitStage("recordings");
+          const { cameraBlob, screenBlob } = await rig.stopEverything();
+          await uploadRecordings(cameraBlob, screenBlob);
+        } else {
+          // Still stop snapshot/monitoring even when recordings are disabled
+          await rig.stopEverything();
+          setUploadProgress({ camera: 100, screen: 100 });
+        }
 
         setSubmitStage("finalizing");
         // brief pause so user sees completion
@@ -663,7 +684,11 @@ export function ExamRunner({
 
         if (document.fullscreenElement) await document.exitFullscreen().catch(() => undefined);
         toast.success("Submitted!", {
-          description: effectivePolicy.requireFullscreen ? "Exam secured — recordings uploaded." : "Exam submitted — recordings uploaded.",
+          description: recordingEnabled
+            ? effectivePolicy.requireFullscreen
+              ? "Exam secured — recordings uploaded."
+              : "Exam submitted — recordings uploaded."
+            : "Exam submitted — answers secured.",
         });
         router.replace(`/student/results/${attemptId}`);
       } catch (err) {
@@ -675,7 +700,7 @@ export function ExamRunner({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [attemptId, rig.stopEverything, uploadRecordings, submitAnswers, router, effectivePolicy.requireFullscreen],
+    [attemptId, rig.stopEverything, uploadRecordings, submitAnswers, router, effectivePolicy.requireFullscreen, recordingEnabled],
   );
 
   // Keep the submit indirection fresh for proctoring/worker callbacks.
@@ -822,7 +847,11 @@ export function ExamRunner({
 
           <div className="relative ml-1 hidden size-14 overflow-hidden rounded-xl border-2 border-primary/30 bg-black shadow-card sm:block">
             <video ref={cameraPreviewRef} muted playsInline className="size-full object-cover" />
-            <span className="absolute bottom-1 left-1 rounded-full bg-emerald-500 px-1.5 py-0.5 text-[9px] font-bold leading-none text-white">● REC</span>
+            <span
+              className={`absolute bottom-1 left-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold leading-none text-white ${recordingEnabled ? "bg-emerald-500" : "bg-slate-600"}`}
+            >
+              {recordingEnabled ? "● REC" : "● LIVE"}
+            </span>
           </div>
         </div>
         {/* Single premium progress bar — overall exam progress */}
@@ -1016,7 +1045,11 @@ export function ExamRunner({
           <motion.div initial={{ opacity: 0, y: 10, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} className="shadow-lifted w-full max-w-md overflow-hidden rounded-2xl border bg-card">
             <div className="bg-brand p-5 text-primary-foreground">
               <p className="flex items-center gap-2 text-sm font-semibold"><SparklesIcon className="size-4" /> Submitting your exam</p>
-              <p className="mt-1 text-xs opacity-80">Please keep this tab open — we’re securing your answers and recordings.</p>
+              <p className="mt-1 text-xs opacity-80">
+                {recordingEnabled
+                  ? "Please keep this tab open — we’re securing your answers and recordings."
+                  : "Please keep this tab open — we’re securing your answers."}
+              </p>
             </div>
             <div className="flex flex-col gap-4 p-5">
               {/* Stage 1 */}
@@ -1030,52 +1063,80 @@ export function ExamRunner({
                   {submitStage === "answers" && <div className="bg-shimmer mt-2 h-1.5 rounded-full bg-muted" />}
                 </div>
               </div>
-              {/* Stage 2 */}
-              <div className="flex gap-3">
-                <span className={`grid size-8 place-items-center rounded-full border text-xs font-bold ${submitStage === "recordings" ? "border-primary bg-primary text-primary-foreground" : submitStage === "answers" ? "border-border bg-muted text-muted-foreground" : "border-success bg-success text-white"}`}>
-                  {submitStage === "recordings" ? <Loader2Icon className="size-4 animate-spin" /> : submitStage === "finalizing" ? <CheckCircle2Icon className="size-4" /> : "2"}
-                </span>
-                <div className="flex-1">
-                  <p className="text-sm font-medium">Uploading recordings</p>
-                  <div className="mt-3 grid gap-3">
-                    {[
-                      { label: "Camera", value: uploadProgress.camera, icon: CameraIcon, hint: "camera" },
-                      { label: "Screen", value: uploadProgress.screen, icon: MonitorIcon, hint: "screen" },
-                    ].map((item) => {
-                      const Icon = item.icon;
-                      const done = item.value >= 100;
-                      const active = submitStage === "recordings" && !done;
-                      return (
-                        <div key={item.label} className={`overflow-hidden rounded-xl border transition-all ${done ? "border-emerald-500/20 bg-emerald-500/5" : active ? "border-primary/20 bg-primary/5 shadow-glow" : "border-border bg-muted/20"}`}>
-                          <div className="flex items-center gap-3 px-3 py-2.5">
-                            <span className={`grid size-8 place-items-center rounded-lg border shadow-sm transition-colors ${done ? "bg-emerald-500 border-emerald-500 text-white" : active ? "bg-brand border-primary text-primary-foreground shadow-glow" : "bg-card border-border text-muted-foreground"}`}>
-                              {done ? <CheckCircle2Icon className="size-4" /> : <Icon className={`size-4 ${active ? "animate-pulse" : ""}`} />}
-                            </span>
-                            <div className="min-w-0 flex-1">
-                              <p className="flex items-center gap-1.5 text-xs font-semibold">
-                                {item.label}
-                                {done ? <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" /> : active ? <span className="size-1.5 rounded-full bg-primary animate-pulse" /> : null}
-                                <span className="text-muted-foreground font-normal truncate">· {item.hint}-{item.value < 100 ? "uploading" : "done"}</span>
-                              </p>
-                              <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-muted/40">
-                                <motion.div
-                                  className={`h-full rounded-full ${done ? "bg-emerald-500" : "bg-brand shadow-glow"} ${active ? "bg-shimmer" : ""}`}
-                                  initial={{ width: 0 }}
-                                  animate={{ width: `${item.value}%` }}
-                                  transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-                                />
+              {/* Stage 2 — conditional on recording config */}
+              {recordingEnabled ? (
+                <div className="flex gap-3">
+                  <span
+                    className={`grid size-8 place-items-center rounded-full border text-xs font-bold ${submitStage === "recordings" ? "border-primary bg-primary text-primary-foreground" : submitStage === "answers" ? "border-border bg-muted text-muted-foreground" : "border-success bg-success text-white"}`}
+                  >
+                    {submitStage === "recordings" ? <Loader2Icon className="size-4 animate-spin" /> : submitStage === "finalizing" ? <CheckCircle2Icon className="size-4" /> : "2"}
+                  </span>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">Uploading recordings</p>
+                    <div className="mt-3 grid gap-3">
+                      {[
+                        ...(effectivePolicy.enableCameraRecording
+                          ? [{ label: "Camera", value: uploadProgress.camera, icon: CameraIcon, hint: "camera" } as const]
+                          : []),
+                        ...(effectivePolicy.enableScreenRecording
+                          ? [{ label: "Screen", value: uploadProgress.screen, icon: MonitorIcon, hint: "screen" } as const]
+                          : []),
+                      ].map((item) => {
+                        const Icon = item.icon;
+                        const done = item.value >= 100;
+                        const active = submitStage === "recordings" && !done;
+                        return (
+                          <div
+                            key={item.label}
+                            className={`overflow-hidden rounded-xl border transition-all ${done ? "border-emerald-500/20 bg-emerald-500/5" : active ? "border-primary/20 bg-primary/5 shadow-glow" : "border-border bg-muted/20"}`}
+                          >
+                            <div className="flex items-center gap-3 px-3 py-2.5">
+                              <span
+                                className={`grid size-8 place-items-center rounded-lg border shadow-sm transition-colors ${done ? "bg-emerald-500 border-emerald-500 text-white" : active ? "bg-brand border-primary text-primary-foreground shadow-glow" : "bg-card border-border text-muted-foreground"}`}
+                              >
+                                {done ? <CheckCircle2Icon className="size-4" /> : <Icon className={`size-4 ${active ? "animate-pulse" : ""}`} />}
+                              </span>
+                              <div className="min-w-0 flex-1">
+                                <p className="flex items-center gap-1.5 text-xs font-semibold">
+                                  {item.label}
+                                  {done ? <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" /> : active ? <span className="size-1.5 rounded-full bg-primary animate-pulse" /> : null}
+                                  <span className="text-muted-foreground font-normal truncate">
+                                    · {item.hint}-{item.value < 100 ? "uploading" : "done"}
+                                  </span>
+                                </p>
+                                <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-muted/40">
+                                  <motion.div
+                                    className={`h-full rounded-full ${done ? "bg-emerald-500" : "bg-brand shadow-glow"} ${active ? "bg-shimmer" : ""}`}
+                                    initial={{ width: 0 }}
+                                    animate={{ width: `${item.value}%` }}
+                                    transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+                                  />
+                                </div>
                               </div>
+                              <Badge
+                                variant={done ? "secondary" : "outline"}
+                                className={`tabular-nums text-xs ${done ? "bg-emerald-500/10 text-emerald-700 border-emerald-500/20" : active ? "bg-primary/10 text-primary border-primary/20" : ""}`}
+                              >
+                                {item.value}%
+                              </Badge>
                             </div>
-                            <Badge variant={done ? "secondary" : "outline"} className={`tabular-nums text-xs ${done ? "bg-emerald-500/10 text-emerald-700 border-emerald-500/20" : active ? "bg-primary/10 text-primary border-primary/20" : ""}`}>
-                              {item.value}%
-                            </Badge>
                           </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
-              </div>
+              ) : (
+                <div className="flex gap-3 rounded-xl border border-dashed bg-muted/20 p-3">
+                  <span className="grid size-8 place-items-center rounded-full border bg-card text-muted-foreground">
+                    <VideoIcon className="size-4" />
+                  </span>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium">Recording disabled</p>
+                    <p className="text-muted-foreground text-xs">This exam does not save camera or screen video. Snapshots for proctoring remain active but no video will be uploaded.</p>
+                  </div>
+                </div>
+              )}
               {/* Stage 3 */}
               <div className="flex gap-3">
                 <span className={`grid size-8 place-items-center rounded-full border text-xs font-bold ${submitStage === "finalizing" ? "border-primary bg-primary text-primary-foreground animate-pulse" : "border-border bg-muted text-muted-foreground"}`}>

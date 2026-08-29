@@ -58,7 +58,14 @@ export function examGenerationInstructions(params: ExamParamsInput): string {
       : ["Set every `explanation` to null."]),
     ...(params.includeWorkedExamples
       ? [
-          "For numerical/technical questions, add a concise worked example in `workedExample` using Markdown with LaTeX math ($...$ inline, $$...$$ display).",
+          // Bounded on purpose. "Concise" alone was the single largest source of
+          // output-length variance: a `very_hard` maths derivation has no natural
+          // stopping point, so five identically-shaped questions came back at
+          // 2,592 tokens in one call and over 7,243 in another, and the long one
+          // was cut off at `maxOutputTokens` and lost entirely. A step budget makes
+          // the cost of a question something the planner can predict.
+          "For numerical/technical questions, add a worked example in `workedExample` using Markdown with LaTeX math ($...$ inline, $$...$$ display).",
+          "Keep each worked example to at most 6 short steps and roughly 80 words. Show the method, not every algebraic rearrangement; state a result rather than deriving a standard identity.",
         ]
       : ["Set every `workedExample` to null."]),
     "",
@@ -71,7 +78,44 @@ export function examGenerationInstructions(params: ExamParamsInput): string {
     "- Never leak the answer inside the prompt text.",
     "- Spread points sensibly (default 1; essays 5–10; matching 2).",
     "- For the exam title, use a concise descriptive name including the topic.",
-    "- CRITICAL: Return exactly the requested number of questions. Verify the array length before finalizing. Truncation is a failure — use your full output budget for questions, not reasoning.",
+    // Deliberately *not* "use your full output budget". That line was here, and it
+    // told the model to spend up to the cap — which on Gemini 3 is a hard mid-stream
+    // stop, so the advice produced the truncation it was warning about. The count is
+    // already stated above; what helps here is the opposite instruction.
+    `- CRITICAL: the array must hold exactly ${params.questionCount} question(s). Prefer shorter prose in every field over dropping a question: a set of ${params.questionCount} brief questions is correct, and a set of ${params.questionCount - 1} thorough ones is a failure.`,
+    "",
+    "Visual aids (hybrid — responsive charts/tables where they help):",
+    "- Where a question benefits from data, comparison, distribution, trend, or tabular reference, include a `visual` field.",
+    "- `visual` is either null or {kind:\"chart\"|\"table\"}.",
+    '  • kind:\"chart\" => {chartType:\"bar\"|\"line\"|\"pie\"|\"area\", title?, caption?, data:[{...}], xKey?, yKey?}',
+    "    - data must be 2–12 uniform objects, e.g. [{\"label\":\"2019\",\"value\":40}, {\"label\":\"2020\",\"value\":55}] or [{\"month\":\"Jan\",\"sales\":120}].",
+    "    - xKey is the label/category key (e.g. \"label\" or \"month\"), yKey is the numeric key (e.g. \"value\" or \"sales\"). If omitted we infer them.",
+    "    - Prefer bar for categories/comparisons, line/area for trends over time, pie for single composition (≤6 slices).",
+    '  • kind:\"table\" => {title?, caption?, headers:[\"Col A\",\"Col B\"], rows:[[\"r1c1\",\"r1c2\"], ...]} — 2–8 columns, 1–12 rows, short cell text.',
+    "    - Every row must contain exactly as many cells as there are headers, and every cell must be a non-empty string (write \"0\" or \"n/a\" rather than leaving a gap).",
+    "- Use visuals sparingly but meaningfully: roughly 20–40% of questions where a visual clarifies context (e.g. Maths statistics, Science experiments, Geography data, Economics/Commerce figures). Do not force a visual on every question.",
+    "- Simple markdown tables in the prompt are still allowed for quick tabular data, but prefer the structured `visual` for any graphic-worthy dataset so the app can render a responsive, accessible chart/table.",
+    "- Keep chart data realistic and curriculum-relevant; include a caption when the visual needs interpretation (e.g. \"Source: sample experiment\").",
+    "- Visual data must support the question without giving away the answer directly.",
+    "",
+    // This block is load-bearing, not documentation. The provider used to be sent a
+    // `responseSchema`, so the field list reached the model as a decoding grammar and
+    // none of it had to be said out loud. Constrained decoding is now off (see
+    // `structuredOutputs` in `exams.ts` for the measurements that forced that), which
+    // means this text is the only description of the envelope the model ever sees.
+    // Anything dropped from here comes back as a zod failure that costs a whole chunk.
+    "Output format:",
+    "- Return ONLY a JSON object — no code fence, no commentary before or after it.",
+    `- Shape: {"title": string, "questions": [ ... ]}, with exactly ${params.questionCount} entries in "questions".`,
+    "- Every question object must contain ALL of these keys, using null where a key does not apply:",
+    "  type, prompt, options, correctOptionIndex, correctBool, acceptableAnswers, pairs, points, hint, explanation, workedExample, visual",
+    `- "type" is one of: ${params.questionTypes.map((t) => `"${t}"`).join(", ")}.`,
+    '- "prompt" is a non-empty string. "options" is an array of strings for multiple choice, else null. "correctOptionIndex" is a 0-based integer or null. "correctBool" is a boolean or null. "acceptableAnswers" is an array of strings or null. "pairs" is an array of {"left": string, "right": string} or null. "points" is an integer.',
+    '- "hint", "explanation" and "workedExample" are strings or null, per the rules above. "visual" is null or one of the chart/table objects described above.',
+    // The repetition collapse this guards against is a decoding pathology, not a
+    // misunderstanding, so the instruction is not expected to carry the fix on its own
+    // — it is the cheap half of a two-part guard whose other half is `clampProse`.
+    "- Never repeat a phrase or sentence. State each step once, then move on and close the string. Repeated text is a failure, not thoroughness.",
   ].join("\n");
 }
 

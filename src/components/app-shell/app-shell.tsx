@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import {
   BanknoteIcon,
@@ -147,7 +147,14 @@ export function AppShell({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const groups = NAV[user.role].groups;
+
+  const handleLogout = async () => {
+    await logout();
+    router.push("/login");
+    router.refresh();
+  };
 
   return (
     <SidebarProvider>
@@ -218,7 +225,7 @@ export function AppShell({
             <SidebarMenuItem>
               <SidebarMenuButton
                 tooltip="Sign out"
-                onClick={() => void logout()}
+                onClick={() => void handleLogout()}
               >
                 <LogOutIcon className="size-4" />
                 <span>Sign out</span>

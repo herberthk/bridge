@@ -75,7 +75,7 @@ export async function POST(
         },
       ],
       output: Output.object({ schema: verdictSchema }),
-      maxOutputTokens: 2000,
+      maxOutputTokens: 2_000,
     });
     verdict = result.output;
     const usage = result.usage;
