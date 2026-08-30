@@ -89,6 +89,33 @@ export function reserveForGeneration(estimatedTokens: number): number {
   return estimatedTokens * GENERATION_RESERVE_MULTIPLIER;
 }
 
+/**
+ * Rough pre-flight estimate for revising n questions on the review screen.
+ *
+ * Costed higher per question than generation because a revision pays for the
+ * question twice: the stored version goes in as JSON so the model can see which
+ * fields exist, and the whole rewrite comes back out. Generation only pays for the
+ * output. The flat term is the instruction block, which is nearly the generation
+ * one — the maths, visual and type rules are shared verbatim.
+ */
+export function estimateRevisionTokens(questionCount: number): number {
+  return questionCount * 1200 + 1500;
+}
+
+/**
+ * Head-room on a revision, including both its input allowance and output ceiling.
+ *
+ * `reviseQuestions` can accept up to the full configured output cap after also
+ * sending the stored questions and instructions as input. Reserving four times the
+ * estimate keeps the eventual debit within the amount that passed pre-flight.
+ */
+export const REVISION_RESERVE_MULTIPLIER = 4;
+
+/** Tokens a wallet must hold before a revision is allowed to start. */
+export function reserveForRevision(estimatedTokens: number): number {
+  return estimatedTokens * REVISION_RESERVE_MULTIPLIER;
+}
+
 /** Rough pre-flight estimate for AI-grading an attempt of n answers. */
 export function estimateGradingTokens(questionCount: number): number {
   return questionCount * 500 + 800;

@@ -8,7 +8,7 @@ import {
 } from "ai";
 import type { JSONValue, LanguageModelCallEndEvent } from "ai";
 
-import { textModel, textProModel, modelIds } from "@/server/ai/provider";
+import { modelIds } from "@/server/ai/provider";
 import {
   chunkDocumentText,
   examGenerationInstructions,
@@ -21,6 +21,7 @@ import {
   examsCol,
   usersCol,
 } from "@/server/firebase/collections";
+import { adminDb } from "@/server/firebase/admin";
 import { writeAudit } from "@/server/services/audit";
 import {
   assertCanAfford,
@@ -43,8 +44,11 @@ import type {
 } from "@/lib/schemas/exam";
 import { examOutputSchema } from "@/lib/schemas/exam";
 import type { Difficulty } from "@/lib/constants";
+import { mathifyCell, repairMath } from "@/lib/exam/latex";
+import { isAssignGated, readReview, reviewProgress } from "@/lib/exam/review";
 import { estimateGenerationTokens, reserveForGeneration } from "@/lib/pricing";
 import type { Question } from "@/types/firestore";
+import { vertex } from "@/lib/vertext";
 
 export class ExamsServiceError extends Error {
   constructor(
@@ -291,7 +295,7 @@ const MAX_VISUAL_JSON_CHARS = 4_000;
  * Pinning `low` bounds it. It cannot remove it, which is why
  * `estimateOutputTokens` is anchored on a total that includes reasoning.
  */
-function thinkingOptions(modelId: string): Record<string, JSONValue> {
+export function thinkingOptions(modelId: string): Record<string, JSONValue> {
   // Leading path segment tolerated (`models/gemini-3.7-flash`) because the SDK
   // accepts that form — its own generation patterns are anchored `(^|\/)gemini-`.
   // Anchoring at the string start instead would send a prefixed 3.x id down the
@@ -712,6 +716,17 @@ export function clampProse(value: unknown): string | null {
 }
 
 /**
+ * `clampProse`, then LaTeX repair — in that order, because both cuts above land
+ * at an arbitrary character and can fall inside a `$…$` span or a `\begin{cases}`
+ * block. Repairing first and truncating second would reintroduce exactly the
+ * unbalanced maths this is here to prevent.
+ */
+export function repairProse(value: unknown): string | null {
+  const text = clampProse(value);
+  return text === null ? null : repairMath(text) || null;
+}
+
+/**
  * Narrow an AI-supplied visual to something Firestore will accept and the
  * renderer can trust. Returns null whenever the payload isn't worth persisting.
  */
@@ -756,10 +771,17 @@ export function sanitizeVisual(v: unknown): Question["visual"] {
     return withinSizeCap(clean);
   }
   if (obj.kind === "table") {
+    // `mathifyCell` is applied *after* the length cap on purpose. A header such
+    // as `\sum x^2` is notation the model wrote without delimiters, and the
+    // renderer has no way to tell it apart from prose — so it reached students as
+    // literal backslashes. Wrapping it here costs a few characters over the cap,
+    // which is markup rather than content, and the whole visual is still measured
+    // against `MAX_VISUAL_JSON_CHARS` below.
     const headers = Array.isArray(obj.headers)
       ? (obj.headers as unknown[])
           .filter((h): h is string => typeof h === "string" && h.trim() !== "")
           .slice(0, 8)
+          .map((h) => mathifyCell(h.slice(0, 100)) || h.trim())
       : [];
     if (headers.length < 2) return null;
     // Each row is rewrapped as `{ cells }`: Firestore rejects an array whose
@@ -778,7 +800,9 @@ export function sanitizeVisual(v: unknown): Question["visual"] {
         if (!raw) return null;
         const cells = Array.from({ length: headers.length }, (_, i) => {
           const cell = raw[i];
-          return cell === undefined || cell === null ? "" : String(cell).trim().slice(0, 100);
+          if (cell === undefined || cell === null) return "";
+          const text = String(cell).trim().slice(0, 100);
+          return mathifyCell(text) || text;
         });
         return cells.some((c) => c !== "") ? { cells } : null;
       })
@@ -793,7 +817,7 @@ export function sanitizeVisual(v: unknown): Question["visual"] {
 }
 
 /** Normalize provider usage into a total plus an input/output split. */
-function readUsage(
+export function readUsage(
   usage:
     | { totalTokens?: number; inputTokens?: number; outputTokens?: number }
     | undefined,
@@ -927,7 +951,7 @@ export async function generateExam(
     },
   ): Promise<{ out: ExamOutput; tokens: number; inputTokens: number; outputTokens: number }> {
     const modelId = opts.useProFallback ? modelIds.textPro() : modelIds.text();
-    const model = opts.useProFallback ? textProModel() : textModel();
+    const model = vertex(modelId);
     const estOutput = estimateOutputTokens(params);
     const prompt = examGenerationPrompt(
       params,
@@ -1396,18 +1420,23 @@ export async function generateExam(
   const questions: Question[] = output.questions.map((q, i) => ({
     id: `q${i + 1}`,
     type: q.type,
-    prompt: q.prompt,
-    options: q.options ?? null,
+    prompt: repairMath(q.prompt),
+    options: q.options ? q.options.map(repairMath) : null,
     correctOptionIndex: q.correctOptionIndex ?? null,
     correctBool: q.correctBool ?? null,
+    // Deliberately *not* repaired. These are compared against typed answers via
+    // `normalizeAnswer`, so wrapping `9/5` as `$\frac{9}{5}$` would stop a correct
+    // answer from scoring.
     acceptableAnswers: q.acceptableAnswers ?? null,
     pairs: q.pairs
-      ? q.pairs.map((p) => ({ left: String(p.left ?? ""), right: String(p.right ?? "") })).filter((p) => p.left && p.right)
+      ? q.pairs
+          .map((p) => ({ left: repairMath(p.left ?? ""), right: repairMath(p.right ?? "") }))
+          .filter((p) => p.left && p.right)
       : null,
     points: typeof q.points === "number" && Number.isFinite(q.points) ? q.points : 1,
-    hint: clampProse(q.hint),
-    explanation: clampProse(q.explanation),
-    workedExample: clampProse(q.workedExample),
+    hint: repairProse(q.hint),
+    explanation: repairProse(q.explanation),
+    workedExample: repairProse(q.workedExample),
     visual: sanitizeVisual(q.visual),
   }));
 
@@ -1429,6 +1458,18 @@ export async function generateExam(
       generationInputTokens: inputTokensUsed,
       generationOutputTokens: outputTokensUsed,
       gradingTokens: 0,
+      revisionTokens: 0,
+    },
+    // Written at creation so the review screen and the assign gate read a real
+    // object on every new exam, and only exams that predate this feature take the
+    // `readReview` fallback path.
+    review: {
+      approvedIds: [],
+      revisedCount: 0,
+      approvedAt: null,
+      approvedBy: null,
+      overriddenAt: null,
+      updatedAt: null,
     },
     createdAt: now,
     updatedAt: now,
@@ -1548,6 +1589,32 @@ export async function assignExam(
     throw new ExamsServiceError("This exam belongs to another school.", 403);
   }
 
+  /**
+   * The review gate.
+   *
+   * Enforced here rather than only in the UI because the assign dialog is not the
+   * only caller — a stale tab, a replayed form post and a future bulk-assign all
+   * arrive at this function, and "the button was disabled" is not a permission.
+   *
+   * `isAssignGated` limits this to `draft` exams: anything already `scheduled` or
+   * `active` was assigned before this screen existed, so gating it now would fault
+   * work that was legitimate when it was done.
+   */
+  const assertReviewGate = (
+    candidate: Pick<ExamDoc, "status" | "questions" | "review">,
+  ): boolean => {
+    const candidateGated = isAssignGated(candidate);
+    if (candidateGated && !input.acknowledgeUnreviewed) {
+      const { approved, total } = reviewProgress(candidate.questions, candidate.review);
+      throw new ExamsServiceError(
+        `Review the questions before assigning — ${approved} of ${total} approved.`,
+        409,
+      );
+    }
+    return candidateGated;
+  };
+  assertReviewGate(exam);
+
   // Enforce that every referenced student actually belongs to this admin
   // (same school / standalone household). Prevents assigning exams to
   // arbitrary student ids across the platform.
@@ -1573,7 +1640,6 @@ export async function assignExam(
     );
   }
 
-  const now = FieldValue.serverTimestamp();
   let scheduledAt: Timestamp | null = null;
   if (input.scheduledFor) {
     const parsedMs = Date.parse(input.scheduledFor);
@@ -1582,57 +1648,96 @@ export async function assignExam(
     }
     scheduledAt = Timestamp.fromMillis(parsedMs);
   }
-  const base: WriteModel<AttemptDoc> = {
-    examId: input.examId,
-    studentId: "",
-    schoolId: exam.schoolId,
-    status: "pending",
-    scheduledFor: scheduledAt,
-    startedAt: null,
-    submittedAt: null,
-    autoSubmitted: false,
-    timeSpentSeconds: null,
-    answers: [],
-    score: null,
-    violationsCount: 0,
-    warningsIssued: 0,
-    recordings: { cameraPath: null, screenPath: null },
-    gradedAt: null,
-    feedback: null,
-    retakeOf: null,
-    retakeAuthorizedBy: null,
-    createdAt: now,
-    updatedAt: now,
-  };
+  // The exam status is the question-edit lock. Reading it, creating attempts and
+  // leaving draft in one transaction means `saveQuestions` cannot commit between
+  // the first attempt write and the status transition.
+  const assignment = await adminDb().runTransaction(async (tx) => {
+    const lockedExamRef = examDoc(input.examId);
+    const lockedExamSnap = await tx.get(lockedExamRef);
+    if (!lockedExamSnap.exists) throw new ExamsServiceError("Exam not found.", 404);
+    const lockedExam = lockedExamSnap.data()!;
+    if (
+      actor.role === "admin" &&
+      lockedExam.schoolId &&
+      lockedExam.schoolId !== actor.schoolId
+    ) {
+      throw new ExamsServiceError("This exam belongs to another school.", 403);
+    }
+    const gated = assertReviewGate(lockedExam);
 
-  // Skip students who already have an open/unfinished attempt for this exam.
-  // One query per chunk instead of one per student (N+1 → N/30).
-  const openStatuses = ["pending", "in_progress", "submitted"] as const;
-  const hasOpenAttempt = new Set<string>();
-  for (let i = 0; i < input.studentIds.length; i += CHUNK) {
-    const chunk = input.studentIds.slice(i, i + CHUNK);
-    const existing = await attemptsCol()
-      .where("examId", "==", input.examId)
-      .where("studentId", "in", chunk)
-      .where("status", "in", [...openStatuses])
-      .get();
-    existing.docs.forEach((d) => hasOpenAttempt.add(d.data().studentId as string));
-  }
+    // Skip students who already have an open/unfinished attempt for this exam.
+    // These reads share the transaction with the writes, preventing two concurrent
+    // assignments from creating duplicate open attempts.
+    const openStatuses = ["pending", "in_progress", "submitted"] as const;
+    const hasOpenAttempt = new Set<string>();
+    for (let i = 0; i < input.studentIds.length; i += CHUNK) {
+      const chunk = input.studentIds.slice(i, i + CHUNK);
+      const existing = await tx.get(
+        attemptsCol()
+          .where("examId", "==", input.examId)
+          .where("studentId", "in", chunk)
+          .where("status", "in", [...openStatuses]),
+      );
+      existing.docs.forEach((d) => hasOpenAttempt.add(d.data().studentId as string));
+    }
 
-  let created = 0;
-  for (const studentId of input.studentIds) {
-    if (hasOpenAttempt.has(studentId)) continue;
+    const studentIds = input.studentIds.filter((id) => !hasOpenAttempt.has(id));
+    if (studentIds.length === 0) return { created: 0, gated };
 
-    await attemptsCol().add({ ...base, studentId });
-    created += 1;
-  }
+    const now = FieldValue.serverTimestamp();
+    const base: WriteModel<AttemptDoc> = {
+      examId: input.examId,
+      studentId: "",
+      schoolId: lockedExam.schoolId,
+      status: "pending",
+      scheduledFor: scheduledAt,
+      startedAt: null,
+      submittedAt: null,
+      autoSubmitted: false,
+      timeSpentSeconds: null,
+      answers: [],
+      score: null,
+      violationsCount: 0,
+      warningsIssued: 0,
+      recordings: { cameraPath: null, screenPath: null },
+      gradedAt: null,
+      feedback: null,
+      retakeOf: null,
+      retakeAuthorizedBy: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    for (const studentId of studentIds) {
+      tx.create(attemptsCol().doc(), { ...base, studentId });
+    }
 
-  if (created > 0) {
-    await examDoc(input.examId).update({
-      status: exam.status === "draft" ? "scheduled" : exam.status,
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-  }
+    const nextStatus = lockedExam.status === "draft" ? "scheduled" : lockedExam.status;
+    // Stamp the override on the document, not just the audit log. The library and
+    // the review screen both show whether an exam went out unreviewed, and an admin
+    // looking at a paper a student is already sitting should not have to read the
+    // audit trail to find that out.
+    //
+    // Written as a whole `review` object rather than as `review.overriddenAt` dotted
+    // paths: the field is optional on `ExamDoc`, so a dotted update would not
+    // typecheck against `UpdateData<ExamDoc>`.
+    if (gated) {
+      const stampedAt = new Date().toISOString();
+      tx.update(lockedExamRef, {
+        status: nextStatus,
+        review: {
+          ...readReview(lockedExam.review),
+          overriddenAt: stampedAt,
+          updatedAt: stampedAt,
+        },
+        updatedAt: now,
+      });
+    } else {
+      tx.update(lockedExamRef, { status: nextStatus, updatedAt: now });
+    }
+
+    return { created: studentIds.length, gated };
+  });
+  const { created, gated } = assignment;
 
   await writeAudit({
     actorId: actor.uid,
@@ -1640,7 +1745,11 @@ export async function assignExam(
     action: "exam.assigned",
     targetType: "exam",
     targetId: input.examId,
-    meta: { students: created, scheduledFor: input.scheduledFor },
+    meta: {
+      students: created,
+      scheduledFor: input.scheduledFor,
+      ...(gated && created > 0 ? { unreviewedOverride: true } : {}),
+    },
   });
 
   return created;

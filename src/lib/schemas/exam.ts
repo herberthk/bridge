@@ -228,11 +228,57 @@ export const examOutputSchema = z.object({
 export type ExamOutput = z.infer<typeof examOutputSchema>;
 export type QuestionOutput = z.infer<typeof questionOutput>;
 
+/**
+ * What a revision call returns: the same question shape, plus the id it revises.
+ *
+ * The id is required and echoed back rather than inferred from array position.
+ * A revision request carries a subset of the paper — "questions 4, 11 and 27" —
+ * and a model asked for three revisions occasionally returns two, or reorders
+ * them. Positional matching would then write question 11's replacement over
+ * question 4, which is the one failure mode of this feature that silently
+ * corrupts an exam instead of erroring.
+ *
+ * `changeNote` is the model's one-line account of what it did, shown above the
+ * diff. It is presentational, so it is `.catch(null)`: a malformed note must not
+ * cost the revision it describes.
+ */
+export const questionRevisionOutputSchema = z.object({
+  questions: z
+    .array(
+      questionOutput.extend({
+        id: z.string().min(1),
+        /**
+         * Nullable here, where generation defaults it to 1.
+         *
+         * Generation has nothing to preserve, so 1 is a sane floor. A revision
+         * does: a model that simply omits `points` while rewriting the wording of
+         * a 5-mark essay would re-weight it to 1, and re-weighting is the kind of
+         * change a reviewer reading a diff of the *prompt* has no reason to look
+         * for. Null means "unchanged", and the mapper carries the stored value.
+         */
+        points: z.number().int().min(1).max(50).nullable().default(null).catch(null),
+        changeNote: z.string().nullable().default(null).catch(null),
+      }),
+    )
+    .min(1),
+});
+export type QuestionRevisionOutput = z.infer<typeof questionRevisionOutputSchema>;
+export type RevisedQuestionOutput = QuestionRevisionOutput["questions"][number];
+
 /* ── Assignment / scheduling ────────────────────────────────── */
 
 export const assignExamSchema = z.object({
   examId: z.string().min(1),
   studentIds: z.array(z.string().min(1)).min(1, "Select at least one student"),
   scheduledFor: z.string().datetime().nullable().default(null),
+  /**
+   * Set only when the reviewer has confirmed the "assign anyway" dialog on a draft
+   * exam whose questions are not all approved.
+   *
+   * Defaults to false so that every existing caller — and any future one that
+   * forgets this field — gets the gate rather than bypasses it. A permission this
+   * shape has to fail closed.
+   */
+  acknowledgeUnreviewed: z.boolean().default(false),
 });
 export type AssignExamInput = z.infer<typeof assignExamSchema>;

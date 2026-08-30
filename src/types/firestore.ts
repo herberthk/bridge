@@ -218,6 +218,44 @@ export interface ExamUsage {
   generationInputTokens: number;
   generationOutputTokens: number;
   gradingTokens: number;
+  /**
+   * Tokens spent revising questions on the review screen, after generation.
+   *
+   * Optional: exams generated before the review screen existed have no such
+   * field, and Firestore returns those docs with the key simply absent.
+   */
+  revisionTokens?: number;
+}
+
+/**
+ * Reviewer sign-off, written by the review screen rather than by generation.
+ *
+ * Optional on `ExamDoc` for the same reason `revisionTokens` is — every exam that
+ * predates the review screen would otherwise read back as malformed. Treat a
+ * missing `review` as "nothing approved yet", which is the honest state.
+ *
+ * `approvedIds` is a list of question ids rather than a count so that revising one
+ * question can withdraw *its* approval without disturbing the rest — a count would
+ * have to guess which sign-off the edit invalidated.
+ *
+ * The instants here are ISO strings, not `Timestamp`s, and deliberately so:
+ * `Serialized<T>` converts only top-level timestamp fields, so a `Timestamp` nested
+ * inside this object would reach a Client Component as an ISO string while still
+ * being *typed* as a Timestamp. These are display and audit values that nothing
+ * range-queries, so storing them as strings keeps the type honest on both sides of
+ * the boundary.
+ */
+export interface ExamReview {
+  /** Question ids the reviewer has signed off. */
+  approvedIds: string[];
+  /** Questions changed since generation, by AI revision or by hand. */
+  revisedCount: number;
+  /** ISO instant at which every question in the exam had been approved. */
+  approvedAt: string | null;
+  approvedBy: string | null;
+  /** ISO instant a reviewer assigned the exam with questions still unapproved. */
+  overriddenAt: string | null;
+  updatedAt: string | null;
 }
 
 export interface ExamDoc {
@@ -231,6 +269,8 @@ export interface ExamDoc {
   createdBy: string;
   schoolId: string | null;
   usage: ExamUsage;
+  /** Absent on exams generated before the review screen shipped. */
+  review?: ExamReview | null;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

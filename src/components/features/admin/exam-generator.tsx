@@ -33,6 +33,7 @@ import {
   EyeIcon,
   ClockIcon,
   FileQuestionIcon,
+  ClipboardCheckIcon,
 } from "lucide-react";
 
 import { examParamsSchema, type ExamParamsInput } from "@/lib/schemas/exam";
@@ -91,6 +92,8 @@ import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Markdown } from "@/components/markdown";
+import { QuestionVisualView } from "@/components/features/exam/question-visual";
+import type { QuestionVisual } from "@/types/firestore";
 
 interface UploadedDoc {
   documentId: string;
@@ -107,6 +110,13 @@ interface PreviewQuestion {
   prompt: string;
   points: number;
   options?: string[] | null;
+  /**
+   * Present on the wire and previously dropped here, which made the preview
+   * silently unlike the paper: a chart or table question showed only its prompt,
+   * so the one screen a teacher checks before assigning could not surface a
+   * malformed visual.
+   */
+  visual?: QuestionVisual | null;
 }
 
 import type { z } from "zod";
@@ -1163,8 +1173,13 @@ export function ExamGenerator() {
                   </div>
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-2">
-                  <Button variant="secondary" className="rounded-xl bg-white text-primary hover:bg-white/90 shadow-glow" onClick={() => router.push("/admin/exams")}><EyeIcon className="size-4" /> Open in library</Button>
-                  <Button variant="outline" className="rounded-xl border-white/30 bg-white/10 text-white backdrop-blur hover:bg-white/20" onClick={() => router.push(`/admin/exams?assign=${result.examId}`)}><GraduationCapIcon className="size-4" /> Assign</Button>
+                  {/* Review, then assign — the primary path out of a fresh generation.
+                      This used to be an "Assign" button carrying `?assign=<id>`, a
+                      deep link the library never read: it opened the table with no
+                      dialog. The review screen is where assignment now lives, and it
+                      is reachable by a route that exists. */}
+                  <Button variant="secondary" className="rounded-xl bg-white text-primary hover:bg-white/90 shadow-glow" onClick={() => router.push(`/admin/exams/${result.examId}/review`)}><ClipboardCheckIcon className="size-4" /> Review &amp; assign</Button>
+                  <Button variant="outline" className="rounded-xl border-white/30 bg-white/10 text-white backdrop-blur hover:bg-white/20" onClick={() => router.push("/admin/exams")}><EyeIcon className="size-4" /> Open in library</Button>
                 </div>
               </div>
             </div>
@@ -1182,18 +1197,29 @@ export function ExamGenerator() {
                         <Badge variant="secondary" className="tabular-nums">Q{idx + 1} · {q.points} {q.points === 1 ? "mark" : "marks"}</Badge>
                         <Badge variant="outline" className="capitalize">{q.type.replace(/_/g, " ")}</Badge>
                       </div>
-                      <div className="prose prose-sm mt-3 max-w-none dark:prose-invert"><Markdown>{q.prompt}</Markdown></div>
+                      {/* `prose-bridge`, not `prose prose-sm dark:prose-invert`:
+                          `@tailwindcss/typography` is not installed, so every
+                          `prose-*` class here was inert and the preview rendered
+                          with none of the spacing the exam runner has. */}
+                      <div className="mt-3 text-sm"><Markdown className="prose-bridge">{q.prompt}</Markdown></div>
+                      {q.visual ? <QuestionVisualView visual={q.visual} /> : null}
                       {q.options && q.options.length > 0 && (
                         <ul className="mt-3 grid gap-2 sm:grid-cols-2">
                           {q.options.map((opt, i) => (
-                            <li key={i} className="flex gap-2 rounded-xl border bg-muted/30 px-3 py-2 text-sm"><span className="font-bold text-muted-foreground">{String.fromCharCode(65 + i)}.</span><span className="line-clamp-2"><Markdown>{opt}</Markdown></span></li>
+                            <li key={i} className="flex gap-2 rounded-xl border bg-muted/30 px-3 py-2 text-sm">
+                              <span className="font-bold text-muted-foreground">{String.fromCharCode(65 + i)}.</span>
+                              {/* No `line-clamp-2` and no `<span>` wrapper: the clamp
+                                  cut rendered KaTeX mid-formula, and `Markdown`
+                                  renders a `<div>`, which a `<span>` may not hold. */}
+                              <div className="min-w-0 flex-1"><Markdown className="prose-bridge">{opt}</Markdown></div>
+                            </li>
                           ))}
                         </ul>
                       )}
                     </motion.div>
                   ))}
                   {result.questions > previewQuestions.length && (
-                    <p className="text-center text-xs text-muted-foreground">Showing {previewQuestions.length} of {result.questions} — open library to see all.</p>
+                    <p className="text-center text-xs text-muted-foreground">Showing {previewQuestions.length} of {result.questions} — review to see and edit every question.</p>
                   )}
                 </div>
               ) : previewFailed ? (
@@ -1215,7 +1241,7 @@ export function ExamGenerator() {
               )}
 
               <div className="mt-6 flex flex-wrap gap-2">
-                <Button onClick={() => router.push("/admin/exams")} className="shadow-glow rounded-xl"><EyeIcon /> View full exam</Button>
+                <Button onClick={() => router.push(`/admin/exams/${result.examId}/review`)} className="shadow-glow rounded-xl"><ClipboardCheckIcon /> Review all {result.questions} questions</Button>
                 <Button variant="outline" onClick={() => { setResult(null); setPreviewQuestions(null); }} className="rounded-xl">Create another</Button>
               </div>
             </div>

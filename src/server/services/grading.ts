@@ -3,10 +3,11 @@ import { generateText, Output } from "ai";
 import { z } from "zod";
 import React from "react";
 
-import { textModel, modelIds } from "@/server/ai/provider";
+import { modelIds } from "@/server/ai/provider";
 import { attemptDoc, examDoc, userDoc } from "@/server/firebase/collections";
 import { writeAudit } from "@/server/services/audit";
 import { consumeTokens } from "@/server/services/billing";
+import { thinkingOptions } from "@/server/services/exams";
 import { appUrl, sendTemplateEmail } from "@/server/services/email";
 import { ExamResultsEmail } from "@/emails/templates";
 import type {
@@ -15,6 +16,7 @@ import type {
   AttemptFeedback,
   ExamDoc,
 } from "@/types/firestore";
+import { vertex } from "@/lib/vertext";
 
 const essayGradeSchema = z.object({
   grades: z.array(
@@ -58,7 +60,7 @@ export async function gradeAttemptWithAi(attemptId: string): Promise<void> {
   let tokensUsed = 0;
   try {
     const result = await generateText({
-      model: textModel(),
+      model: vertex("gemini-3.7-flash"),
       instructions: [
         "You are a fair, encouraging Ugandan-curriculum examiner grading exam answers.",
         "Grade each answer against its marks (points). Be consistent and objective.",
@@ -83,6 +85,9 @@ export async function gradeAttemptWithAi(attemptId: string): Promise<void> {
       output: Output.object({ schema: essayGradeSchema }),
       temperature: 0.3,
       maxOutputTokens: 12_000,
+      providerOptions: {
+        google: { thinkingConfig: thinkingOptions("gemini-3.7-flash") },
+      },
     });
     output = result.output;
     const usage = result.usage;

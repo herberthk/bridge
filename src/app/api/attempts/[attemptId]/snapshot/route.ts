@@ -10,6 +10,7 @@ import {
   AttemptsServiceError,
 } from "@/server/services/attempts";
 import { consumeTokens } from "@/server/services/billing";
+import { vertex } from "@/lib/vertext";
 
 const bodySchema = z.object({
   imageBase64: z.string().min(64).max(8 * 1024 * 1024),
@@ -51,9 +52,10 @@ export async function POST(
   try {
     const bytes = Buffer.from(parsed.data.imageBase64, "base64");
     const result = await generateText({
-      model: google()(
-        process.env.BRIDGE_MODEL_SNAPSHOT ?? "gemini-3.5-flash-lite",
-      ),
+      model: vertex("gemini-3.7-flash"),
+      // google()(
+      //   process.env.BRIDGE_MODEL_SNAPSHOT ?? "gemini-3.5-flash-lite",
+      // ),
       instructions: [
         "You are an exam proctoring vision model. Analyze this webcam snapshot of a student taking an online exam.",
         "verdict: ok = one student visibly working normally; warning = minor concern; violation = clear problem.",

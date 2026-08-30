@@ -29,6 +29,23 @@ export interface ExamSessionState {
   answeredCount(): number;
 }
 
+/**
+ * True for every answer shape the store can hold, false for "not attempted".
+ *
+ * Fill-in-the-blank and matching answers are arrays of per-slot strings, and an
+ * array of empty strings is exactly what an untouched question looks like — so a
+ * bare `!== ""` check counted every multi-blank question as answered the moment
+ * the student focused one of its inputs.
+ */
+export function isAnswered(
+  value: string | string[] | number | boolean | null | undefined,
+): boolean {
+  if (value === undefined || value === null) return false;
+  if (Array.isArray(value)) return value.some((entry) => String(entry ?? "").trim() !== "");
+  if (typeof value === "string") return value.trim() !== "";
+  return true;
+}
+
 /** Exam session state — one attempt per mount; deliberately not persisted. */
 export const useExamSession = create<ExamSessionState>((set, get) => ({
   attemptId: null,
@@ -72,6 +89,6 @@ export const useExamSession = create<ExamSessionState>((set, get) => ({
 
   answeredCount: () => {
     const { answers } = get();
-    return Object.values(answers).filter((v) => v !== "" && v !== null && v !== undefined).length;
+    return Object.values(answers).filter(isAnswered).length;
   },
 }));
