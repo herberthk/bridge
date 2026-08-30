@@ -49,6 +49,7 @@ import {
 import { createSchoolWithOwner } from "@/server/services/schools";
 import { renderAttemptReport } from "@/server/services/reports";
 import type { SessionUser } from "@/server/auth/session";
+import { vertex } from "@/lib/vertext";
 
 let passed = 0;
 function ok(name: string, condition: boolean, detail?: string) {
@@ -72,7 +73,7 @@ async function main() {
 
   // 1. Gemini connectivity (tiny call).
   const ping = await generateText({
-    model: textModel(),
+    model: vertex("gemini-3.7-flash"),
     prompt: "Reply with exactly: OK",
     maxOutputTokens: 200,
   });
@@ -167,7 +168,14 @@ async function main() {
   ok("Ledger transaction written", txs.size >= 2, `${txs.size} entries`);
 
   // 5. Assign + start; verify answers are stripped from the client payload.
-  const created1 = await assignExam(adminSession, { examId: exam.id, studentIds: [student.id], scheduledFor: null });
+  const created1 = await assignExam(adminSession, {
+    examId: exam.id,
+    studentIds: [student.id],
+    scheduledFor: null,
+    // The exam is a fresh draft with nothing approved, so the review gate applies.
+    // The flow under test here is assignment, not review, so it takes the override.
+    acknowledgeUnreviewed: true,
+  });
   ok("Exam assigned", created1 === 1);
   const pending = (await attemptsCol().where("examId", "==", exam.id).limit(1).get()).docs[0]!;
   const attempt1Id = pending.id;

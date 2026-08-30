@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { toast } from "sonner";
 import { ref, uploadBytesResumable } from "firebase/storage";
 import {
@@ -23,12 +23,14 @@ import {
 
 import { authClient, storageClient } from "@/lib/firebase/client";
 import { Markdown } from "@/components/markdown";
-import { useExamSession } from "@/stores/exam-session";
+import { isAnswered, useExamSession } from "@/stores/exam-session";
 import { useProctoring } from "@/components/features/exam/proctoring";
 import { ExamOnboarding } from "@/components/features/exam/exam-onboarding";
 import { QuestionVisualView } from "@/components/features/exam/question-visual";
 import type { ExamSessionPolicy, StartedExam } from "@/lib/schemas/attempt";
 import type { SafeQuestion } from "@/lib/schemas/attempt";
+import { summarizeQuestion } from "@/lib/exam/latex";
+import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress, ProgressIndicator, ProgressTrack } from "@/components/ui/progress";
@@ -47,16 +49,30 @@ import { Textarea } from "@/components/ui/textarea";
 
 /* ── Timer ring ────────────────────────────────────────────── */
 
+const WARN_AT_MS = 5 * 60_000;
+const FINAL_AT_MS = 60_000;
+
 function TimerRing({ remainingMs, totalMs }: { remainingMs: number; totalMs: number }) {
-  const pct = Math.max(0, Math.min(1, remainingMs / totalMs));
+  const pct = totalMs > 0 ? Math.max(0, Math.min(1, remainingMs / totalMs)) : 0;
   const seconds = Math.max(0, Math.ceil(remainingMs / 1000));
   const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
   const ss = String(seconds % 60).padStart(2, "0");
-  const danger = remainingMs < 5 * 60_000;
+  const danger = remainingMs < WARN_AT_MS;
+
+  // A ticking clock must not be announced every second — that would talk over
+  // the question. The band is announced instead, and only when it changes.
+  const band =
+    remainingMs <= 0
+      ? "Time is up."
+      : remainingMs < FINAL_AT_MS
+        ? "One minute remaining."
+        : remainingMs < WARN_AT_MS
+          ? "Five minutes remaining."
+          : "";
 
   return (
-    <div className="relative grid size-14 place-items-center">
-      <svg viewBox="0 0 48 48" className="absolute inset-0 -rotate-90">
+    <div className="relative grid size-14 place-items-center" role="timer" aria-label={`Time remaining ${mm}:${ss}`}>
+      <svg viewBox="0 0 48 48" className="absolute inset-0 -rotate-90" aria-hidden>
         <circle
           cx="24" cy="24" r="20" fill="none"
           className="stroke-muted" strokeWidth="4"
@@ -70,14 +86,27 @@ function TimerRing({ remainingMs, totalMs }: { remainingMs: number; totalMs: num
           style={{ transition: "stroke-dashoffset 1s linear" }}
         />
       </svg>
-      <span className={`text-xs font-semibold tabular-nums ${danger ? "text-destructive" : ""}`}>
+      <span className={`text-xs font-semibold tabular-nums ${danger ? "text-destructive" : ""}`} aria-hidden>
         {mm}:{ss}
+      </span>
+      <span className="sr-only" aria-live="assertive">
+        {band}
       </span>
     </div>
   );
 }
 
 /* ── Question inputs — premium, modern, aligned ───────────── */
+
+/** Sentence case reads better in a badge than the Title Case shared labels. */
+const TYPE_LABEL: Record<SafeQuestion["type"], string> = {
+  multiple_choice: "Multiple choice",
+  true_false: "True / False",
+  fill_in_the_blank: "Fill in the blank",
+  short_answer: "Short answer",
+  essay: "Essay",
+  matching: "Matching",
+};
 
 function InlineBlankPrompt({
   prompt,
@@ -94,29 +123,30 @@ function InlineBlankPrompt({
   // If no ____ in prompt, fall back to separate inputs rendered by caller
   if (parts.length <= 1) return null;
   return (
-    <div className="text-pretty text-[15px] leading-7 sm:text-[17px] sm:leading-8">
-      <span className="inline flex-wrap items-baseline gap-x-2 gap-y-2">
-        {parts.map((segment, idx) => (
-          <span key={idx} className="inline">
-            {segment && <Markdown className="inline [&_p]:inline [&_p]:m-0">{segment}</Markdown>}
-            {idx < parts.length - 1 && (
-              <span className="mx-1 inline-flex align-baseline">
-                <Input
-                  placeholder={`Blank ${idx + 1}`}
-                  className="h-8 w-[14ch] min-w-[10ch] rounded-full border-primary/20 bg-card px-3 text-sm shadow-card focus-visible:ring-2 sm:h-9 sm:w-[18ch]"
-                  value={Array.isArray(value) ? (value[idx] ?? "") : ""}
-                  onChange={(e) => {
-                    const arr = Array.isArray(value) ? [...value] : Array(blanks).fill("");
-                    arr[idx] = e.target.value;
-                    onChange(arr);
-                  }}
-                  aria-label={`Blank ${idx + 1}`}
-                />
-              </span>
-            )}
-          </span>
-        ))}
-      </span>
+    // The segments and their inputs flow as one sentence, so this is ordinary
+    // inline layout — the wrapper used to carry `inline` together with
+    // `flex-wrap items-baseline gap-x-2`, which is a contradiction: flex
+    // properties are inert on an inline box, so the gaps never applied and the
+    // baselines were whatever the inputs happened to sit at.
+    <div className="text-pretty text-[15px] leading-8 sm:text-[17px] sm:leading-9">
+      {parts.map((segment, idx) => (
+        <span key={idx}>
+          {segment && <Markdown className="inline [&_p]:inline [&_p]:m-0">{segment}</Markdown>}
+          {idx < parts.length - 1 && (
+            <Input
+              placeholder={`Blank ${idx + 1}`}
+              className="mx-1.5 inline-block h-8 w-[14ch] min-w-[10ch] rounded-full border-primary/20 bg-card px-3 align-baseline text-sm shadow-card focus-visible:ring-2 sm:h-9 sm:w-[18ch]"
+              value={Array.isArray(value) ? (value[idx] ?? "") : ""}
+              onChange={(e) => {
+                const arr = Array.isArray(value) ? [...value] : Array(blanks).fill("");
+                arr[idx] = e.target.value;
+                onChange(arr);
+              }}
+              aria-label={`Blank ${idx + 1}`}
+            />
+          )}
+        </span>
+      ))}
     </div>
   );
 }
@@ -142,19 +172,7 @@ function QuestionView({
       <div className="rounded-2xl border bg-card p-5 shadow-card sm:p-6">
         <div className="flex items-start justify-between gap-3">
           <Badge variant="outline" className="shrink-0 border-primary/20 bg-primary/5 text-primary">
-            {question.type === "multiple_choice"
-              ? "Multiple choice"
-              : question.type === "true_false"
-                ? "True / False"
-                : question.type === "fill_in_the_blank"
-                  ? "Fill in the blank"
-                  : question.type === "short_answer"
-                    ? "Short answer"
-                    : question.type === "essay"
-                      ? "Essay"
-                      : question.type === "matching"
-                        ? "Matching"
-                        : question.type}
+            {TYPE_LABEL[question.type] ?? question.type}
           </Badge>
           <span className="text-muted-foreground text-xs tabular-nums">{question.points} {question.points === 1 ? "mark" : "marks"}</span>
         </div>
@@ -167,8 +185,8 @@ function QuestionView({
               onChange={(arr) => onChange(arr)}
             />
           ) : (
-            <div className="text-pretty text-[15px] leading-7 sm:text-[17px] sm:leading-8">
-              <Markdown>{question.prompt}</Markdown>
+            <div className="text-pretty text-[15px] sm:text-[17px]">
+              <Markdown className="prose-bridge">{question.prompt}</Markdown>
             </div>
           )}
         </div>
@@ -180,28 +198,38 @@ function QuestionView({
       </div>
 
       {question.type === "multiple_choice" && question.options && (
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div
+          role="radiogroup"
+          aria-label="Answer options"
+          className="grid gap-3 sm:grid-cols-2"
+        >
           {question.options.map((opt, i) => {
             const selected = value === i;
             return (
               <label
                 key={i}
-                className={`group relative flex cursor-pointer items-start gap-3 rounded-2xl border p-4 pr-3 text-left transition-all duration-200 will-change-transform hover:shadow-lifted ${
+                className={cn(
+                  "group relative flex cursor-pointer items-start gap-3 rounded-2xl border p-4 pr-3 text-left transition-all duration-200 will-change-transform hover:shadow-lifted",
+                  // Keyboard users move through the options with the arrow keys,
+                  // and the radio itself is `sr-only` — without this the focused
+                  // option was completely invisible.
+                  "has-[input:focus-visible]:ring-ring/60 has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-offset-2 has-[input:focus-visible]:ring-offset-background",
                   selected
                     ? "border-primary bg-primary/6 shadow-glow"
-                    : "bg-card hover:bg-accent/40"
-                }`}
+                    : "bg-card hover:bg-accent/40",
+                )}
               >
                 <span
                   className={`grid size-8 shrink-0 place-items-center rounded-full border text-xs font-bold transition-colors ${
                     selected ? "border-primary bg-primary text-primary-foreground shadow-glow" : "border-border bg-muted text-muted-foreground group-hover:border-primary/30"
                   }`}
+                  aria-hidden
                 >
                   {String.fromCharCode(65 + i)}
                 </span>
-                <span className="min-w-0 flex-1 pt-1 text-sm leading-relaxed sm:text-[14px]">
-                  <Markdown className="inline [&_p]:inline">{opt}</Markdown>
-                </span>
+                <div className="min-w-0 flex-1 pt-1 text-sm leading-relaxed sm:text-[14px]">
+                  <Markdown className="prose-bridge">{opt}</Markdown>
+                </div>
                 <input type="radio" name={question.id} className="sr-only" checked={selected} onChange={() => onChange(i)} />
                 {selected && <span className="absolute inset-0 rounded-2xl border border-primary/20 pointer-events-none" aria-hidden />}
               </label>
@@ -211,7 +239,7 @@ function QuestionView({
       )}
 
       {question.type === "true_false" && (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3" role="radiogroup" aria-label="True or false">
           {[
             { label: "True", val: true },
             { label: "False", val: false },
@@ -221,12 +249,14 @@ function QuestionView({
               <button
                 key={opt.label}
                 type="button"
+                role="radio"
+                aria-checked={selected}
                 onClick={() => onChange(opt.val)}
                 className={`group relative rounded-2xl border px-6 py-6 text-base font-semibold transition-all duration-200 will-change-transform hover:shadow-lifted ${
                   selected ? "border-primary bg-primary text-primary-foreground shadow-glow" : "bg-card hover:bg-accent/40"
                 }`}
               >
-                <span className={`mx-auto grid size-9 place-items-center rounded-full border text-sm font-bold ${selected ? "border-white/20 bg-white/15 text-white" : "border-border bg-muted text-muted-foreground"}`}>
+                <span className={`mx-auto grid size-9 place-items-center rounded-full border text-sm font-bold ${selected ? "border-white/20 bg-white/15 text-white" : "border-border bg-muted text-muted-foreground"}`} aria-hidden>
                   {opt.label[0]}
                 </span>
                 <span className="mt-2 block">{opt.label}</span>
@@ -330,6 +360,214 @@ function QuestionView({
   );
 }
 
+/* ── Paper overview ──────────────────────────────────────── */
+
+const SEGMENT_TONE = {
+  current: "h-2.5 bg-primary shadow-glow",
+  flagged: "h-1.5 bg-amber-500",
+  answered: "h-1.5 bg-success",
+  todo: "h-1.5 bg-muted-foreground/25",
+} as const;
+
+type SegmentState = keyof typeof SEGMENT_TONE;
+
+/**
+ * Whole-paper progress strip.
+ *
+ * One fixed-size dot per question does not survive a 60-question paper: the row
+ * was wider than a phone and pushed the Next button off the footer. Segments
+ * share whatever width exists instead, so the strip reads the same at 10
+ * questions or 60.
+ *
+ * It subscribes to the store itself rather than taking `answers` as a prop. The
+ * answer map changes on every keystroke and this is the only part of the footer
+ * that has to react to that — reading it in the runner re-rendered the timer
+ * ring and every chart in the current question along with it.
+ */
+function QuestionStrip({
+  allowJump,
+  allowForward,
+  onJump,
+}: {
+  allowJump: boolean;
+  allowForward: boolean;
+  onJump: (index: number) => void;
+}) {
+  const questions = useExamSession((s) => s.questions);
+  const answers = useExamSession((s) => s.answers);
+  const flagged = useExamSession((s) => s.flagged);
+  const current = useExamSession((s) => s.current);
+
+  const states: SegmentState[] = questions.map((q, i) =>
+    i === current
+      ? "current"
+      : flagged.has(q.id)
+        ? "flagged"
+        : isAnswered(answers[q.id])
+          ? "answered"
+          : "todo",
+  );
+
+  return (
+    <div className="flex min-w-0 flex-1 items-center gap-3">
+      {allowJump ? (
+        <nav
+          aria-label="Question navigation"
+          className="flex min-w-0 flex-1 items-center gap-[3px]"
+        >
+          {questions.map((q, i) => {
+            // Forward jumps are only legitimate where the paper allows skipping;
+            // otherwise they would step over the answer-required gate that
+            // `handleNext` enforces.
+            const jumpable = i !== current && (i < current || allowForward);
+            return (
+              <button
+                key={q.id}
+                type="button"
+                disabled={!jumpable}
+                onClick={() => onJump(i)}
+                aria-current={i === current ? "step" : undefined}
+                aria-label={`Question ${i + 1}, ${states[i] === "current" ? "current question" : states[i]}`}
+                className={cn(
+                  "min-w-[3px] flex-1 rounded-full transition-all",
+                  "focus-visible:ring-ring/60 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background focus-visible:outline-none",
+                  jumpable ? "cursor-pointer hover:h-2.5" : "cursor-default",
+                  SEGMENT_TONE[states[i]!],
+                )}
+              />
+            );
+          })}
+        </nav>
+      ) : (
+        // A linear paper has nothing to navigate to, and 60 dead controls is pure
+        // noise in a screen reader — the header already announces position.
+        <div aria-hidden className="flex min-w-0 flex-1 items-center gap-[3px]">
+          {questions.map((q, i) => (
+            <span
+              key={q.id}
+              className={cn("min-w-[3px] flex-1 rounded-full transition-all", SEGMENT_TONE[states[i]!])}
+            />
+          ))}
+        </div>
+      )}
+      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+        {current + 1}/{questions.length}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Pre-submit review.
+ *
+ * `allowReviewBeforeSubmit` was in the policy type and read nowhere, so the
+ * confirmation dialog said "make sure you have answered all the questions" while
+ * the app already knew exactly which ones were blank. Only the outstanding
+ * questions are listed — a full 60-row list is not a review, it is a wall.
+ */
+function SubmitReview({
+  allowJump,
+  allowForward,
+  onJump,
+}: {
+  allowJump: boolean;
+  allowForward: boolean;
+  onJump: (index: number) => void;
+}) {
+  const questions = useExamSession((s) => s.questions);
+  const answers = useExamSession((s) => s.answers);
+  const flagged = useExamSession((s) => s.flagged);
+  const current = useExamSession((s) => s.current);
+
+  const { answered, outstanding } = useMemo(() => {
+    const rows = questions.map((q, index) => ({
+      index,
+      id: q.id,
+      answered: isAnswered(answers[q.id]),
+      flagged: flagged.has(q.id),
+      label: summarizeQuestion(q.prompt, 68),
+      points: q.points,
+    }));
+    return {
+      answered: rows.filter((r) => r.answered).length,
+      outstanding: rows.filter((r) => !r.answered || r.flagged),
+    };
+  }, [questions, answers, flagged]);
+
+  const blank = questions.length - answered;
+  const lostMarks = outstanding
+    .filter((r) => !r.answered)
+    .reduce((sum, r) => sum + (r.points ?? 0), 0);
+
+  return (
+    <div className="rounded-xl border bg-muted/20 p-3">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <Badge variant="secondary" className="tabular-nums gap-1">
+          <CheckCircle2Icon className="size-3 text-success" /> {answered} answered
+        </Badge>
+        <Badge
+          variant={blank > 0 ? "destructive" : "outline"}
+          className="tabular-nums gap-1"
+        >
+          <AlertTriangleIcon className="size-3" /> {blank} unanswered
+        </Badge>
+        {flagged.size > 0 && (
+          <Badge variant="outline" className="tabular-nums gap-1 border-amber-300 text-amber-700 dark:border-amber-900/50 dark:text-amber-300">
+            <FlagIcon className="size-3" /> {flagged.size} flagged
+          </Badge>
+        )}
+      </div>
+
+      {blank > 0 && (
+        <p className="text-muted-foreground mt-2 text-xs">
+          Unanswered questions score zero — {lostMarks} {lostMarks === 1 ? "mark" : "marks"} at
+          stake.
+        </p>
+      )}
+
+      {outstanding.length > 0 && (
+        <ul className="mt-3 max-h-48 space-y-1 overflow-y-auto pr-1">
+          {outstanding.map((row) => {
+            const body = (
+              <>
+                <span className="shrink-0 text-xs font-semibold tabular-nums">
+                  Q{row.index + 1}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                  {row.label}
+                </span>
+                {row.flagged && <FlagIcon className="size-3 shrink-0 fill-amber-500 text-amber-500" />}
+                {!row.answered && (
+                  <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-destructive">
+                    blank
+                  </span>
+                )}
+              </>
+            );
+            return (
+              <li key={row.id}>
+                {allowJump && row.index !== current && (row.index < current || allowForward) ? (
+                  <button
+                    type="button"
+                    onClick={() => onJump(row.index)}
+                    className="flex w-full items-center gap-2 rounded-lg border bg-card px-2.5 py-1.5 text-left transition-colors hover:bg-accent/40"
+                  >
+                    {body}
+                  </button>
+                ) : (
+                  <div className="flex w-full items-center gap-2 rounded-lg border bg-card/60 px-2.5 py-1.5">
+                    {body}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /* ── Draft persistence ───────────────────────────────────── */
 
 /** Session-scoped draft persistence — answers survive an accidental refresh.
@@ -395,7 +633,27 @@ export function ExamRunner({
   policy?: ExamSessionPolicy;
 }) {
   const router = useRouter();
-  const session = useExamSession();
+  // Atomic selectors, not `useExamSession()`. Subscribing to the whole store
+  // re-rendered this tree — timer ring, 60-segment strip, every chart in the
+  // current question — on each keystroke of an essay answer. The answer map is
+  // deliberately absent here: `answered` is a number, so it only fires when the
+  // count actually moves, and the parts that need the map read it themselves.
+  const sessionTitle = useExamSession((s) => s.examTitle);
+  const questions = useExamSession((s) => s.questions);
+  const currentIndex = useExamSession((s) => s.current);
+  const flagged = useExamSession((s) => s.flagged);
+  const hydrate = useExamSession((s) => s.hydrate);
+  const setAnswer = useExamSession((s) => s.setAnswer);
+  const setCurrent = useExamSession((s) => s.setCurrent);
+  const toggleFlag = useExamSession((s) => s.toggleFlag);
+  const answered = useExamSession((s) =>
+    s.questions.reduce((n, q) => n + (isAnswered(s.answers[q.id]) ? 1 : 0), 0),
+  );
+  const answerValue = useExamSession((s) => {
+    const q = s.questions[s.current];
+    return q ? s.answers[q.id] : undefined;
+  });
+  const reduceMotion = useReducedMotion();
   const effectivePolicy = useMemo(() => policy ?? DEFAULT_POLICY, [policy]);
   const [phase, setPhase] = useState<Phase>("onboarding");
   const [meta, setMeta] = useState<{
@@ -470,7 +728,7 @@ export function ExamRunner({
       }
       // Restore any in-session draft (e.g. after an accidental refresh).
       const draft = loadDraft(attemptId);
-      session.hydrate({
+      hydrate({
         attemptId,
         examTitle: data.examTitle,
         questions: data.questions,
@@ -513,7 +771,7 @@ export function ExamRunner({
       setStarting(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [attemptId, session.hydrate, rig.beginExamCapture]);
+  }, [attemptId, hydrate, rig.beginExamCapture]);
 
   // Autosave answers to sessionStorage every few seconds while in the exam.
   useEffect(() => {
@@ -709,14 +967,12 @@ export function ExamRunner({
   });
 
   // Fullscreen lock helper + navigation helpers — defined before early returns to satisfy rules-of-hooks
-  const questions = session.questions;
-  const current = questions[session.current];
-  const answered = session.answeredCount();
+  const current = questions[currentIndex];
   const progressPct = questions.length ? (answered / questions.length) * 100 : 0;
-  const answerValue = current ? session.answers[current.id] : undefined;
-  const hasAnswer = current ? (answerValue !== undefined && answerValue !== null && answerValue !== "") : false;
+  const hasAnswer = isAnswered(answerValue);
   const canGoNext = effectivePolicy.allowSkipping || hasAnswer;
-  const isLast = session.current === questions.length - 1;
+  const isLast = currentIndex === questions.length - 1;
+  const isFlagged = current ? flagged.has(current.id) : false;
 
   const reenterFullscreen = useCallback(async () => {
     try {
@@ -728,26 +984,40 @@ export function ExamRunner({
   const [confirmSubmit, setConfirmSubmit] = useState(false);
 
   const handleNext = useCallback(() => {
-    const cur = session.questions[session.current];
-    const answerNow = cur ? useExamSession.getState().answers[cur.id] : undefined;
-    const answeredNow = answerNow !== undefined && answerNow !== null && answerNow !== "";
-    const canProceed = effectivePolicy.allowSkipping || answeredNow;
-    if (!canProceed) {
+    // Read through the store rather than the render-time snapshot: the click can
+    // land in the same tick as the keystroke that answered the question.
+    const state = useExamSession.getState();
+    const cur = state.questions[state.current];
+    const answeredNow = cur ? isAnswered(state.answers[cur.id]) : false;
+    if (!effectivePolicy.allowSkipping && !answeredNow) {
       toast.error("Answer required before continuing.", { description: "This exam does not allow skipping." });
       return;
     }
-    const last = session.current === session.questions.length - 1;
-    if (last) {
+    if (state.current === state.questions.length - 1) {
       setConfirmSubmit(true);
     } else {
-      session.setCurrent(session.current + 1);
+      state.setCurrent(state.current + 1);
     }
-  }, [effectivePolicy.allowSkipping, session]);
+  }, [effectivePolicy.allowSkipping]);
 
   const handlePrevious = useCallback(() => {
     if (effectivePolicy.preventBacktrack) return;
-    session.setCurrent(session.current - 1);
-  }, [effectivePolicy.preventBacktrack, session]);
+    setCurrent(useExamSession.getState().current - 1);
+  }, [effectivePolicy.preventBacktrack, setCurrent]);
+
+  /** Jump target from the strip or the review list. Blocked outright in a linear
+   *  paper; forward only where skipping is allowed, so a jump can never step over
+   *  the answer-required gate `handleNext` enforces. */
+  const jumpTo = useCallback(
+    (index: number) => {
+      if (effectivePolicy.preventBacktrack) return;
+      const state = useExamSession.getState();
+      if (index === state.current) return;
+      if (index > state.current && !effectivePolicy.allowSkipping) return;
+      state.setCurrent(index);
+    },
+    [effectivePolicy.preventBacktrack, effectivePolicy.allowSkipping],
+  );
 
   // Warn on manual close/refresh mid-exam.
   useEffect(() => {
@@ -816,9 +1086,15 @@ export function ExamRunner({
               <SparklesIcon className="size-4" />
             </span>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold tracking-tight">{session.examTitle}</p>
-              <p className="hidden text-xs tabular-nums text-muted-foreground sm:block">
-                Question {session.current + 1} of {questions.length} · {answered}/{questions.length} answered
+              <p className="truncate text-sm font-semibold tracking-tight">{sessionTitle || examTitle}</p>
+              {/* `sr-only` rather than `hidden` on small screens: this is the
+                  only place a screen reader learns where it is in the paper, and
+                  the strip below is decorative in a linear exam. */}
+              <p
+                aria-live="polite"
+                className="text-xs tabular-nums text-muted-foreground max-sm:sr-only"
+              >
+                Question {currentIndex + 1} of {questions.length} · {answered}/{questions.length} answered
               </p>
             </div>
           </div>
@@ -886,15 +1162,18 @@ export function ExamRunner({
         <AnimatePresence mode="wait">
           <motion.div
             key={current?.id ?? "q"}
-            initial={{ opacity: 0, x: 18, filter: "blur(4px)" }}
-            animate={{ opacity: 1, x: 0, filter: "blur(0px)" }}
-            exit={{ opacity: 0, x: -18, filter: "blur(4px)" }}
-            transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+            // The blur/slide is a flourish; a reduced-motion request has to reach
+            // it in JS, because the CSS media query in `globals.css` cannot touch
+            // an animation motion/react drives frame by frame.
+            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, x: 18, filter: "blur(4px)" }}
+            animate={reduceMotion ? { opacity: 1 } : { opacity: 1, x: 0, filter: "blur(0px)" }}
+            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, x: -18, filter: "blur(4px)" }}
+            transition={{ duration: reduceMotion ? 0.12 : 0.28, ease: [0.16, 1, 0.3, 1] }}
             className="flex flex-col gap-4"
           >
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
-                <Badge variant="secondary" className="tabular-nums">Q {session.current + 1} / {questions.length}</Badge>
+                <Badge variant="secondary" className="tabular-nums">Q {currentIndex + 1} / {questions.length}</Badge>
                 <Badge variant="outline" className="tabular-nums">{current?.points} {current?.points === 1 ? "mark" : "marks"}</Badge>
                 {!effectivePolicy.allowSkipping && !hasAnswer && (
                   <Badge variant="destructive" className="gap-1"><AlertTriangleIcon className="size-3" /> Answer required</Badge>
@@ -903,20 +1182,20 @@ export function ExamRunner({
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={() => current && session.toggleFlag(current.id)}
-                aria-pressed={current ? session.flagged.has(current.id) : false}
+                onClick={() => current && toggleFlag(current.id)}
+                aria-pressed={isFlagged}
                 className="gap-1.5"
               >
-                <FlagIcon data-icon="inline-start" className={current && session.flagged.has(current.id) ? "fill-amber-500 text-amber-500" : ""} />
-                {current && session.flagged.has(current.id) ? "Flagged" : "Flag"}
+                <FlagIcon data-icon="inline-start" className={isFlagged ? "fill-amber-500 text-amber-500" : ""} />
+                {isFlagged ? "Flagged" : "Flag"}
               </Button>
             </div>
 
             {current && (
               <QuestionView
                 question={current}
-                value={session.answers[current.id]}
-                onChange={(v) => current && session.setAnswer(current.id, v)}
+                value={answerValue}
+                onChange={(v) => setAnswer(current.id, v)}
               />
             )}
 
@@ -937,47 +1216,22 @@ export function ExamRunner({
       <footer className="glass sticky bottom-0 z-30 border-t">
         <div className="flex items-center justify-between gap-3 px-4 py-3 sm:px-6">
           {effectivePolicy.preventBacktrack ? (
-            <Badge variant="outline" className="hidden sm:inline-flex gap-1.5 border-muted bg-muted/50 text-muted-foreground">
+            <Badge variant="outline" className="hidden shrink-0 sm:inline-flex gap-1.5 border-muted bg-muted/50 text-muted-foreground">
               <LockIcon className="size-3" /> Linear — no backtracking
             </Badge>
           ) : (
-            <Button variant="outline" onClick={handlePrevious} disabled={session.current === 0}>
+            <Button variant="outline" className="shrink-0" onClick={handlePrevious} disabled={currentIndex === 0}>
               <ChevronLeftIcon data-icon="inline-start" /> Previous
             </Button>
           )}
 
-          {/* Progress dots — interactive only when backtrack allowed, else read-only */}
-          <div className="flex items-center gap-1.5">
-            {questions.map((q, i) => {
-              const ansVal = session.answers[q.id];
-              const answeredQ = ansVal !== undefined && ansVal !== null && ansVal !== "";
-              const flagged = session.flagged.has(q.id);
-              const isPast = i < session.current;
-              const clickable = !effectivePolicy.preventBacktrack && !isPast;
-              return (
-                <button
-                  key={q.id}
-                  disabled={!clickable || i > session.current}
-                  onClick={() => clickable && session.setCurrent(i)}
-                  aria-label={`Go to question ${i + 1}`}
-                  className={`size-2.5 rounded-full transition-all sm:size-3 ${
-                    i === session.current
-                      ? "bg-primary shadow-glow scale-125"
-                      : flagged
-                        ? "bg-amber-500"
-                        : answeredQ
-                          ? "bg-success"
-                          : "bg-muted-foreground/25"
-                  } ${clickable ? "cursor-pointer hover:scale-110" : "cursor-default"}`}
-                />
-              );
-            })}
-            <span className="ml-2 hidden text-xs tabular-nums text-muted-foreground sm:inline">
-              {session.current + 1} / {questions.length}
-            </span>
-          </div>
+          <QuestionStrip
+            allowJump={!effectivePolicy.preventBacktrack}
+            allowForward={effectivePolicy.allowSkipping}
+            onJump={jumpTo}
+          />
 
-          <Button className="shadow-glow min-w-[124px]" onClick={handleNext} disabled={!canGoNext}>
+          <Button className="shadow-glow min-w-[124px] shrink-0" onClick={handleNext} disabled={!canGoNext}>
             {isLast ? (
               <>
                 <SendIcon data-icon="inline-start" /> Submit exam
@@ -991,7 +1245,7 @@ export function ExamRunner({
         </div>
 
         {/* Mobile: show Previous only when allowed */}
-        {!effectivePolicy.preventBacktrack && session.current > 0 && (
+        {!effectivePolicy.preventBacktrack && currentIndex > 0 && (
           <div className="flex justify-start px-4 pb-3 sm:hidden">
             <Button variant="ghost" size="sm" onClick={handlePrevious}>
               <ChevronLeftIcon data-icon="inline-start" /> Previous
@@ -1028,11 +1282,25 @@ export function ExamRunner({
               Ready to submit?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              You are about to submit your exam. This action cannot be undone. Make sure you have answered all the questions you wanted to complete.
+              This cannot be undone. Here is where the paper stands.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {/* Outside the description on purpose — it renders a `<p>`, and a list
+              nested in a paragraph is closed by the parser before it starts. */}
+          <SubmitReview
+            allowJump={effectivePolicy.allowReviewBeforeSubmit && !effectivePolicy.preventBacktrack}
+            allowForward={effectivePolicy.allowSkipping}
+            onJump={(index) => {
+              setConfirmSubmit(false);
+              jumpTo(index);
+            }}
+          />
           <AlertDialogFooter>
-            <AlertDialogCancel render={<Button variant="outline" />}>Go back</AlertDialogCancel>
+            <AlertDialogCancel render={<Button variant="outline" />}>
+              {effectivePolicy.allowReviewBeforeSubmit && !effectivePolicy.preventBacktrack
+                ? "Keep working"
+                : "Go back"}
+            </AlertDialogCancel>
             <AlertDialogAction render={<Button />} onClick={() => { setConfirmSubmit(false); void doSubmit(false); }}>
               Submit exam
             </AlertDialogAction>

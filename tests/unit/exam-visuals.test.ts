@@ -117,6 +117,52 @@ describe("sanitizeVisual: tables", () => {
   });
 });
 
+describe("sanitizeVisual: maths in table cells", () => {
+  // A live paper shipped a "Bivariate Sample Statistics" table whose Statistic
+  // column held `\sum x`, `\sum y`, `\sum x^2` — notation written without
+  // delimiters into a column that was *about* notation. The renderer had no way
+  // to tell it from prose, so students read the backslashes.
+  it("wraps unmarked notation so the cell renders as maths", () => {
+    const out = table(
+      [
+        [String.raw`\sum x`, "120"],
+        [String.raw`\sum x^2`, "1840"],
+      ],
+      ["Statistic", "Value"],
+    ) as Table;
+    expect(out.rows[0]!.cells[0]).toBe(String.raw`$\sum x$`);
+    expect(out.rows[1]!.cells[0]).toBe(String.raw`$\sum x^2$`);
+  });
+
+  it("wraps notation in a header too", () => {
+    const out = table([["North", "40"]], [String.raw`\bar{x}`, "Yield"]) as Table;
+    expect(out.headers[0]).toBe(String.raw`$\bar{x}$`);
+    expect(out.headers[1]).toBe("Yield");
+  });
+
+  it("leaves plain labels, figures and percentages alone", () => {
+    // The guard has to be conservative: sprinkling `$…$` over ordinary cells
+    // would hand every table to KaTeX and make "40" a maths italic.
+    const out = table(
+      [["North", "40", "12.5%"]],
+      ["Region", "Yield", "Share"],
+    ) as Table;
+    expect(out.rows[0]!.cells).toEqual(["North", "40", "12.5%"]);
+  });
+
+  it("escapes an alignment tab that would otherwise swallow the cell", () => {
+    const out = table([[String.raw`\sum x & y`, "1"]]) as Table;
+    expect(out.rows[0]!.cells[0]).toBe(String.raw`$\sum x \& y$`);
+  });
+
+  it("is idempotent, so re-sanitizing a stored visual is safe", () => {
+    const once = table([[String.raw`\sum xy`, "560"]]) as Table;
+    const twice = sanitizeVisual({ ...once }) as Table;
+    expect(twice.rows).toEqual(once.rows);
+    expect(twice.headers).toEqual(once.headers);
+  });
+});
+
 describe("sanitizeVisual: size cap", () => {
   // The 4,000-char ceiling exists so ~50 visuals cannot push the exam document
   // past Firestore's 1 MiB limit. It used to be measured against the *raw* model

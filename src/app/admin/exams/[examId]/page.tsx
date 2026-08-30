@@ -2,11 +2,13 @@ export const dynamic = "force-dynamic";
 
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeftIcon, RotateCcwIcon, TrophyIcon, UsersIcon } from "lucide-react";
+import { ArrowLeftIcon, ClipboardCheckIcon, RotateCcwIcon, TrophyIcon, UsersIcon } from "lucide-react";
 
 import { requireRole } from "@/server/auth/session";
 import { getExamForActor } from "@/server/services/exams";
 import { attemptsCol } from "@/server/firebase/collections";
+import { summarizeQuestion } from "@/lib/exam/latex";
+import { reviewProgress } from "@/lib/exam/review";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -50,6 +52,7 @@ export default async function AdminExamDetailPage({ params }: { params: Promise<
           graded.length,
       )
     : null;
+  const review = reviewProgress(exam.questions, exam.review);
 
   // Group by student for improvement
   const byStudent = new Map<string, WithId<AttemptDoc>[]>();
@@ -70,11 +73,34 @@ export default async function AdminExamDetailPage({ params }: { params: Promise<
         <p className="text-muted-foreground mt-1 text-sm">
           {SUBJECT_LABELS[exam.params.subject as Subject] ?? exam.params.subject} · {exam.params.level === "primary" ? `P${exam.params.classLevel}` : `S${exam.params.classLevel}`} · {exam.questions.length} questions · {exam.params.durationMinutes} min
         </p>
-        <div className="mt-3 flex flex-wrap gap-2">
+        <div className="mt-3 flex flex-wrap items-center gap-2">
           <Badge variant="outline">{exam.status}</Badge>
           <Badge variant="secondary">{attempts.length} attempts</Badge>
           <Badge variant="secondary">{retakes.length} retakes</Badge>
           {avgScore !== null && <Badge variant="secondary">Avg {avgScore}%</Badge>}
+          {exam.status === "draft" && (
+            <>
+              <Badge
+                variant="outline"
+                className={
+                  review.complete
+                    ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                    : "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                }
+              >
+                {review.approved}/{review.total} reviewed
+              </Badge>
+              <Button
+                size="sm"
+                variant={review.complete ? "ghost" : "default"}
+                nativeButton={false}
+                render={<Link href={`/admin/exams/${exam.id}/review`} />}
+              >
+                <ClipboardCheckIcon data-icon="inline-start" />
+                {review.complete ? "Review & assign" : "Review questions"}
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -130,7 +156,7 @@ export default async function AdminExamDetailPage({ params }: { params: Promise<
             const skipRate = total ? Math.round((skips / total) * 100) : 0;
             return (
               <div key={q.id} className="rounded-xl border p-3">
-                <p className="text-sm font-medium line-clamp-2">{q.prompt.replace(/[#*$_`]/g, "").slice(0, 140)}</p>
+                <p className="text-sm font-medium line-clamp-2">{summarizeQuestion(q.prompt, 140)}</p>
                 <div className="mt-2 flex gap-2 text-xs">
                   <Badge variant="outline" className="text-destructive border-destructive/20">{failRate}% failed</Badge>
                   <Badge variant="outline" className="border-amber-500/20 text-amber-700">{skipRate}% skipped</Badge>

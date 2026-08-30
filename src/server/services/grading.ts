@@ -15,6 +15,7 @@ import type {
   AttemptFeedback,
   ExamDoc,
 } from "@/types/firestore";
+import { vertex } from "@/lib/vertext";
 
 const essayGradeSchema = z.object({
   grades: z.array(
@@ -58,7 +59,7 @@ export async function gradeAttemptWithAi(attemptId: string): Promise<void> {
   let tokensUsed = 0;
   try {
     const result = await generateText({
-      model: textModel(),
+      model: vertex("gemini-3.7-flash"),
       instructions: [
         "You are a fair, encouraging Ugandan-curriculum examiner grading exam answers.",
         "Grade each answer against its marks (points). Be consistent and objective.",

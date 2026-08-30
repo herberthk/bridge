@@ -89,6 +89,34 @@ export function reserveForGeneration(estimatedTokens: number): number {
   return estimatedTokens * GENERATION_RESERVE_MULTIPLIER;
 }
 
+/**
+ * Rough pre-flight estimate for revising n questions on the review screen.
+ *
+ * Costed higher per question than generation because a revision pays for the
+ * question twice: the stored version goes in as JSON so the model can see which
+ * fields exist, and the whole rewrite comes back out. Generation only pays for the
+ * output. The flat term is the instruction block, which is nearly the generation
+ * one — the maths, visual and type rules are shared verbatim.
+ */
+export function estimateRevisionTokens(questionCount: number): number {
+  return questionCount * 1200 + 1500;
+}
+
+/**
+ * Head-room on a revision, and lower than the generation multiplier on purpose.
+ *
+ * A revision is one call with one retry and no chunked fallback, so its worst case
+ * is roughly double the estimate rather than triple. Charging generation's head-room
+ * here would refuse revisions a wallet can plainly afford, which on this screen
+ * means a reviewer stuck with a question they can see is wrong.
+ */
+export const REVISION_RESERVE_MULTIPLIER = 2;
+
+/** Tokens a wallet must hold before a revision is allowed to start. */
+export function reserveForRevision(estimatedTokens: number): number {
+  return estimatedTokens * REVISION_RESERVE_MULTIPLIER;
+}
+
 /** Rough pre-flight estimate for AI-grading an attempt of n answers. */
 export function estimateGradingTokens(questionCount: number): number {
   return questionCount * 500 + 800;

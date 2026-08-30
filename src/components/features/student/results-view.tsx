@@ -22,6 +22,8 @@ import { requestRetakeAction } from "@/app/student/actions";
 import { Markdown } from "@/components/markdown";
 import { QuestionVisualView } from "@/components/features/exam/question-visual";
 import { useActionToast } from "@/components/features/super/schools-manager";
+import { answerMarkdown, correctMarkdown } from "@/lib/exam/answers";
+import { summarizeQuestion } from "@/lib/exam/latex";
 import type { AttemptDoc, ExamDoc } from "@/types/firestore";
 import type { SerializedWithId } from "@/lib/serialize";
 import { Badge } from "@/components/ui/badge";
@@ -38,7 +40,6 @@ import {
   DialogContent,
   DialogDescription,
   DialogFooter,
-  DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
@@ -50,6 +51,22 @@ function gradeColor(pct: number): string {
   if (pct >= 65) return "text-lime-600 dark:text-lime-400";
   if (pct >= 50) return "text-amber-600 dark:text-amber-400";
   return "text-destructive";
+}
+
+/**
+ * An answer value rendered as maths-aware inline content.
+ *
+ * `Markdown` emits a `<div>`, so every call site here is a `<div>` too — these
+ * panels used to be `<p>`s, and a div inside a paragraph is closed by the parser
+ * before the answer ever reaches it. `prose-bridge` already zeroes the outer
+ * margins of its first and last child, so a one-line answer sits flush inside its
+ * chip while a multi-paragraph explanation still gets its rhythm.
+ */
+function AnswerText({ text }: { text: string | null }) {
+  if (!text) {
+    return <span className="text-muted-foreground font-normal italic">not answered</span>;
+  }
+  return <Markdown className="prose-bridge">{text}</Markdown>;
 }
 
 const RETAKE_CHIPS = [
@@ -237,7 +254,7 @@ function DetailedAssessment({
           <p className="flex items-center gap-2 text-sm font-semibold"><LightbulbIcon className="size-4 text-amber-600" /> How to reach 100%</p>
           <ul className="mt-2 flex flex-col gap-1.5">
             {suggestions.slice(0, 5).map((s, i) => (
-              <li key={i} className="flex gap-2 text-sm"><TrendingUpIcon className="mt-0.5 size-3.5 shrink-0 text-emerald-600" /> <span>{s}</span></li>
+              <li key={i} className="flex gap-2 text-sm"><TrendingUpIcon className="mt-0.5 size-3.5 shrink-0 text-emerald-600" /> <AnswerText text={s} /></li>
             ))}
           </ul>
           {feedback?.perQuestion && <p className="text-muted-foreground mt-2 text-xs">Tapped per-question AI feedback is also shown in the review below.</p>}
@@ -249,16 +266,38 @@ function DetailedAssessment({
             <p className="text-sm font-semibold flex items-center gap-1.5"><XCircleIcon className="size-4 text-destructive" /> Failed questions — what to fix</p>
             <div className="mt-2 flex flex-col gap-2">
               {failed.map(({ q, ans }) => {
-                const correctText = q.type === "multiple_choice" && q.correctOptionIndex !== null ? q.options?.[q.correctOptionIndex] : q.type === "true_false" ? (q.correctBool ? "True" : "False") : q.acceptableAnswers?.join(" / ") ?? q.pairs?.map((p) => p.right).join(", ");
                 const perQ = feedback?.perQuestion?.[q.id] ?? ans?.graded?.feedback ?? null;
                 return (
                   <div key={q.id} className="rounded-xl border bg-card p-3">
-                    <p className="text-sm font-medium line-clamp-2">{q.prompt.replace(/[#*$_`]/g, "").slice(0, 120)}</p>
+                    {/* `summarizeQuestion`, not `replace(/[#*$_`]/g, "")` — stripping
+                        the delimiters and keeping the backslashes turned
+                        `$\frac{9}{5}$` into `\frac{9}{5}`, so the one line a student
+                        scans to recognise the question was the least readable part
+                        of the page. */}
+                    <p className="text-sm font-medium">{summarizeQuestion(q.prompt, 120)}</p>
                     <div className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
-                      <div className="rounded-lg bg-muted p-2.5"><span className="text-muted-foreground">Your answer</span><p className="font-medium mt-0.5">{formatResponse(ans?.response)} — <span className="text-destructive">{ans?.graded?.earned ?? 0}/{q.points}</span></p></div>
-                      <div className="rounded-lg bg-emerald-500/10 p-2.5"><span className="text-muted-foreground">Correct</span><p className="font-medium mt-0.5">{correctText ?? "—"}</p></div>
+                      <div className="rounded-lg bg-muted p-2.5">
+                        <span className="text-muted-foreground">Your answer</span>
+                        <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 font-medium">
+                          <AnswerText text={answerMarkdown(ans?.response, q)} />
+                          <span className="text-destructive tabular-nums">
+                            {ans?.graded?.earned ?? 0}/{q.points} marks
+                          </span>
+                        </div>
+                      </div>
+                      <div className="rounded-lg bg-emerald-500/10 p-2.5">
+                        <span className="text-muted-foreground">Correct</span>
+                        <div className="mt-0.5 font-medium">
+                          <AnswerText text={correctMarkdown(q)} />
+                        </div>
+                      </div>
                     </div>
-                    {(q.explanation || perQ) && <p className="text-muted-foreground mt-2 text-xs"><span className="font-medium">Tip:</span> {perQ ?? q.explanation}</p>}
+                    {(q.explanation || perQ) && (
+                      <div className="text-muted-foreground mt-2 text-xs">
+                        <p className="font-medium">Tip</p>
+                        <AnswerText text={perQ ?? q.explanation} />
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -271,13 +310,20 @@ function DetailedAssessment({
           <div>
             <p className="text-sm font-semibold flex items-center gap-1.5"><AlertTriangleIcon className="size-4 text-amber-600" /> Skipped questions — easy gains</p>
             <div className="mt-2 flex flex-col gap-2">
-              {skipped.map(({ q, ans }) => {
+              {skipped.map(({ q }) => {
                 const perQ = feedback?.perQuestion?.[q.id] ?? null;
                 return (
                   <div key={q.id} className="rounded-xl border border-dashed bg-amber-500/5 p-3">
-                    <p className="text-sm font-medium line-clamp-2">{q.prompt.replace(/[#*$_`]/g, "").slice(0, 120)}</p>
+                    <p className="text-sm font-medium">{summarizeQuestion(q.prompt, 120)}</p>
                     <p className="text-muted-foreground mt-1 text-xs">Skipped — you left this blank (0/{q.points}). Next time attempt it; even partial credit helps.</p>
-                    {(q.explanation || perQ) && <p className="text-muted-foreground mt-1.5 text-xs"><span className="font-medium">Study:</span> {perQ ?? q.explanation ?? `Review ${exam.title} — ${q.type.replace(/_/g, " ")}`}</p>}
+                    {(q.explanation || perQ) && (
+                      <div className="text-muted-foreground mt-1.5 text-xs">
+                        <p className="font-medium">Study</p>
+                        <AnswerText
+                          text={perQ ?? q.explanation ?? `Review ${exam.title} — ${q.type.replace(/_/g, " ")}`}
+                        />
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -435,9 +481,10 @@ export function ResultsView({
             </CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-5">
-            <Markdown className="text-pretty leading-relaxed">
-              {feedback.overall}
-            </Markdown>
+            {/* `Markdown`'s `className` replaces its default `prose-bridge` rather
+                than merging, so naming a utility here silently dropped every
+                paragraph, list and heading style from the AI's feedback. */}
+            <Markdown className="prose-bridge text-pretty">{feedback.overall}</Markdown>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="rounded-xl border p-4">
                 <p className="flex items-center gap-2 text-sm font-medium">
@@ -446,8 +493,9 @@ export function ResultsView({
                 </p>
                 <ul className="mt-2 flex flex-col gap-1.5">
                   {feedback.strengths.map((s, i) => (
-                    <li key={i} className="text-muted-foreground text-sm">
-                      • {s}
+                    <li key={i} className="text-muted-foreground flex gap-2 text-sm">
+                      <span aria-hidden>•</span>
+                      <AnswerText text={s} />
                     </li>
                   ))}
                 </ul>
@@ -459,8 +507,9 @@ export function ResultsView({
                 </p>
                 <ul className="mt-2 flex flex-col gap-1.5">
                   {feedback.improvements.map((s, i) => (
-                    <li key={i} className="text-muted-foreground text-sm">
-                      • {s}
+                    <li key={i} className="text-muted-foreground flex gap-2 text-sm">
+                      <span aria-hidden>•</span>
+                      <AnswerText text={s} />
                     </li>
                   ))}
                 </ul>
@@ -488,16 +537,6 @@ export function ResultsView({
             {exam.questions.map((q, i) => {
               const answer = attempt.answers.find((a) => a.questionId === q.id);
               const graded = answer?.graded;
-              const correctText =
-                q.type === "multiple_choice" && q.correctOptionIndex !== null
-                  ? q.options?.[q.correctOptionIndex]
-                  : q.type === "true_false"
-                    ? q.correctBool
-                      ? "True"
-                      : "False"
-                    : q.type === "matching"
-                      ? q.pairs?.map((p) => p.right).join(", ")
-                      : q.acceptableAnswers?.join(" / ");
               return (
                 <details key={q.id} className="group rounded-xl border">
                   <summary className="hover:bg-accent/40 flex cursor-pointer items-center gap-3 rounded-xl p-4 transition-colors">
@@ -509,7 +548,7 @@ export function ResultsView({
                       <XCircleIcon className="text-destructive size-4 shrink-0" />
                     )}
                     <span className="min-w-0 flex-1 truncate text-sm font-medium">
-                      Q{i + 1}. {q.prompt.replace(/[#*$_`]/g, "").slice(0, 80)}
+                      Q{i + 1}. {summarizeQuestion(q.prompt, 80)}
                     </span>
                     {graded && (
                       <Badge variant="secondary" className="tabular-nums">
@@ -521,19 +560,19 @@ export function ResultsView({
                     <div className="text-sm">
                       <Markdown>{q.prompt}</Markdown>
                     </div>
-                    {(q as unknown as { visual?: import("@/types/firestore").QuestionVisual | null }).visual && (
-                      <QuestionVisualView visual={(q as unknown as { visual?: import("@/types/firestore").QuestionVisual | null }).visual} />
-                    )}
+                    {q.visual ? <QuestionVisualView visual={q.visual} /> : null}
                     <div className="grid gap-3 text-sm sm:grid-cols-2">
                       <div className="rounded-lg bg-muted p-3">
                         <p className="text-muted-foreground text-xs">Your answer</p>
-                        <p className="mt-1 font-medium">
-                          {formatResponse(answer?.response)}
-                        </p>
+                        <div className="mt-1 font-medium">
+                          <AnswerText text={answerMarkdown(answer?.response, q)} />
+                        </div>
                       </div>
                       <div className="rounded-lg bg-emerald-500/10 p-3">
                         <p className="text-muted-foreground text-xs">Correct answer</p>
-                        <p className="mt-1 font-medium">{correctText ?? "—"}</p>
+                        <div className="mt-1 font-medium">
+                          <AnswerText text={correctMarkdown(q)} />
+                        </div>
                       </div>
                     </div>
                     {q.explanation && (
@@ -565,12 +604,4 @@ export function ResultsView({
       )}
     </div>
   );
-}
-
-function formatResponse(value: unknown): string {
-  if (value === null || value === undefined || value === "") return "— not answered —";
-  if (Array.isArray(value)) return value.filter(Boolean).join(", ") || "— not answered —";
-  if (typeof value === "boolean") return value ? "True" : "False";
-  if (typeof value === "number") return String.fromCharCode(65 + value); // MC index
-  return String(value);
 }

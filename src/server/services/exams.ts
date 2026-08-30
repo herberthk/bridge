@@ -43,8 +43,11 @@ import type {
 } from "@/lib/schemas/exam";
 import { examOutputSchema } from "@/lib/schemas/exam";
 import type { Difficulty } from "@/lib/constants";
+import { mathifyCell, repairMath } from "@/lib/exam/latex";
+import { isAssignGated, readReview, reviewProgress } from "@/lib/exam/review";
 import { estimateGenerationTokens, reserveForGeneration } from "@/lib/pricing";
 import type { Question } from "@/types/firestore";
+import { vertex } from "@/lib/vertext";
 
 export class ExamsServiceError extends Error {
   constructor(
@@ -291,7 +294,7 @@ const MAX_VISUAL_JSON_CHARS = 4_000;
  * Pinning `low` bounds it. It cannot remove it, which is why
  * `estimateOutputTokens` is anchored on a total that includes reasoning.
  */
-function thinkingOptions(modelId: string): Record<string, JSONValue> {
+export function thinkingOptions(modelId: string): Record<string, JSONValue> {
   // Leading path segment tolerated (`models/gemini-3.7-flash`) because the SDK
   // accepts that form — its own generation patterns are anchored `(^|\/)gemini-`.
   // Anchoring at the string start instead would send a prefixed 3.x id down the
@@ -712,6 +715,17 @@ export function clampProse(value: unknown): string | null {
 }
 
 /**
+ * `clampProse`, then LaTeX repair — in that order, because both cuts above land
+ * at an arbitrary character and can fall inside a `$…$` span or a `\begin{cases}`
+ * block. Repairing first and truncating second would reintroduce exactly the
+ * unbalanced maths this is here to prevent.
+ */
+export function repairProse(value: unknown): string | null {
+  const text = clampProse(value);
+  return text === null ? null : repairMath(text) || null;
+}
+
+/**
  * Narrow an AI-supplied visual to something Firestore will accept and the
  * renderer can trust. Returns null whenever the payload isn't worth persisting.
  */
@@ -756,10 +770,17 @@ export function sanitizeVisual(v: unknown): Question["visual"] {
     return withinSizeCap(clean);
   }
   if (obj.kind === "table") {
+    // `mathifyCell` is applied *after* the length cap on purpose. A header such
+    // as `\sum x^2` is notation the model wrote without delimiters, and the
+    // renderer has no way to tell it apart from prose — so it reached students as
+    // literal backslashes. Wrapping it here costs a few characters over the cap,
+    // which is markup rather than content, and the whole visual is still measured
+    // against `MAX_VISUAL_JSON_CHARS` below.
     const headers = Array.isArray(obj.headers)
       ? (obj.headers as unknown[])
           .filter((h): h is string => typeof h === "string" && h.trim() !== "")
           .slice(0, 8)
+          .map((h) => mathifyCell(h.slice(0, 100)) || h.trim())
       : [];
     if (headers.length < 2) return null;
     // Each row is rewrapped as `{ cells }`: Firestore rejects an array whose
@@ -778,7 +799,9 @@ export function sanitizeVisual(v: unknown): Question["visual"] {
         if (!raw) return null;
         const cells = Array.from({ length: headers.length }, (_, i) => {
           const cell = raw[i];
-          return cell === undefined || cell === null ? "" : String(cell).trim().slice(0, 100);
+          if (cell === undefined || cell === null) return "";
+          const text = String(cell).trim().slice(0, 100);
+          return mathifyCell(text) || text;
         });
         return cells.some((c) => c !== "") ? { cells } : null;
       })
@@ -793,7 +816,7 @@ export function sanitizeVisual(v: unknown): Question["visual"] {
 }
 
 /** Normalize provider usage into a total plus an input/output split. */
-function readUsage(
+export function readUsage(
   usage:
     | { totalTokens?: number; inputTokens?: number; outputTokens?: number }
     | undefined,
@@ -927,7 +950,8 @@ export async function generateExam(
     },
   ): Promise<{ out: ExamOutput; tokens: number; inputTokens: number; outputTokens: number }> {
     const modelId = opts.useProFallback ? modelIds.textPro() : modelIds.text();
-    const model = opts.useProFallback ? textProModel() : textModel();
+    const model = vertex("gemini-3.7-flash");
+    // const model = opts.useProFallback ? textProModel() : textModel();
     const estOutput = estimateOutputTokens(params);
     const prompt = examGenerationPrompt(
       params,
@@ -1396,18 +1420,23 @@ export async function generateExam(
   const questions: Question[] = output.questions.map((q, i) => ({
     id: `q${i + 1}`,
     type: q.type,
-    prompt: q.prompt,
-    options: q.options ?? null,
+    prompt: repairMath(q.prompt),
+    options: q.options ? q.options.map(repairMath) : null,
     correctOptionIndex: q.correctOptionIndex ?? null,
     correctBool: q.correctBool ?? null,
+    // Deliberately *not* repaired. These are compared against typed answers via
+    // `normalizeAnswer`, so wrapping `9/5` as `$\frac{9}{5}$` would stop a correct
+    // answer from scoring.
     acceptableAnswers: q.acceptableAnswers ?? null,
     pairs: q.pairs
-      ? q.pairs.map((p) => ({ left: String(p.left ?? ""), right: String(p.right ?? "") })).filter((p) => p.left && p.right)
+      ? q.pairs
+          .map((p) => ({ left: repairMath(p.left ?? ""), right: repairMath(p.right ?? "") }))
+          .filter((p) => p.left && p.right)
       : null,
     points: typeof q.points === "number" && Number.isFinite(q.points) ? q.points : 1,
-    hint: clampProse(q.hint),
-    explanation: clampProse(q.explanation),
-    workedExample: clampProse(q.workedExample),
+    hint: repairProse(q.hint),
+    explanation: repairProse(q.explanation),
+    workedExample: repairProse(q.workedExample),
     visual: sanitizeVisual(q.visual),
   }));
 
@@ -1429,6 +1458,18 @@ export async function generateExam(
       generationInputTokens: inputTokensUsed,
       generationOutputTokens: outputTokensUsed,
       gradingTokens: 0,
+      revisionTokens: 0,
+    },
+    // Written at creation so the review screen and the assign gate read a real
+    // object on every new exam, and only exams that predate this feature take the
+    // `readReview` fallback path.
+    review: {
+      approvedIds: [],
+      revisedCount: 0,
+      approvedAt: null,
+      approvedBy: null,
+      overriddenAt: null,
+      updatedAt: null,
     },
     createdAt: now,
     updatedAt: now,
@@ -1548,6 +1589,30 @@ export async function assignExam(
     throw new ExamsServiceError("This exam belongs to another school.", 403);
   }
 
+  /**
+   * The review gate.
+   *
+   * Enforced here rather than only in the UI because the assign dialog is not the
+   * only caller — a stale tab, a replayed form post and a future bulk-assign all
+   * arrive at this function, and "the button was disabled" is not a permission.
+   *
+   * `isAssignGated` limits this to `draft` exams: anything already `scheduled` or
+   * `active` was assigned before this screen existed, so gating it now would fault
+   * work that was legitimate when it was done.
+   */
+  const gated = isAssignGated({
+    status: exam.status,
+    questions: exam.questions,
+    review: exam.review,
+  });
+  if (gated && !input.acknowledgeUnreviewed) {
+    const { approved, total } = reviewProgress(exam.questions, exam.review);
+    throw new ExamsServiceError(
+      `Review the questions before assigning — ${approved} of ${total} approved.`,
+      409,
+    );
+  }
+
   // Enforce that every referenced student actually belongs to this admin
   // (same school / standalone household). Prevents assigning exams to
   // arbitrary student ids across the platform.
@@ -1628,10 +1693,29 @@ export async function assignExam(
   }
 
   if (created > 0) {
-    await examDoc(input.examId).update({
-      status: exam.status === "draft" ? "scheduled" : exam.status,
-      updatedAt: FieldValue.serverTimestamp(),
-    });
+    const nextStatus = exam.status === "draft" ? "scheduled" : exam.status;
+    // Stamp the override on the document, not just the audit log. The library and
+    // the review screen both show whether an exam went out unreviewed, and an admin
+    // looking at a paper a student is already sitting should not have to read the
+    // audit trail to find that out.
+    //
+    // Written as a whole `review` object rather than as `review.overriddenAt` dotted
+    // paths: the field is optional on `ExamDoc`, so a dotted update would not
+    // typecheck against `UpdateData<ExamDoc>`, and merging in memory from the
+    // snapshot we already hold costs nothing extra.
+    if (gated) {
+      const stampedAt = new Date().toISOString();
+      await examDoc(input.examId).update({
+        status: nextStatus,
+        review: { ...readReview(exam.review), overriddenAt: stampedAt, updatedAt: stampedAt },
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    } else {
+      await examDoc(input.examId).update({
+        status: nextStatus,
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+    }
   }
 
   await writeAudit({
@@ -1640,7 +1724,11 @@ export async function assignExam(
     action: "exam.assigned",
     targetType: "exam",
     targetId: input.examId,
-    meta: { students: created, scheduledFor: input.scheduledFor },
+    meta: {
+      students: created,
+      scheduledFor: input.scheduledFor,
+      ...(gated ? { unreviewedOverride: true } : {}),
+    },
   });
 
   return created;
