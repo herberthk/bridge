@@ -62,9 +62,17 @@ function gradeColor(pct: number): string {
  * margins of its first and last child, so a one-line answer sits flush inside its
  * chip while a multi-paragraph explanation still gets its rhythm.
  */
-function AnswerText({ text }: { text: string | null }) {
+function AnswerText({
+  text,
+  emptyPlaceholder = "not answered",
+}: {
+  text: string | null;
+  emptyPlaceholder?: string;
+}) {
   if (!text) {
-    return <span className="text-muted-foreground font-normal italic">not answered</span>;
+    return (
+      <span className="text-muted-foreground font-normal italic">{emptyPlaceholder}</span>
+    );
   }
   return <Markdown className="prose-bridge">{text}</Markdown>;
 }
@@ -288,7 +296,10 @@ function DetailedAssessment({
                       <div className="rounded-lg bg-emerald-500/10 p-2.5">
                         <span className="text-muted-foreground">Correct</span>
                         <div className="mt-0.5 font-medium">
-                          <AnswerText text={correctMarkdown(q)} />
+                          <AnswerText
+                            text={correctMarkdown(q)}
+                            emptyPlaceholder="no model answer"
+                          />
                         </div>
                       </div>
                     </div>
@@ -571,7 +582,10 @@ export function ResultsView({
                       <div className="rounded-lg bg-emerald-500/10 p-3">
                         <p className="text-muted-foreground text-xs">Correct answer</p>
                         <div className="mt-1 font-medium">
-                          <AnswerText text={correctMarkdown(q)} />
+                          <AnswerText
+                            text={correctMarkdown(q)}
+                            emptyPlaceholder="no model answer"
+                          />
                         </div>
                       </div>
                     </div>

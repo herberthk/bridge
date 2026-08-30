@@ -205,7 +205,14 @@ export function AssignExamDialog({
               <FieldDescription>Leave empty to make it available now.</FieldDescription>
             </Field>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setOpen(false)}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setAcknowledged(false);
+                  setOpen(false);
+                }}
+              >
                 Cancel
               </Button>
               <Button type="submit" disabled={pending || blocked || selected.length === 0}>

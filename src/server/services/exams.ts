@@ -8,7 +8,7 @@ import {
 } from "ai";
 import type { JSONValue, LanguageModelCallEndEvent } from "ai";
 
-import { textModel, textProModel, modelIds } from "@/server/ai/provider";
+import { modelIds } from "@/server/ai/provider";
 import {
   chunkDocumentText,
   examGenerationInstructions,
@@ -21,6 +21,7 @@ import {
   examsCol,
   usersCol,
 } from "@/server/firebase/collections";
+import { adminDb } from "@/server/firebase/admin";
 import { writeAudit } from "@/server/services/audit";
 import {
   assertCanAfford,
@@ -950,8 +951,7 @@ export async function generateExam(
     },
   ): Promise<{ out: ExamOutput; tokens: number; inputTokens: number; outputTokens: number }> {
     const modelId = opts.useProFallback ? modelIds.textPro() : modelIds.text();
-    const model = vertex("gemini-3.7-flash");
-    // const model = opts.useProFallback ? textProModel() : textModel();
+    const model = vertex(modelId);
     const estOutput = estimateOutputTokens(params);
     const prompt = examGenerationPrompt(
       params,
@@ -1600,18 +1600,20 @@ export async function assignExam(
    * `active` was assigned before this screen existed, so gating it now would fault
    * work that was legitimate when it was done.
    */
-  const gated = isAssignGated({
-    status: exam.status,
-    questions: exam.questions,
-    review: exam.review,
-  });
-  if (gated && !input.acknowledgeUnreviewed) {
-    const { approved, total } = reviewProgress(exam.questions, exam.review);
-    throw new ExamsServiceError(
-      `Review the questions before assigning — ${approved} of ${total} approved.`,
-      409,
-    );
-  }
+  const assertReviewGate = (
+    candidate: Pick<ExamDoc, "status" | "questions" | "review">,
+  ): boolean => {
+    const candidateGated = isAssignGated(candidate);
+    if (candidateGated && !input.acknowledgeUnreviewed) {
+      const { approved, total } = reviewProgress(candidate.questions, candidate.review);
+      throw new ExamsServiceError(
+        `Review the questions before assigning — ${approved} of ${total} approved.`,
+        409,
+      );
+    }
+    return candidateGated;
+  };
+  assertReviewGate(exam);
 
   // Enforce that every referenced student actually belongs to this admin
   // (same school / standalone household). Prevents assigning exams to
@@ -1638,7 +1640,6 @@ export async function assignExam(
     );
   }
 
-  const now = FieldValue.serverTimestamp();
   let scheduledAt: Timestamp | null = null;
   if (input.scheduledFor) {
     const parsedMs = Date.parse(input.scheduledFor);
@@ -1647,53 +1648,70 @@ export async function assignExam(
     }
     scheduledAt = Timestamp.fromMillis(parsedMs);
   }
-  const base: WriteModel<AttemptDoc> = {
-    examId: input.examId,
-    studentId: "",
-    schoolId: exam.schoolId,
-    status: "pending",
-    scheduledFor: scheduledAt,
-    startedAt: null,
-    submittedAt: null,
-    autoSubmitted: false,
-    timeSpentSeconds: null,
-    answers: [],
-    score: null,
-    violationsCount: 0,
-    warningsIssued: 0,
-    recordings: { cameraPath: null, screenPath: null },
-    gradedAt: null,
-    feedback: null,
-    retakeOf: null,
-    retakeAuthorizedBy: null,
-    createdAt: now,
-    updatedAt: now,
-  };
+  // The exam status is the question-edit lock. Reading it, creating attempts and
+  // leaving draft in one transaction means `saveQuestions` cannot commit between
+  // the first attempt write and the status transition.
+  const assignment = await adminDb().runTransaction(async (tx) => {
+    const lockedExamRef = examDoc(input.examId);
+    const lockedExamSnap = await tx.get(lockedExamRef);
+    if (!lockedExamSnap.exists) throw new ExamsServiceError("Exam not found.", 404);
+    const lockedExam = lockedExamSnap.data()!;
+    if (
+      actor.role === "admin" &&
+      lockedExam.schoolId &&
+      lockedExam.schoolId !== actor.schoolId
+    ) {
+      throw new ExamsServiceError("This exam belongs to another school.", 403);
+    }
+    const gated = assertReviewGate(lockedExam);
 
-  // Skip students who already have an open/unfinished attempt for this exam.
-  // One query per chunk instead of one per student (N+1 → N/30).
-  const openStatuses = ["pending", "in_progress", "submitted"] as const;
-  const hasOpenAttempt = new Set<string>();
-  for (let i = 0; i < input.studentIds.length; i += CHUNK) {
-    const chunk = input.studentIds.slice(i, i + CHUNK);
-    const existing = await attemptsCol()
-      .where("examId", "==", input.examId)
-      .where("studentId", "in", chunk)
-      .where("status", "in", [...openStatuses])
-      .get();
-    existing.docs.forEach((d) => hasOpenAttempt.add(d.data().studentId as string));
-  }
+    // Skip students who already have an open/unfinished attempt for this exam.
+    // These reads share the transaction with the writes, preventing two concurrent
+    // assignments from creating duplicate open attempts.
+    const openStatuses = ["pending", "in_progress", "submitted"] as const;
+    const hasOpenAttempt = new Set<string>();
+    for (let i = 0; i < input.studentIds.length; i += CHUNK) {
+      const chunk = input.studentIds.slice(i, i + CHUNK);
+      const existing = await tx.get(
+        attemptsCol()
+          .where("examId", "==", input.examId)
+          .where("studentId", "in", chunk)
+          .where("status", "in", [...openStatuses]),
+      );
+      existing.docs.forEach((d) => hasOpenAttempt.add(d.data().studentId as string));
+    }
 
-  let created = 0;
-  for (const studentId of input.studentIds) {
-    if (hasOpenAttempt.has(studentId)) continue;
+    const studentIds = input.studentIds.filter((id) => !hasOpenAttempt.has(id));
+    if (studentIds.length === 0) return { created: 0, gated };
 
-    await attemptsCol().add({ ...base, studentId });
-    created += 1;
-  }
+    const now = FieldValue.serverTimestamp();
+    const base: WriteModel<AttemptDoc> = {
+      examId: input.examId,
+      studentId: "",
+      schoolId: lockedExam.schoolId,
+      status: "pending",
+      scheduledFor: scheduledAt,
+      startedAt: null,
+      submittedAt: null,
+      autoSubmitted: false,
+      timeSpentSeconds: null,
+      answers: [],
+      score: null,
+      violationsCount: 0,
+      warningsIssued: 0,
+      recordings: { cameraPath: null, screenPath: null },
+      gradedAt: null,
+      feedback: null,
+      retakeOf: null,
+      retakeAuthorizedBy: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    for (const studentId of studentIds) {
+      tx.create(attemptsCol().doc(), { ...base, studentId });
+    }
 
-  if (created > 0) {
-    const nextStatus = exam.status === "draft" ? "scheduled" : exam.status;
+    const nextStatus = lockedExam.status === "draft" ? "scheduled" : lockedExam.status;
     // Stamp the override on the document, not just the audit log. The library and
     // the review screen both show whether an exam went out unreviewed, and an admin
     // looking at a paper a student is already sitting should not have to read the
@@ -1701,22 +1719,25 @@ export async function assignExam(
     //
     // Written as a whole `review` object rather than as `review.overriddenAt` dotted
     // paths: the field is optional on `ExamDoc`, so a dotted update would not
-    // typecheck against `UpdateData<ExamDoc>`, and merging in memory from the
-    // snapshot we already hold costs nothing extra.
+    // typecheck against `UpdateData<ExamDoc>`.
     if (gated) {
       const stampedAt = new Date().toISOString();
-      await examDoc(input.examId).update({
+      tx.update(lockedExamRef, {
         status: nextStatus,
-        review: { ...readReview(exam.review), overriddenAt: stampedAt, updatedAt: stampedAt },
-        updatedAt: FieldValue.serverTimestamp(),
+        review: {
+          ...readReview(lockedExam.review),
+          overriddenAt: stampedAt,
+          updatedAt: stampedAt,
+        },
+        updatedAt: now,
       });
     } else {
-      await examDoc(input.examId).update({
-        status: nextStatus,
-        updatedAt: FieldValue.serverTimestamp(),
-      });
+      tx.update(lockedExamRef, { status: nextStatus, updatedAt: now });
     }
-  }
+
+    return { created: studentIds.length, gated };
+  });
+  const { created, gated } = assignment;
 
   await writeAudit({
     actorId: actor.uid,
@@ -1727,7 +1748,7 @@ export async function assignExam(
     meta: {
       students: created,
       scheduledFor: input.scheduledFor,
-      ...(gated ? { unreviewedOverride: true } : {}),
+      ...(gated && created > 0 ? { unreviewedOverride: true } : {}),
     },
   });
 

@@ -28,7 +28,7 @@ export default async function AdminExamReviewPage({
   params: Promise<{ examId: string }>;
 }) {
   const { examId } = await params;
-  const actor = await requireRole("admin");
+  const actor = await requireRole("admin", "super_admin");
 
   let exam: Awaited<ReturnType<typeof getExamForReview>> | null = null;
   try {

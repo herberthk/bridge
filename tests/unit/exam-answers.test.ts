@@ -32,54 +32,60 @@ describe("answerMarkdown", () => {
     // Printing the bare letter left the review saying "B" beside a correct answer
     // written out in full — the student had to go back to the prompt to see what
     // they had picked.
-    expect(answerMarkdown(1, { options: OPTIONS })).toBe(String.raw`B. $\frac{6}{5}$`);
-    expect(answerMarkdown(0, { options: OPTIONS })).toBe(String.raw`A. $\frac{9}{5}$`);
-    expect(answerMarkdown(3, { options: OPTIONS })).toBe(String.raw`D. $\frac{4}{5}$`);
+    expect(answerMarkdown(1, q({ options: OPTIONS }))).toBe(String.raw`B. $\frac{6}{5}$`);
+    expect(answerMarkdown(0, q({ options: OPTIONS }))).toBe(String.raw`A. $\frac{9}{5}$`);
+    expect(answerMarkdown(3, q({ options: OPTIONS }))).toBe(String.raw`D. $\frac{4}{5}$`);
   });
 
   it("falls back to the letter when the option text is missing", () => {
-    expect(answerMarkdown(2, { options: null })).toBe("C");
-    expect(answerMarkdown(2, { options: ["A only", "B only"] })).toBe("C");
-    expect(answerMarkdown(1, { options: ["kept", "   "] })).toBe("B");
+    expect(answerMarkdown(2, q({ options: null }))).toBe("C");
+    expect(answerMarkdown(2, q({ options: ["A only", "B only"] }))).toBe("C");
+    expect(answerMarkdown(1, q({ options: ["kept", "   "] }))).toBe("B");
   });
 
   it("rejects an index that cannot be a letter", () => {
-    expect(answerMarkdown(-1, { options: OPTIONS })).toBeNull();
-    expect(answerMarkdown(26, { options: OPTIONS })).toBeNull();
-    expect(answerMarkdown(1.5, { options: OPTIONS })).toBeNull();
+    expect(answerMarkdown(-1, q({ options: OPTIONS }))).toBeNull();
+    expect(answerMarkdown(26, q({ options: OPTIONS }))).toBeNull();
+    expect(answerMarkdown(1.5, q({ options: OPTIONS }))).toBeNull();
+  });
+
+  it("does not interpret numeric non-choice responses as option indexes", () => {
+    expect(answerMarkdown(2, q({ type: "short_answer" }))).toBe("2");
   });
 
   it("spells out a boolean response", () => {
-    expect(answerMarkdown(true, {})).toBe("True");
+    expect(answerMarkdown(true, q({ type: "true_false" }))).toBe("True");
     // `false` is an answer, not an absence — a truthiness check reported it as blank.
-    expect(answerMarkdown(false, {})).toBe("False");
+    expect(answerMarkdown(false, q({ type: "true_false" }))).toBe("False");
   });
 
   it("joins the filled slots of a multi-part answer", () => {
-    expect(answerMarkdown(["8", "cm"], {})).toBe("8, cm");
-    expect(answerMarkdown([" 8 ", "", "cm"], {})).toBe("8, cm");
+    expect(answerMarkdown(["8", "cm"], q({ type: "fill_in_the_blank" }))).toBe("8, cm");
+    expect(answerMarkdown([" 8 ", "", "cm"], q({ type: "fill_in_the_blank" }))).toBe(
+      "8, cm",
+    );
   });
 
   it("treats an untouched multi-part answer as unattempted", () => {
     // Fill-in-the-blank and matching answers are seeded as arrays of empty strings,
     // so an array is only an answer once something lands in it.
-    expect(answerMarkdown(["", ""], {})).toBeNull();
-    expect(answerMarkdown([], {})).toBeNull();
-    expect(answerMarkdown([null, undefined], {})).toBeNull();
+    expect(answerMarkdown(["", ""], q({ type: "fill_in_the_blank" }))).toBeNull();
+    expect(answerMarkdown([], q({ type: "fill_in_the_blank" }))).toBeNull();
+    expect(answerMarkdown([null, undefined], q({ type: "fill_in_the_blank" }))).toBeNull();
   });
 
   it("treats blank, null and undefined as unattempted", () => {
-    expect(answerMarkdown("", {})).toBeNull();
-    expect(answerMarkdown("   ", {})).toBeNull();
-    expect(answerMarkdown(null, {})).toBeNull();
-    expect(answerMarkdown(undefined, {})).toBeNull();
+    expect(answerMarkdown("", q({ type: "short_answer" }))).toBeNull();
+    expect(answerMarkdown("   ", q({ type: "short_answer" }))).toBeNull();
+    expect(answerMarkdown(null, q({ type: "short_answer" }))).toBeNull();
+    expect(answerMarkdown(undefined, q({ type: "short_answer" }))).toBeNull();
   });
 
   it("passes typed text through, trimmed and unformatted", () => {
     // Typed answers are string-matched against `acceptableAnswers`, which the
     // generator is told to keep plain — so nothing should be added here either.
-    expect(answerMarkdown("  1.2  ", {})).toBe("1.2");
-    expect(answerMarkdown("kx(2-x)", {})).toBe("kx(2-x)");
+    expect(answerMarkdown("  1.2  ", q({ type: "short_answer" }))).toBe("1.2");
+    expect(answerMarkdown("kx(2-x)", q({ type: "short_answer" }))).toBe("kx(2-x)");
   });
 });
 

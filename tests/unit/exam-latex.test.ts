@@ -50,6 +50,8 @@ describe("repairMath: piecewise definitions", () => {
   it("pairs cases the model separated with row breaks but never opened", () => {
     const out = repairMath("$f(x) = {x^2, & x \\ge 0 \\\\ -x^2, & x < 0$");
     expect(out).toContain("\\begin{cases}");
+    expect(out).toContain("x^2 & x \\ge 0");
+    expect(out).not.toContain("x^2, & x \\ge 0");
     expect(out.match(/\\\\/g)).toHaveLength(1); // one row separator, not three
   });
 
@@ -125,6 +127,13 @@ describe("repairMath: delimiters", () => {
     const out = repairMath("Show that\\[\\int_0^1 x^2 dx = \\frac{1}{3}\\]holds.");
     expect(out).toContain("$$\\int_0^1 x^2 dx = \\frac{1}{3}$$");
     expect(out).toMatch(/\n\n\$\$/);
+  });
+
+  it("does not treat escaped backslashes as math delimiters", () => {
+    const displayRowBreak = String.raw`Line break \\[6pt] before a literal \\] marker.`;
+    const inlineRowBreak = String.raw`Line break \\(x before a literal \\) marker.`;
+    expect(repairMath(displayRowBreak)).toBe(displayRowBreak);
+    expect(repairMath(inlineRowBreak)).toBe(inlineRowBreak);
   });
 
   it("closes an unterminated span when what follows is maths", () => {

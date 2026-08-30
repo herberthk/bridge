@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   estimateGenerationTokens,
   estimateGradingTokens,
+  estimateRevisionTokens,
   formatUgx,
   formatUsd,
+  reserveForRevision,
   textTokensToMicros,
   tokensToUsd,
   usdMicrosToUgx,
@@ -12,6 +14,7 @@ import {
   voiceMinutesToMicros,
   voiceMinutesToUsd,
   TOPUP_PACKS,
+  REVISION_RESERVE_MULTIPLIER,
 } from "@/lib/pricing";
 import { BILLING } from "@/lib/constants";
 
@@ -74,6 +77,12 @@ describe("pricing: estimates", () => {
 
   it("grading estimate grows with answers", () => {
     expect(estimateGradingTokens(20)).toBeGreaterThan(estimateGradingTokens(5));
+  });
+
+  it("reserves revision input and maximum output headroom", () => {
+    const estimate = estimateRevisionTokens(10);
+    expect(REVISION_RESERVE_MULTIPLIER).toBe(4);
+    expect(reserveForRevision(estimate)).toBe(estimate * 4);
   });
 });
 

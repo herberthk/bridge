@@ -3,10 +3,11 @@ import { generateText, Output } from "ai";
 import { z } from "zod";
 import React from "react";
 
-import { textModel, modelIds } from "@/server/ai/provider";
+import { modelIds } from "@/server/ai/provider";
 import { attemptDoc, examDoc, userDoc } from "@/server/firebase/collections";
 import { writeAudit } from "@/server/services/audit";
 import { consumeTokens } from "@/server/services/billing";
+import { thinkingOptions } from "@/server/services/exams";
 import { appUrl, sendTemplateEmail } from "@/server/services/email";
 import { ExamResultsEmail } from "@/emails/templates";
 import type {
@@ -84,6 +85,9 @@ export async function gradeAttemptWithAi(attemptId: string): Promise<void> {
       output: Output.object({ schema: essayGradeSchema }),
       temperature: 0.3,
       maxOutputTokens: 12_000,
+      providerOptions: {
+        google: { thinkingConfig: thinkingOptions("gemini-3.7-flash") },
+      },
     });
     output = result.output;
     const usage = result.usage;

@@ -119,7 +119,7 @@ function casesRows(inner: string): string | null {
     // The model already separated the cases; it just never opened the environment.
     for (const row of byRow) {
       if (row.includes("&")) {
-        rows.push(row);
+        rows.push(row.replace(/,\s*(?=&)/, " "));
         continue;
       }
       const parts = splitTopLevel(row, [","]);
@@ -336,8 +336,8 @@ function repairSegment(input: string): string {
   const normalized = input
     // `\[…\]` and `\(…\)` are display/inline intent that `remark-math` does not
     // recognise, so they reach the page as literal backslash-brackets.
-    .replace(/\\\[([\s\S]*?)\\\]/g, (_m, b: string) => `\n\n$$${b.trim()}$$\n\n`)
-    .replace(/\\\(([\s\S]*?)\\\)/g, (_m, b: string) => `$${b.trim()}$`);
+    .replace(/(?<!\\)\\\[([\s\S]*?)(?<!\\)\\\]/g, (_m, b: string) => `\n\n$$${b.trim()}$$\n\n`)
+    .replace(/(?<!\\)\\\(([\s\S]*?)(?<!\\)\\\)/g, (_m, b: string) => `$${b.trim()}$`);
   return promoteStandaloneDisplay(rewriteMathSpans(normalized));
 }
 

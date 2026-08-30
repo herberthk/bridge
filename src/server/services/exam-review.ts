@@ -2,7 +2,7 @@ import { FieldValue } from "firebase-admin/firestore";
 
 import { generateText, Output } from "ai";
 
-import { modelIds, textModel } from "@/server/ai/provider";
+import { modelIds } from "@/server/ai/provider";
 import {
   questionRevisionInstructions,
   questionRevisionPrompt,
@@ -303,7 +303,7 @@ export async function reviseQuestions(
   let tokens = 0;
   try {
     const result = await generateText({
-      model: vertex("gemini-3.7-flash"),
+      model: vertex(modelId),
       output: Output.object({ schema: questionRevisionOutputSchema }),
       // `system` is deprecated in favour of `instructions` in this SDK major.
       instructions: questionRevisionInstructions(

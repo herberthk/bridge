@@ -34,11 +34,11 @@ function optionLetter(index: number): string | null {
  */
 export function answerMarkdown(
   value: unknown,
-  question: { options?: string[] | null },
+  question: Pick<Question, "type" | "options">,
 ): string | null {
   if (value === null || value === undefined || value === "") return null;
   if (typeof value === "boolean") return value ? "True" : "False";
-  if (typeof value === "number") {
+  if (question.type === "multiple_choice" && typeof value === "number") {
     const letter = optionLetter(value);
     if (letter === null) return null;
     const option = question.options?.[value]?.trim();

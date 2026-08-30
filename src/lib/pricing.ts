@@ -103,14 +103,13 @@ export function estimateRevisionTokens(questionCount: number): number {
 }
 
 /**
- * Head-room on a revision, and lower than the generation multiplier on purpose.
+ * Head-room on a revision, including both its input allowance and output ceiling.
  *
- * A revision is one call with one retry and no chunked fallback, so its worst case
- * is roughly double the estimate rather than triple. Charging generation's head-room
- * here would refuse revisions a wallet can plainly afford, which on this screen
- * means a reviewer stuck with a question they can see is wrong.
+ * `reviseQuestions` can accept up to the full configured output cap after also
+ * sending the stored questions and instructions as input. Reserving four times the
+ * estimate keeps the eventual debit within the amount that passed pre-flight.
  */
-export const REVISION_RESERVE_MULTIPLIER = 2;
+export const REVISION_RESERVE_MULTIPLIER = 4;
 
 /** Tokens a wallet must hold before a revision is allowed to start. */
 export function reserveForRevision(estimatedTokens: number): number {

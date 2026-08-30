@@ -466,10 +466,12 @@ function QuestionStrip({
  * questions are listed — a full 60-row list is not a review, it is a wall.
  */
 function SubmitReview({
+  showOutstanding,
   allowJump,
   allowForward,
   onJump,
 }: {
+  showOutstanding: boolean;
   allowJump: boolean;
   allowForward: boolean;
   onJump: (index: number) => void;
@@ -525,7 +527,7 @@ function SubmitReview({
         </p>
       )}
 
-      {outstanding.length > 0 && (
+      {showOutstanding && outstanding.length > 0 && (
         <ul className="mt-3 max-h-48 space-y-1 overflow-y-auto pr-1">
           {outstanding.map((row) => {
             const body = (
@@ -1288,6 +1290,7 @@ export function ExamRunner({
           {/* Outside the description on purpose — it renders a `<p>`, and a list
               nested in a paragraph is closed by the parser before it starts. */}
           <SubmitReview
+            showOutstanding={effectivePolicy.allowReviewBeforeSubmit}
             allowJump={effectivePolicy.allowReviewBeforeSubmit && !effectivePolicy.preventBacktrack}
             allowForward={effectivePolicy.allowSkipping}
             onJump={(index) => {
