@@ -15,11 +15,15 @@ export default async function AdminExamsPage() {
   let students: WithId<UserDoc>[] = [];
   let retakeCounts: Record<string, number> = {};
   let loadFailed = false;
+  let examListIncomplete = false;
   try {
-    [exams, students] = await Promise.all([
+    const [examResult, loadedStudents] = await Promise.all([
       listExams(actor, 200),
       listStudents(actor),
     ]);
+    exams = examResult.exams;
+    students = loadedStudents;
+    examListIncomplete = examResult.partial || !examResult.ordered;
     try {
       const map = await getRetakeCountsByExam(actor);
       retakeCounts = Object.fromEntries(map.entries());
@@ -38,6 +42,14 @@ export default async function AdminExamsPage() {
           <p className="font-medium">Failed to load exam library</p>
           <p className="mt-0.5 text-xs text-destructive/80">
             Some data could not be fetched from the database. Please try refreshing the page.
+          </p>
+        </div>
+      )}
+      {examListIncomplete && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 shadow-xs dark:text-amber-300">
+          <p className="font-medium">The exam library may be incomplete or out of order</p>
+          <p className="mt-0.5 text-xs opacity-80">
+            The creation-date query failed, so this page is showing a limited, unordered fallback.
           </p>
         </div>
       )}

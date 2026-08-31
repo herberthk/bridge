@@ -638,7 +638,7 @@ export function ExamGenerator() {
               {/* ── Pure AI card ── */}
               <button
                 type="button"
-                onClick={() => { setSourceMode("pure_ai"); setStep(0); setDir(1); }}
+                onClick={() => { setDocs([]); setSourceMode("pure_ai"); setStep(0); setDir(1); }}
                 className="group relative flex flex-col gap-4 rounded-2xl border-2 border-border bg-card p-5 text-left shadow-card transition-all duration-200 hover:border-primary/40 hover:shadow-lifted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
               >
                 <div className="flex items-center gap-3">

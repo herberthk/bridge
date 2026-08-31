@@ -93,6 +93,13 @@ describe("repairMath: piecewise definitions", () => {
     expect(out).toContain("0 & \\text{otherwise}");
   });
 
+  it("textualizes conditions in rows that already contain an ampersand", () => {
+    const out = repairMath(
+      "$$f(x) = \\begin{cases} x & x > 0 \\\\ 0 & otherwise \\end{cases}$$",
+    );
+    expect(out).toContain("0 & \\text{otherwise}");
+  });
+
   it("converts \\left\\{ \\begin{matrix} piecewise definitions to cases", () => {
     const matrixDef =
       "$f(x) = \\left\\{ \\begin{matrix} kx(2-x) & 0 \\le x \\le 2 \\\\ 0 & \\text{otherwise} \\end{matrix} \\right.$";
@@ -137,6 +144,12 @@ describe("repairMath: piecewise definitions", () => {
     expect(out).toContain("**Step 4:**");
     expect(out).toContain("\n\n**Step 2:**");
     expect(out).toContain("\n\n**Step 3:**");
+  });
+
+  it("formats alphabetic step and part headings without maths", () => {
+    const out = repairMath("Part A: Establish the result. Step B: Apply it.");
+    expect(out).toContain("**Part A:** Establish the result.");
+    expect(out).toContain("**Step B:** Apply it.");
   });
 
   it("does not rewrite a brace group that is an argument, not a definition", () => {

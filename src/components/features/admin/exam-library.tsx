@@ -413,9 +413,17 @@ export function ExamLibrary({
     setCurrentPage(1);
   }, []);
 
-  const copyExamId = useCallback((id: string) => {
-    navigator.clipboard.writeText(id);
-    toast.success("Exam ID copied to clipboard");
+  const copyExamId = useCallback(async (id: string) => {
+    if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+      toast.error("Clipboard access is unavailable");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(id);
+      toast.success("Exam ID copied to clipboard");
+    } catch {
+      toast.error("Could not copy the Exam ID");
+    }
   }, []);
 
   const hasActiveFilters =
@@ -511,9 +519,10 @@ export function ExamLibrary({
             </div>
           </div>
 
-          <div
+          <button
+            type="button"
             onClick={() => setStatusFilter(stats.draftsNeedingReview > 0 ? "needs_review" : "draft")}
-            className={`shadow-card relative cursor-pointer overflow-hidden rounded-xl border p-4 transition-all hover:scale-[1.01] ${
+            className={`shadow-card relative cursor-pointer overflow-hidden rounded-xl border p-4 text-left transition-all hover:scale-[1.01] ${
               stats.draftsNeedingReview > 0
                 ? "border-amber-500/40 bg-amber-500/5 hover:border-amber-500/60"
                 : "border-border/80 bg-card hover:border-border"
@@ -535,7 +544,7 @@ export function ExamLibrary({
                 {stats.draftsNeedingReview === 1 ? "Draft requires approval" : "Drafts require approval"}
               </span>
             </div>
-          </div>
+          </button>
 
           <div className="shadow-card relative overflow-hidden rounded-xl border border-border/80 bg-card p-4 transition-all hover:border-purple-500/30">
             <div className="flex items-center justify-between">
@@ -740,40 +749,56 @@ export function ExamLibrary({
               {searchQuery && (
                 <Badge variant="secondary" className="gap-1 font-normal">
                   <span>Search: &quot;{searchQuery}&quot;</span>
-                  <XIcon
-                    className="size-3 cursor-pointer opacity-70 hover:opacity-100"
+                  <button
+                    type="button"
                     onClick={() => setSearchQuery("")}
-                  />
+                    className="rounded-sm opacity-70 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <XIcon aria-hidden="true" className="size-3" />
+                    <span className="sr-only">Clear search filter</span>
+                  </button>
                 </Badge>
               )}
 
               {statusFilter !== "all" && (
                 <Badge variant="secondary" className="gap-1 font-normal">
                   <span>Status: {statusFilter.replace("_", " ")}</span>
-                  <XIcon
-                    className="size-3 cursor-pointer opacity-70 hover:opacity-100"
+                  <button
+                    type="button"
                     onClick={() => setStatusFilter("all")}
-                  />
+                    className="rounded-sm opacity-70 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <XIcon aria-hidden="true" className="size-3" />
+                    <span className="sr-only">Clear status filter</span>
+                  </button>
                 </Badge>
               )}
 
               {subjectFilter !== "all" && (
                 <Badge variant="secondary" className="gap-1 font-normal">
                   <span>Subject: {SUBJECT_LABELS[subjectFilter as Subject] ?? subjectFilter}</span>
-                  <XIcon
-                    className="size-3 cursor-pointer opacity-70 hover:opacity-100"
+                  <button
+                    type="button"
                     onClick={() => setSubjectFilter("all")}
-                  />
+                    className="rounded-sm opacity-70 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <XIcon aria-hidden="true" className="size-3" />
+                    <span className="sr-only">Clear subject filter</span>
+                  </button>
                 </Badge>
               )}
 
               {levelFilter !== "all" && (
                 <Badge variant="secondary" className="gap-1 font-normal">
                   <span>Level: {levelFilter.replace("_", " ")}</span>
-                  <XIcon
-                    className="size-3 cursor-pointer opacity-70 hover:opacity-100"
+                  <button
+                    type="button"
                     onClick={() => setLevelFilter("all")}
-                  />
+                    className="rounded-sm opacity-70 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <XIcon aria-hidden="true" className="size-3" />
+                    <span className="sr-only">Clear level filter</span>
+                  </button>
                 </Badge>
               )}
 
@@ -1071,7 +1096,7 @@ export function ExamLibrary({
                                   Review Questions
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator />
-                                <DropdownMenuItem onClick={() => copyExamId(e.id)}>
+                                <DropdownMenuItem onClick={() => void copyExamId(e.id)}>
                                   <CopyIcon data-icon="inline-start" className="size-4" />
                                   Copy Exam ID
                                 </DropdownMenuItem>

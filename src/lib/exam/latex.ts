@@ -117,7 +117,7 @@ function cleanCasesRow(row: string): string {
   const trimmed = row.trim();
   if (!trimmed) return "";
   if (trimmed.includes("&")) {
-    return trimmed.replace(/[,;]\s*(?=&)/g, " ").replace(/\s+&/, " &");
+    return textualize(trimmed.replace(/[,;]\s*(?=&)/g, " ").replace(/\s+&/, " &"));
   }
 
   // Comma-separated value and condition: `kx(2-x), 0 \le x \le 2`
@@ -492,7 +492,7 @@ function repairSegment(input: string): string {
  */
 export function repairMath(input: unknown): string {
   if (typeof input !== "string") return "";
-  if (!input.includes("$") && !input.includes("\\") && !/Step\s+\d+|Method\s+\d+|Case\s+\d+/i.test(input)) return input;
+  if (!input.includes("$") && !input.includes("\\") && !/(?:Step|Method|Case|Part)\s+(?:\d+|[A-Za-z])/i.test(input)) return input;
   return input
     .split(CODE_SPLIT)
     .map((part, idx) => (idx % 2 === 1 ? part : repairSegment(part ?? "")))

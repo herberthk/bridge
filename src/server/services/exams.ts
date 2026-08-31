@@ -1754,10 +1754,16 @@ export async function assignExam(
   return created;
 }
 
+export interface ExamListResult {
+  exams: WithId<ExamDoc>[];
+  partial: boolean;
+  ordered: boolean;
+}
+
 export async function listExams(
   actor: SessionUser,
   limit = 200,
-): Promise<WithId<ExamDoc>[]> {
+): Promise<ExamListResult> {
   let query: FirebaseFirestore.Query<ExamDoc> = examsCol().orderBy("createdAt", "desc").limit(limit);
   if (actor.role === "admin" && actor.schoolId) {
     query = examsCol()
@@ -1771,9 +1777,18 @@ export async function listExams(
       .limit(limit);
   }
   let snap: FirebaseFirestore.QuerySnapshot<ExamDoc>;
+  let usedFallback = false;
   try {
     snap = await query.get();
-  } catch {
+  } catch (error) {
+    usedFallback = true;
+    console.error("[exams] ordered exam query failed; using a partial, unordered fallback", {
+      actorId: actor.uid,
+      actorRole: actor.role,
+      schoolId: actor.schoolId ?? null,
+      limit,
+      error,
+    });
     let fallbackQuery: FirebaseFirestore.Query<ExamDoc> = examsCol().limit(limit);
     if (actor.role === "admin" && actor.schoolId) {
       fallbackQuery = examsCol().where("schoolId", "==", actor.schoolId).limit(limit);
@@ -1782,7 +1797,7 @@ export async function listExams(
     }
     snap = await fallbackQuery.get();
   }
-  return snap.docs.map((d) => {
+  const exams = snap.docs.map((d) => {
     const data = d.data();
     return {
       id: d.id,
@@ -1791,6 +1806,7 @@ export async function listExams(
       updatedAt: data?.updatedAt ?? (d.updateTime as unknown as Timestamp) ?? data?.createdAt ?? (d.createTime as unknown as Timestamp),
     };
   });
+  return { exams, partial: usedFallback, ordered: !usedFallback };
 }
 
 export async function getExamForActor(

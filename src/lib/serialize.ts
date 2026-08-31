@@ -66,7 +66,7 @@ export function serializeDocs<T extends object>(docs: WithId<T>[]): SerializedWi
  * against legacy documents that store timestamps as strings/numbers.
  */
 export function timestampToDate(value: unknown): Date | null {
-  if (!value) return null;
+  if (value === null || value === undefined) return null;
   if (value instanceof Date) {
     return Number.isNaN(value.getTime()) ? null : value;
   }
@@ -104,7 +104,7 @@ export function timestampToDate(value: unknown): Date | null {
  *  Returns null for missing OR unparseable values so callers can fall back
  *  instead of crashing date-fns `format` with an Invalid Date. */
 export function parseDate(value: unknown): Date | null {
-  if (!value) return null;
+  if (value === null || value === undefined) return null;
   if (value instanceof Date) {
     return Number.isNaN(value.getTime()) ? null : value;
   }
