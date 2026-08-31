@@ -19,7 +19,7 @@ export default async function AdminWalletPage() {
   let loadFailed = false;
   try {
     wallet = await getWallet(walletId);
-    transactions = await listTransactions(walletId, 50);
+    transactions = await listTransactions(walletId, 150);
   } catch (err) {
     console.error("[admin/wallet] load failed", err);
     loadFailed = true;

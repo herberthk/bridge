@@ -9,7 +9,7 @@ export default function AdminGeneratePage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Generate an exam</h1>
         <p className="text-muted-foreground mt-1 text-sm">
-          Describe what you need — Gemini drafts a full, calibrated assessment
+          Describe what you need — AI drafts a full, calibrated assessment
           in seconds. Optionally ground it on your own past papers.
         </p>
       </div>
