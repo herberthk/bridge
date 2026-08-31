@@ -42,6 +42,8 @@ export function AssignExamDialog({
   variant = "outline",
   label = "Assign",
   className,
+  open: controlledOpen,
+  onOpenChange,
 }: {
   exam: SerializedWithId<ExamDoc>;
   students: SerializedWithId<UserDoc>[];
@@ -49,8 +51,18 @@ export function AssignExamDialog({
   variant?: "outline" | "default" | "secondary";
   label?: string;
   className?: string;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = controlledOpen ?? uncontrolledOpen;
+  const setOpen = useCallback(
+    (next: boolean) => {
+      if (controlledOpen === undefined) setUncontrolledOpen(next);
+      onOpenChange?.(next);
+    },
+    [controlledOpen, onOpenChange],
+  );
   const [selected, setSelected] = useState<string[]>([]);
   /** Second click on the override. Reset with the dialog, deliberately. */
   const [acknowledged, setAcknowledged] = useState(false);
@@ -64,7 +76,7 @@ export function AssignExamDialog({
     setOpen(false);
     setSelected([]);
     setAcknowledged(false);
-  }, []);
+  }, [setOpen]);
   useActionToast(state, closeAndReset, "Exam assigned");
 
   const active = useMemo(() => students.filter((s) => s.status === "active"), [students]);

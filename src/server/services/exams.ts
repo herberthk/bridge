@@ -1014,7 +1014,6 @@ export async function generateExam(
       const result = await generateText({
         model,
         output: Output.object({ schema: examOutputSchema }),
-        // `system` is deprecated in favour of `instructions` in this SDK major.
         instructions,
         prompt,
         temperature: 0.35,
@@ -1022,13 +1021,13 @@ export async function generateExam(
         maxRetries: AI_CALL_RETRIES,
         abortSignal: callSignal(sliceDeadline),
         onLanguageModelCallEnd: shapedProbe.onEnd,
-        providerOptions: { google: googleOptions },
+        providerOptions: { google: googleOptions, googleVertex: googleOptions },
       });
       const usage = (result as unknown as { usage?: { totalTokens?: number; inputTokens?: number; outputTokens?: number } }).usage;
       const { tokens, inputTokens, outputTokens } = readUsage(usage);
       const out = result.output as ExamOutput;
       console.log(
-        `[exams] gen ${attemptLabel} (generateText, ${JSON.stringify(thinking)}): ` +
+        `[exams] gen ${attemptLabel}: ` +
           `${out.questions.length}/${params.questionCount} q, ${tokens} tokens ` +
           `(out ${outputTokens}/${shapedCap} cap) in ${Date.now() - startedAt}ms`,
       );
@@ -1106,7 +1105,7 @@ export async function generateExam(
       maxRetries: AI_CALL_RETRIES,
       abortSignal: callSignal(sliceDeadline),
       onLanguageModelCallEnd: retryProbe.onEnd,
-      providerOptions: { google: googleOptions },
+      providerOptions: { google: googleOptions, googleVertex: googleOptions },
     });
     if (!result.output) {
       console.error(`[exams] generateText returned no output`, {

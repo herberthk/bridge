@@ -7,7 +7,7 @@ import { modelIds } from "@/server/ai/provider";
 import { attemptDoc, examDoc, userDoc } from "@/server/firebase/collections";
 import { writeAudit } from "@/server/services/audit";
 import { consumeTokens } from "@/server/services/billing";
-import { thinkingOptions } from "@/server/services/exams";
+import { repairProse, thinkingOptions } from "@/server/services/exams";
 import { appUrl, sendTemplateEmail } from "@/server/services/email";
 import { ExamResultsEmail } from "@/emails/templates";
 import type {
@@ -59,8 +59,10 @@ export async function gradeAttemptWithAi(attemptId: string): Promise<void> {
   let output: z.infer<typeof essayGradeSchema>;
   let tokensUsed = 0;
   try {
+    const modelId = modelIds.text();
+    const googleOptions = { thinkingConfig: thinkingOptions(modelId), structuredOutputs: false };
     const result = await generateText({
-      model: vertex("gemini-3.7-flash"),
+      model: vertex(modelId),
       instructions: [
         "You are a fair, encouraging Ugandan-curriculum examiner grading exam answers.",
         "Grade each answer against its marks (points). Be consistent and objective.",
@@ -84,9 +86,10 @@ export async function gradeAttemptWithAi(attemptId: string): Promise<void> {
       }),
       output: Output.object({ schema: essayGradeSchema }),
       temperature: 0.3,
-      maxOutputTokens: 12_000,
+      maxOutputTokens: Math.min(12_000, Math.max(2_000, pending.length * 500 + 800)),
       providerOptions: {
-        google: { thinkingConfig: thinkingOptions("gemini-3.7-flash") },
+        google: googleOptions,
+        googleVertex: googleOptions,
       },
     });
     output = result.output;
@@ -94,20 +97,7 @@ export async function gradeAttemptWithAi(attemptId: string): Promise<void> {
     tokensUsed = usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
   } catch (err) {
     console.error("[grading] AI failed", err);
-    // Fall back: mark pending answers as ungraded-zero but keep attempt graded.
-    await finalize(
-      attemptId,
-      attempt,
-      exam,
-      pending.map((a) => ({
-        questionId: a.questionId,
-        earned: 0,
-        possible: questionsById.get(a.questionId)?.points ?? 0,
-        feedback: "Could not be auto-graded — your teacher will review this answer.",
-      })),
-      null,
-    );
-    return;
+    throw err;
   }
 
   await finalize(attemptId, attempt, exam, output.grades, {
@@ -193,7 +183,7 @@ async function finalize(
           earned: Math.min(ai.earned, ai.possible || a.graded?.possible || 0),
           possible: ai.possible || a.graded?.possible || 0,
           correct: ai.possible > 0 ? ai.earned >= ai.possible : null,
-          feedback: ai.feedback,
+          feedback: repairProse(ai.feedback),
         },
       };
     }
@@ -206,7 +196,16 @@ async function finalize(
 
   const fullFeedback: AttemptFeedback | null = feedback
     ? {
-        ...feedback,
+        overall: repairProse(feedback.overall) ?? "",
+        strengths: feedback.strengths
+          .map(repairProse)
+          .filter((value): value is string => value !== null)
+          .slice(0, 3),
+        improvements: feedback.improvements
+          .map(repairProse)
+          .filter((value): value is string => value !== null)
+          .slice(0, 3),
+        generatedByModel: feedback.generatedByModel,
         perQuestion: Object.fromEntries(
           answers
             .filter((a) => a.graded?.feedback)
