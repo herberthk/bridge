@@ -281,7 +281,9 @@ export function ExamDetailView({ exam, attempts, students }: ExamDetailViewProps
     const passCount = scores.filter((s) => s >= 50).length;
     const passRate = scores.length ? Math.round((passCount / scores.length) * 100) : null;
 
-    const improvedRetakers = studentSummaries.filter((s) => s.delta !== null && s.delta > 0);
+    const improvedRetakers = studentSummaries.filter(
+      (s) => s.retakeCount > 0 && s.delta !== null && s.delta > 0,
+    );
     const totalRetakers = studentSummaries.filter((s) => s.retakeCount > 0);
     const retakeImprovementRate = totalRetakers.length
       ? Math.round((improvedRetakers.length / totalRetakers.length) * 100)
@@ -380,9 +382,13 @@ export function ExamDetailView({ exam, attempts, students }: ExamDetailViewProps
     });
   };
 
-  const copyExamId = () => {
-    navigator.clipboard.writeText(exam.id);
-    toast.success("Exam ID copied to clipboard");
+  const copyExamId = async () => {
+    try {
+      await navigator.clipboard.writeText(exam.id);
+      toast.success("Exam ID copied to clipboard");
+    } catch {
+      toast.error("Could not copy the Exam ID");
+    }
   };
 
   const subjectLabel = SUBJECT_LABELS[exam.params.subject as Subject] ?? exam.params.subject;

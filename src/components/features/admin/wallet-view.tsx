@@ -185,11 +185,15 @@ function CostEstimatorDialog({ currentBalance }: { currentBalance: number }) {
           {/* Controls */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="flex flex-col gap-1.5">
-              <label className="text-muted-foreground text-xs font-medium">
+              <label
+                htmlFor="exam-question-count"
+                className="text-muted-foreground text-xs font-medium"
+              >
                 Exam Question Count ({questionCount} questions)
               </label>
               <div className="flex items-center gap-2">
                 <input
+                  id="exam-question-count"
                   type="range"
                   min={5}
                   max={50}
@@ -203,11 +207,15 @@ function CostEstimatorDialog({ currentBalance }: { currentBalance: number }) {
             </div>
 
             <div className="flex flex-col gap-1.5">
-              <label className="text-muted-foreground text-xs font-medium">
+              <label
+                htmlFor="grading-attempt-count"
+                className="text-muted-foreground text-xs font-medium"
+              >
                 Student Attempts to Auto-Grade ({gradingAttempts} students)
               </label>
               <div className="flex items-center gap-2">
                 <input
+                  id="grading-attempt-count"
                   type="range"
                   min={0}
                   max={100}
@@ -328,12 +336,17 @@ function TopupGuideDialog({
   const usdPrice = tokensToUsd(selectedPack);
   const ugxPrice = usdToUgx(usdPrice);
 
-  const handleCopyRequest = () => {
+  const handleCopyRequest = async () => {
     const text = `Hi Admin, please credit our ${ownerLabel} wallet (ID: ${walletId}) with the ${packObj.label} Package: ${formatTokens(selectedPack)} tokens (${formatUsd(usdPrice)} / ${formatUgx(ugxPrice)}). Thank you!`;
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    toast.success("Top-up request copied to clipboard!");
-    setTimeout(() => setCopied(false), 3000);
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      toast.success("Top-up request copied to clipboard!");
+      setTimeout(() => setCopied(false), 3000);
+    } catch {
+      setCopied(false);
+      toast.error("Could not copy the top-up request");
+    }
   };
 
   return (
@@ -509,7 +522,7 @@ export function WalletView({
       if (directionFilter === "topup" && tx.tokensDelta < 0) return false;
 
       // 4. Date Filter
-      if (dateFilter !== "all" && tx.createdAt) {
+      if (dateFilter !== "all") {
         const txDate = parseDate(tx.createdAt);
         if (!txDate) return false;
 
@@ -597,7 +610,8 @@ export function WalletView({
 
     const headers = ["Date", "Category", "Description", "Tokens Delta", "Balance After", "USD Value", "UGX Value", "Reference ID"];
     const rows = sortedTransactions.map((t) => {
-      const dateStr = t.createdAt ? format(parseDate(t.createdAt)!, "yyyy-MM-dd HH:mm:ss") : "";
+      const transactionDate = parseDate(t.createdAt);
+      const dateStr = transactionDate ? format(transactionDate, "yyyy-MM-dd HH:mm:ss") : "";
       const usd = t.usdMicros > 0 ? (t.usdMicros / 1_000_000).toFixed(4) : "0";
       const ugx = t.ugx ? String(t.ugx) : "0";
       return [

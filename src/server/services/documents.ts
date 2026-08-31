@@ -49,13 +49,16 @@ export async function uploadAndParseDocument(
   const uniqueSuffix = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${sanitize(file.name)}`;
   const storagePath = `docs/${actor.uid}/${uniqueSuffix}`;
   const bucketName = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET;
-  if (!bucketName) {
-    throw new DocumentsServiceError(
-      "Storage is not configured — NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET is missing.",
-      500,
-    );
-  }
-  const bucket = adminStorage().bucket(bucketName);
+  const bucket = (() => {
+    try {
+      return bucketName ? adminStorage().bucket(bucketName) : adminStorage().bucket();
+    } catch {
+      throw new DocumentsServiceError(
+        "Storage is not configured — set NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET or configure a default Firebase Admin bucket.",
+        500,
+      );
+    }
+  })();
   await bucket.file(storagePath).save(file.buffer, {
     metadata: { contentType: file.mimeType },
   });

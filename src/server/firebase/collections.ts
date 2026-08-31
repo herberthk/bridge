@@ -57,7 +57,8 @@ export function createConverter<T>(): FirebaseFirestore.FirestoreDataConverter<T
       const data = snapshot.data();
       const rawCreated = data?.createdAt;
       const isValidCreated =
-        rawCreated &&
+        rawCreated !== null &&
+        rawCreated !== undefined &&
         (typeof rawCreated.toDate === "function" ||
           typeof rawCreated._seconds === "number" ||
           typeof rawCreated.seconds === "number" ||
@@ -68,7 +69,8 @@ export function createConverter<T>(): FirebaseFirestore.FirestoreDataConverter<T
 
       const rawUpdated = data?.updatedAt;
       const isValidUpdated =
-        rawUpdated &&
+        rawUpdated !== null &&
+        rawUpdated !== undefined &&
         (typeof rawUpdated.toDate === "function" ||
           typeof rawUpdated._seconds === "number" ||
           typeof rawUpdated.seconds === "number" ||

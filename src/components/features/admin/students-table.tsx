@@ -509,13 +509,13 @@ export function StudentsTable({
         case "classLevel": cmp = (a.classLevel ?? 0) - (b.classLevel ?? 0); break;
         case "status": cmp = a.status.localeCompare(b.status); break;
         case "lastLoginAt": {
-          const at = a.lastLoginAt ? parseDate(a.lastLoginAt)!.getTime() : 0;
-          const bt = b.lastLoginAt ? parseDate(b.lastLoginAt)!.getTime() : 0;
+          const at = a.lastLoginAt ? (parseDate(a.lastLoginAt)?.getTime() ?? 0) : 0;
+          const bt = b.lastLoginAt ? (parseDate(b.lastLoginAt)?.getTime() ?? 0) : 0;
           cmp = at - bt; break;
         }
         case "createdAt": {
-          const at = a.createdAt ? parseDate(a.createdAt)!.getTime() : 0;
-          const bt = b.createdAt ? parseDate(b.createdAt)!.getTime() : 0;
+          const at = a.createdAt ? (parseDate(a.createdAt)?.getTime() ?? 0) : 0;
+          const bt = b.createdAt ? (parseDate(b.createdAt)?.getTime() ?? 0) : 0;
           cmp = at - bt; break;
         }
       }
@@ -720,6 +720,8 @@ export function StudentsTable({
                 {pageItems.map((s) => {
                   const cfg = STATUS_CONFIG[s.status];
                   const StatusIcon = cfg.icon;
+                  const lastLoginDate = parseDate(s.lastLoginAt);
+                  const joinedDate = parseDate(s.createdAt);
                   return (
                     <TableRow key={s.id} className="group transition-colors hover:bg-muted/30">
                       {/* Student */}
@@ -750,14 +752,14 @@ export function StudentsTable({
 
                       {/* Last login */}
                       <TableCell className="tabular-nums text-sm text-muted-foreground">
-                        {s.lastLoginAt
-                          ? format(parseDate(s.lastLoginAt)!, "d MMM yyyy, HH:mm")
+                        {lastLoginDate
+                          ? format(lastLoginDate, "d MMM yyyy, HH:mm")
                           : <span className="italic text-xs text-muted-foreground/60">Never</span>}
                       </TableCell>
 
                       {/* Joined */}
                       <TableCell className="tabular-nums text-sm text-muted-foreground">
-                        {s.createdAt ? format(parseDate(s.createdAt)!, "d MMM yyyy") : "–"}
+                        {joinedDate ? format(joinedDate, "d MMM yyyy") : "–"}
                       </TableCell>
 
                       {/* Actions */}

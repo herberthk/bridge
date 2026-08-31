@@ -35,18 +35,14 @@ export default async function AdminExamDetailPage({
   }
   if (!exam) notFound();
 
+  let attemptsQuery = attemptsCol().where("examId", "==", examId);
+  if (actor.role === "admin" && actor.schoolId) {
+    attemptsQuery = attemptsQuery.where("schoolId", "==", actor.schoolId);
+  }
+
   // Concurrently fetch attempts and student directory for fast initial page load
   const [attemptsSnapResult, studentsResult] = await Promise.allSettled([
-    attemptsCol()
-      .where("examId", "==", examId)
-      .where("schoolId", "==", actor.schoolId)
-      .orderBy("createdAt", "desc")
-      .limit(200)
-      .get()
-      .catch(async () => {
-        // Fallback if schoolId filter fails for standalone admins or query index fallback
-        return attemptsCol().where("examId", "==", examId).limit(200).get();
-      }),
+    attemptsQuery.orderBy("createdAt", "desc").limit(200).get(),
     listStudents(actor).catch((err) => {
       console.error("[admin/exams/detail] student directory load failed", err);
       return [] as WithId<UserDoc>[];

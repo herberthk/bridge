@@ -323,19 +323,21 @@ export function AdminDashboardView({
       ].join(",");
     });
 
-    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows].join("\n");
-    const encodedUri = encodeURI(csvContent);
+    const csvContent = [headers.join(","), ...rows].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8" });
+    const objectUrl = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
+    link.setAttribute("href", objectUrl);
     link.setAttribute("download", `exam_assessment_report_${format(new Date(), "yyyyMMdd_HHmm")}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(objectUrl);
     toast.success(`Exported assessment data for ${sortedExams.length} exams as CSV`);
   }, [sortedExams]);
 
   // ─── Copy Summary to Clipboard ──────────────────────────────────────────────
-  const handleCopySummary = useCallback(() => {
+  const handleCopySummary = useCallback(async () => {
     const summary = [
       `📊 Bridge Admin Summary — ${format(new Date(), "d MMMM yyyy")}`,
       `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`,
@@ -354,8 +356,12 @@ export function AdminDashboardView({
       ),
     ].join("\n");
 
-    navigator.clipboard.writeText(summary);
-    toast.success("Executive summary copied to clipboard!");
+    try {
+      await navigator.clipboard.writeText(summary);
+      toast.success("Executive summary copied to clipboard!");
+    } catch {
+      toast.error("Could not copy the executive summary");
+    }
   }, [
     studentCount,
     examCount,
@@ -819,6 +825,8 @@ export function AdminDashboardView({
                 />
                 {search && (
                   <button
+                    type="button"
+                    aria-label="Clear exam search"
                     onClick={() => setSearch("")}
                     className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2.5 -translate-y-1/2"
                   >

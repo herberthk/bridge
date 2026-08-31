@@ -211,8 +211,8 @@ export function RetakeRequests({
           cmp = (examTitles[a.examId] ?? "").localeCompare(examTitles[b.examId] ?? "");
           break;
         case "createdAt": {
-          const at = a.createdAt ? parseDate(a.createdAt)!.getTime() : 0;
-          const bt = b.createdAt ? parseDate(b.createdAt)!.getTime() : 0;
+          const at = a.createdAt ? (parseDate(a.createdAt)?.getTime() ?? 0) : 0;
+          const bt = b.createdAt ? (parseDate(b.createdAt)?.getTime() ?? 0) : 0;
           cmp = at - bt;
           break;
         }
@@ -362,4 +362,3 @@ export function RetakeRequests({
     </div>
   );
 }
-
