@@ -59,8 +59,10 @@ export async function gradeAttemptWithAi(attemptId: string): Promise<void> {
   let output: z.infer<typeof essayGradeSchema>;
   let tokensUsed = 0;
   try {
+    const modelId = modelIds.text();
+    const googleOptions = { thinkingConfig: thinkingOptions(modelId), structuredOutputs: false };
     const result = await generateText({
-      model: vertex("gemini-3.7-flash"),
+      model: vertex(modelId),
       instructions: [
         "You are a fair, encouraging Ugandan-curriculum examiner grading exam answers.",
         "Grade each answer against its marks (points). Be consistent and objective.",
@@ -84,9 +86,10 @@ export async function gradeAttemptWithAi(attemptId: string): Promise<void> {
       }),
       output: Output.object({ schema: essayGradeSchema }),
       temperature: 0.3,
-      maxOutputTokens: 12_000,
+      maxOutputTokens: 60_000,
       providerOptions: {
-        google: { thinkingConfig: thinkingOptions("gemini-3.7-flash") },
+        google: googleOptions,
+        googleVertex: googleOptions,
       },
     });
     output = result.output;

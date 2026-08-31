@@ -31,12 +31,14 @@ function Toggle({
   className,
   variant = "default",
   size = "default",
+  nativeButton,
   ...props
 }: TogglePrimitive.Props & VariantProps<typeof toggleVariants>) {
   return (
     <TogglePrimitive
       data-slot="toggle"
       className={cn(toggleVariants({ variant, size, className }))}
+      nativeButton={nativeButton ?? (props.render ? false : undefined)}
       {...props}
     />
   )

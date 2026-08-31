@@ -322,6 +322,7 @@ export async function reviseQuestions(
       // repetition loop on long prose fields. See `genSingle` in `exams.ts`.
       providerOptions: {
         google: { thinkingConfig: thinkingOptions(modelId), structuredOutputs: false },
+        googleVertex: { thinkingConfig: thinkingOptions(modelId), structuredOutputs: false },
       },
     });
     output = result.output as QuestionRevisionOutput;

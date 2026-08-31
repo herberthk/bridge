@@ -193,8 +193,6 @@ function toCases(body: string): string {
 
 function balanceEnvironments(body: string): string {
   let out = body;
-function balanceEnvironments(body: string): string {
-  let out = body;
   for (const match of body.matchAll(/\\begin\{([a-zA-Z*]+)\}/g)) {
     const env = match[1]!;
     const name = env.replace(/\*/g, "\\*");
@@ -202,8 +200,6 @@ function balanceEnvironments(body: string): string {
     const ends = countMatches(out, new RegExp(`\\\\end\\{${name}\\}`, "g"));
     for (let k = ends; k < begins; k += 1) out += `\\end{${env}}`;
   }
-  return out;
-}
   return out;
 }
 
