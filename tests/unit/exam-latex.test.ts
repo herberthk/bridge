@@ -71,6 +71,87 @@ describe("repairMath: piecewise definitions", () => {
     expect(repairMath(good)).toBe(good);
   });
 
+  it("recovers cases with orphaned trailing conditions (live screenshot regression)", () => {
+    const broken =
+      "A continuous random variable $X$ has a probability density function given by: " +
+      "$f(x) = \\begin{cases} kx(2-x), \\\\ 0, \\end{cases}$ $0 \\le x \\le 2$ $\\text{otherwise}$ " +
+      "Determine the exact value of $\\text{Var}(3X-2)$.";
+    const out = repairMath(broken);
+    expect(out).toContain("\\begin{cases}");
+    expect(out).toContain("kx(2-x) & 0 \\le x \\le 2");
+    expect(out).toContain("0 & \\text{otherwise}");
+    expect(out).toContain("\\end{cases}");
+    expect(out).toContain("A continuous random variable $X$ has");
+    expect(out).toContain("Determine the exact value of $\\text{Var}(3X-2)$.");
+  });
+
+  it("repairs cases whose rows omit the ampersand before the condition", () => {
+    const missingAmpersands =
+      "$$f(x) = \\begin{cases} kx(2-x), 0 \\le x \\le 2 \\\\ 0, \\text{otherwise} \\end{cases}$$";
+    const out = repairMath(missingAmpersands);
+    expect(out).toContain("kx(2-x) & 0 \\le x \\le 2");
+    expect(out).toContain("0 & \\text{otherwise}");
+  });
+
+  it("textualizes conditions in rows that already contain an ampersand", () => {
+    const out = repairMath(
+      "$$f(x) = \\begin{cases} x & x > 0 \\\\ 0 & otherwise \\end{cases}$$",
+    );
+    expect(out).toContain("0 & \\text{otherwise}");
+  });
+
+  it("converts \\left\\{ \\begin{matrix} piecewise definitions to cases", () => {
+    const matrixDef =
+      "$f(x) = \\left\\{ \\begin{matrix} kx(2-x) & 0 \\le x \\le 2 \\\\ 0 & \\text{otherwise} \\end{matrix} \\right.$";
+    const out = repairMath(matrixDef);
+    expect(out).toContain("\\begin{cases}");
+    expect(out).toContain("kx(2-x) & 0 \\le x \\le 2");
+    expect(out).toContain("0 & \\text{otherwise}");
+    expect(out).toContain("\\end{cases}");
+  });
+
+  it("handles escaped brace piecewise definitions with \\{", () => {
+    const escapedBrace =
+      "$f(x) = \\{ kx(2-x), 0 \\le x \\le 2 \\\\ 0, \\text{otherwise}$";
+    const out = repairMath(escapedBrace);
+    expect(out).toContain("\\begin{cases}");
+    expect(out).toContain("kx(2-x) & 0 \\le x \\le 2");
+    expect(out).toContain("0 & \\text{otherwise}");
+    expect(out).toContain("\\end{cases}");
+  });
+
+  it("promotes sentence-embedded cases to display math blocks (latest screenshot regression)", () => {
+    const prompt =
+      "A continuous random variable $X$ has the probability density function: " +
+      "$f(x) = \\begin{cases} \\frac{3}{32}(x-1)(5-x) & 1 \\le x \\le 5 \\\\ 0 & \\text{otherwise} \\end{cases}$ " +
+      "Determine the exact value of $\\text{Var}(X)$.";
+    const out = repairMath(prompt);
+    expect(out).toContain("$$f(x) = \\begin{cases}");
+    expect(out).toContain("\\end{cases}$$");
+    expect(out).toContain("A continuous random variable $X$ has");
+    expect(out).toContain("Determine the exact value of $\\text{Var}(X)$.");
+    // Ensure display block is isolated by newlines
+    expect(out).toMatch(/\n\n\$\$f\(x\)/);
+  });
+
+  it("formats worked example steps with bold step titles and paragraph breaks", () => {
+    const rawSteps =
+      "Step 1: By symmetry, E(X) = 3. Step 2: Let u = x - 3, so x = u + 3 and -2 <= u <= 2. Step 3: Var(X) = E(u^2). Step 4: Finish.";
+    const out = repairMath(rawSteps);
+    expect(out).toContain("**Step 1:**");
+    expect(out).toContain("**Step 2:**");
+    expect(out).toContain("**Step 3:**");
+    expect(out).toContain("**Step 4:**");
+    expect(out).toContain("\n\n**Step 2:**");
+    expect(out).toContain("\n\n**Step 3:**");
+  });
+
+  it("formats alphabetic step and part headings without maths", () => {
+    const out = repairMath("Part A: Establish the result. Step B: Apply it.");
+    expect(out).toContain("**Part A:** Establish the result.");
+    expect(out).toContain("**Step B:** Apply it.");
+  });
+
   it("does not rewrite a brace group that is an argument, not a definition", () => {
     // The dangerous false positive: every `\frac`, `^{}` and `_{}` in the paper is
     // a brace group following something, and rewriting one corrupts working maths.

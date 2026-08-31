@@ -15,28 +15,49 @@ export default async function AdminExamsPage() {
   let students: WithId<UserDoc>[] = [];
   let retakeCounts: Record<string, number> = {};
   let loadFailed = false;
+  let examListIncomplete = false;
   try {
-    [exams, students] = await Promise.all([
-      listExams(actor),
+    const [examResult, loadedStudents] = await Promise.all([
+      listExams(actor, 200),
       listStudents(actor),
     ]);
+    exams = examResult.exams;
+    students = loadedStudents;
+    examListIncomplete = examResult.partial || !examResult.ordered;
     try {
       const map = await getRetakeCountsByExam(actor);
       retakeCounts = Object.fromEntries(map.entries());
-    } catch {}
+    } catch {
+      // Non-critical: Retake counts can fail gracefully
+    }
   } catch (err) {
     console.error("[admin/exams] load failed", err);
     loadFailed = true;
   }
 
   return (
-    <>
+    <div className="flex flex-col gap-6">
       {loadFailed && (
-        <p className="text-destructive rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
-          Your exam library could not be loaded. Try refreshing the page.
-        </p>
+        <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive shadow-xs">
+          <p className="font-medium">Failed to load exam library</p>
+          <p className="mt-0.5 text-xs text-destructive/80">
+            Some data could not be fetched from the database. Please try refreshing the page.
+          </p>
+        </div>
       )}
-      <ExamLibrary exams={serializeDocs(exams)} students={serializeDocs(students)} retakeCounts={retakeCounts} />
-    </>
+      {examListIncomplete && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 shadow-xs dark:text-amber-300">
+          <p className="font-medium">The exam library may be incomplete or out of order</p>
+          <p className="mt-0.5 text-xs opacity-80">
+            The creation-date query failed, so this page is showing a limited, unordered fallback.
+          </p>
+        </div>
+      )}
+      <ExamLibrary
+        exams={serializeDocs(exams)}
+        students={serializeDocs(students)}
+        retakeCounts={retakeCounts}
+      />
+    </div>
   );
 }

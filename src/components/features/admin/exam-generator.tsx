@@ -129,6 +129,7 @@ const STEPS = [
   { id: "curriculum", label: "Curriculum", icon: BookOpenIcon, desc: "Level & topic" },
   { id: "format", label: "Format", icon: LayersIcon, desc: "Types & timing" },
   { id: "rules", label: "Rules & Source", icon: ShieldCheckIcon, desc: "Policy & docs" },
+  { id: "review", label: "Review", icon: ClipboardCheckIcon, desc: "Summary & generate" },
 ] as const;
 
 /**
@@ -156,6 +157,7 @@ const STEP_FIELDS: readonly (readonly (keyof FormValues)[])[] = [
     "enableCameraRecording",
     "enableScreenRecording",
   ],
+  [], // Review step has no form validation fields
 ];
 
 /**
@@ -189,6 +191,9 @@ const premiumTrigger =
   "h-11 rounded-xl border bg-card shadow-card hover:shadow-lifted hover:border-primary/20 data-[state=open]:border-primary data-[state=open]:ring-2 data-[state=open]:ring-primary/20 data-[state=open]:shadow-glow transition-all duration-200 group";
 const premiumContent = "rounded-2xl shadow-lifted border bg-popover/95 backdrop-blur-xl p-1.5";
 
+/** `null` = show mode picker; otherwise the wizard runs in the chosen mode. */
+type SourceMode = "pure_ai" | "document_grounded" | null;
+
 export function ExamGenerator() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -218,6 +223,7 @@ export function ExamGenerator() {
   // pins it to mount so a later URL change can't silently diverge from the
   // form the user is already editing.
   const [voice] = useState(() => readVoiceParams(searchParams));
+  const [sourceMode, setSourceMode] = useState<SourceMode>(voice.mode);
 
   const form = useForm<FormValues, unknown, ExamParamsInput>({
     resolver: zodResolver(examParamsSchema),
@@ -254,6 +260,21 @@ export function ExamGenerator() {
   const subject = useWatch({ control, name: "subject" });
   const questionCount = useWatch({ control, name: "questionCount" });
   const durationMinutes = useWatch({ control, name: "durationMinutes" });
+  const topic = useWatch({ control, name: "topic" });
+  const difficulty = useWatch({ control, name: "difficulty" });
+  const questionTypes = useWatch({ control, name: "questionTypes" });
+  const classLevel = useWatch({ control, name: "classLevel" });
+  const subsidiary = useWatch({ control, name: "subsidiary" });
+  const includeHints = useWatch({ control, name: "includeHints" });
+  const includeExplanations = useWatch({ control, name: "includeExplanations" });
+  const includeWorkedExamples = useWatch({ control, name: "includeWorkedExamples" });
+  const instructions = useWatch({ control, name: "instructions" });
+  const preventBacktrack = useWatch({ control, name: "preventBacktrack" });
+  const allowReviewBeforeSubmit = useWatch({ control, name: "allowReviewBeforeSubmit" });
+  const allowSkipping = useWatch({ control, name: "allowSkipping" });
+  const requireFullscreen = useWatch({ control, name: "requireFullscreen" });
+  const enableCameraRecording = useWatch({ control, name: "enableCameraRecording" });
+  const enableScreenRecording = useWatch({ control, name: "enableScreenRecording" });
   const subjects =
     level === "primary"
       ? COUNTRY_CURRICULA.UG.primary
@@ -279,6 +300,7 @@ export function ExamGenerator() {
    */
   const busy = generating || form.formState.isSubmitting;
   const uploadsPending = docs.some((d) => d.uploading);
+  const docsRequired = sourceMode === "document_grounded";
 
   // Fetch preview questions after generation
   useEffect(() => {
@@ -498,13 +520,20 @@ export function ExamGenerator() {
     // it — setState inside an effect body triggers a cascading render.
     setGenPct(2);
     setGenStage(0);
+    if (docsRequired && !hasGroundingDoc) {
+      toast.error("Upload at least one document — you selected document-grounded mode.");
+      setGenerating(false);
+      return;
+    }
     try {
       const res = await fetch("/api/exams/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           params: { ...values, instructions: values.instructions || null },
-          documentIds: docs.filter((d) => !d.uploading && d.parseStatus === "parsed").map((d) => d.documentId),
+          documentIds: sourceMode === "pure_ai"
+            ? []
+            : docs.filter((d) => !d.uploading && d.parseStatus === "parsed").map((d) => d.documentId),
         }),
         signal: AbortSignal.timeout(GENERATION_TIMEOUT_MS),
       });
@@ -592,11 +621,87 @@ export function ExamGenerator() {
 
   return (
     <div className="flex flex-col gap-6">
+      {sourceMode === null ? (
+        /* ── Source Mode Picker ───────────────────────────────────── */
+        <motion.div key="mode-picker" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}>
+        <div className="shadow-lifted gradient-border overflow-hidden rounded-2xl bg-card">
+          <div className="bg-brand relative overflow-hidden p-6 text-primary-foreground">
+            <div aria-hidden className="pointer-events-none absolute inset-0 opacity-[0.16]" style={{ backgroundImage: "radial-gradient(28rem 14rem at 12% 0%, rgba(255,255,255,.9), transparent 60%), radial-gradient(22rem 12rem at 88% 10%, rgba(255,255,255,.45), transparent 60%)" }} />
+            <div className="relative">
+              <p className="inline-flex items-center gap-2 text-xs font-medium tracking-wide opacity-85"><SparklesIcon className="size-3.5" /> AI Exam Generator</p>
+              <h1 className="mt-1 text-xl font-semibold tracking-tight sm:text-2xl">How should questions be sourced?</h1>
+              <p className="mt-1 max-w-prose text-sm opacity-80">Choose whether Gemini creates questions from its curriculum knowledge, or derives them exclusively from your uploaded documents.</p>
+            </div>
+          </div>
+          <div className="p-5 sm:p-6">
+            <div className="grid gap-4 sm:grid-cols-2">
+              {/* ── Pure AI card ── */}
+              <button
+                type="button"
+                onClick={() => { setDocs([]); setSourceMode("pure_ai"); setStep(0); setDir(1); }}
+                className="group relative flex flex-col gap-4 rounded-2xl border-2 border-border bg-card p-5 text-left shadow-card transition-all duration-200 hover:border-primary/40 hover:shadow-lifted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="grid size-11 place-items-center rounded-xl bg-brand text-primary-foreground shadow-glow transition-transform duration-200 group-hover:scale-105"><SparklesIcon className="size-5" /></span>
+                  <div>
+                    <p className="text-base font-semibold tracking-tight">Pure AI Generation</p>
+                    <p className="text-xs text-muted-foreground">Gemini crafts every question</p>
+                  </div>
+                </div>
+                <p className="text-sm text-muted-foreground leading-relaxed">Gemini uses its deep knowledge of the curriculum to generate original, calibrated questions. No uploads needed.</p>
+                <ul className="flex flex-col gap-2 text-sm">
+                  <li className="flex items-center gap-2"><CheckCircle2Icon className="size-3.5 shrink-0 text-emerald-500" /> Curriculum-aware &amp; auto-calibrated</li>
+                  <li className="flex items-center gap-2"><CheckCircle2Icon className="size-3.5 shrink-0 text-emerald-500" /> Instant — no uploads required</li>
+                  <li className="flex items-center gap-2"><CheckCircle2Icon className="size-3.5 shrink-0 text-emerald-500" /> Original questions every time</li>
+                </ul>
+                <span className="mt-auto inline-flex items-center gap-1.5 text-xs font-medium text-primary opacity-0 transition-opacity duration-200 group-hover:opacity-100"><ChevronRightIcon className="size-3.5" /> Select &amp; continue</span>
+              </button>
+
+              {/* ── Document-Grounded card ── */}
+              <button
+                type="button"
+                onClick={() => { setSourceMode("document_grounded"); setStep(0); setDir(1); }}
+                className="group relative flex flex-col gap-4 rounded-2xl border-2 border-border bg-card p-5 text-left shadow-card transition-all duration-200 hover:border-primary/40 hover:shadow-lifted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+              >
+                <div className="flex items-center gap-3">
+                  <span className="grid size-11 place-items-center rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 text-white shadow-glow transition-transform duration-200 group-hover:scale-105"><UploadCloudIcon className="size-5" /></span>
+                  <div>
+                    <p className="text-base font-semibold tracking-tight">Document-Grounded</p>
+                    <p className="text-xs text-muted-foreground">Source of truth from your files</p>
+                  </div>
+                </div>
+                <p className="text-sm text-muted-foreground leading-relaxed">Upload past papers, PDFs, or scanned documents. Questions are derived exclusively from your material — the AI structures and formats them.</p>
+                <ul className="flex flex-col gap-2 text-sm">
+                  <li className="flex items-center gap-2"><CheckCircle2Icon className="size-3.5 shrink-0 text-violet-500" /> Questions faithful to your source</li>
+                  <li className="flex items-center gap-2"><CheckCircle2Icon className="size-3.5 shrink-0 text-violet-500" /> PDF, DOCX &amp; TXT up to 50 MB</li>
+                  <li className="flex items-center gap-2"><CheckCircle2Icon className="size-3.5 shrink-0 text-violet-500" /> Perfect for past-paper exams</li>
+                </ul>
+                <span className="mt-auto inline-flex items-center gap-1.5 text-xs font-medium text-primary opacity-0 transition-opacity duration-200 group-hover:opacity-100"><ChevronRightIcon className="size-3.5" /> Select &amp; continue</span>
+              </button>
+            </div>
+
+            <p className="mt-4 text-center text-xs text-muted-foreground">You can change this later by going back from the first wizard step.</p>
+          </div>
+        </div>
+        </motion.div>
+      ) : (<>
       {/* ── Row layout: Create exam + Estimated cost side-by-side on lg ── */}
       <div className="grid gap-6 lg:grid-cols-3 items-start">
         {/* Left: Wizard — col-span-2 on desktop, full width on mobile */}
         <div className="lg:col-span-2 flex flex-col gap-6">
-          <form onSubmit={(e) => void onSubmit(e)} noValidate className="flex flex-col gap-0">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && e.target instanceof HTMLInputElement) {
+                e.preventDefault();
+              }
+            }}
+            noValidate
+            className="flex flex-col gap-0"
+          >
             {/* Premium header */}
             <div className="shadow-lifted gradient-border overflow-hidden rounded-2xl bg-card">
               <div className="bg-brand relative overflow-hidden p-6 text-primary-foreground">
@@ -610,6 +715,12 @@ export function ExamGenerator() {
                   <Badge variant="secondary" className="hidden shrink-0 gap-1.5 bg-white/15 text-white backdrop-blur sm:inline-flex"><ZapIcon className="size-3" /> Gemini powered</Badge>
                 </div>
                 <div className="relative mt-5 flex items-center gap-2">
+                  {/* Source mode — always done once the wizard is visible */}
+                  <button type="button" onClick={() => setSourceMode(null)} disabled={busy} className="flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-all disabled:cursor-not-allowed disabled:opacity-60 border-white/30 bg-white/10 text-white">
+                    <span className="grid size-5 place-items-center rounded-full text-[10px] font-bold bg-white text-primary"><CheckCircle2Icon className="size-3.5" /></span>
+                    <span className="hidden sm:inline">Source</span>
+                    {sourceMode === "pure_ai" ? <SparklesIcon className="hidden size-3.5 sm:block opacity-80" /> : <UploadCloudIcon className="hidden size-3.5 sm:block opacity-80" />}
+                  </button>
                   {STEPS.map((s, i) => {
                     const active = i === step;
                     const done = i < step;
@@ -622,13 +733,13 @@ export function ExamGenerator() {
                     );
                   })}
                   <div className="ml-auto hidden items-center gap-2 text-xs font-medium opacity-80 sm:flex">
-                    <span>Step {step + 1} of {STEPS.length}</span>
+                    <span>Step {step + 2} of {STEPS.length + 1}</span>
                     <span className="size-1 rounded-full bg-white/60" />
                     <span className="hidden sm:inline">{STEPS[step].desc}</span>
                   </div>
                 </div>
                 <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-white/15">
-                  <motion.div className="h-full rounded-full bg-white shadow-[0_0_12px_rgba(255,255,255,.6)]" initial={false} animate={{ width: `${((step + 1) / STEPS.length) * 100}%` }} transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }} />
+                  <motion.div className="h-full rounded-full bg-white shadow-[0_0_12px_rgba(255,255,255,.6)]" initial={false} animate={{ width: `${((step + 2) / (STEPS.length + 1)) * 100}%` }} transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }} />
                 </div>
               </div>
 
@@ -942,9 +1053,18 @@ export function ExamGenerator() {
                           </div>
                         </div>
 
+                        {sourceMode === "pure_ai" ? (
+                          <div className="rounded-2xl border border-dashed bg-muted/20 p-4">
+                            <p className="flex items-center gap-2 text-sm font-medium text-muted-foreground"><SparklesIcon className="size-4" /> Pure AI mode — no source documents</p>
+                            <p className="text-muted-foreground mt-1 text-xs">Gemini generates all questions from its curriculum knowledge. Go back to change your source mode.</p>
+                          </div>
+                        ) : (
                         <div className="rounded-2xl border bg-card p-4 shadow-card">
-                          <p className="flex items-center gap-2 text-sm font-medium"><UploadCloudIcon className="size-4 text-primary" /> Source material (optional)</p>
-                          <p className="text-muted-foreground mt-1 text-xs">PDF, DOCX, TXT up to 50 MB — grounded generation.</p>
+                          <div className="flex items-center gap-2">
+                            <p className="flex items-center gap-2 text-sm font-medium"><UploadCloudIcon className="size-4 text-primary" /> Source material</p>
+                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-amber-500/10 text-amber-700 border-amber-500/20 dark:text-amber-300">required</Badge>
+                          </div>
+                          <p className="text-muted-foreground mt-1 text-xs">Upload at least one document — questions will be derived exclusively from your material.</p>
                           <div
                             {...getRootProps()}
                             className={`mt-3 flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-6 py-7 text-center transition-all ${isDragActive ? "border-primary bg-primary/5 shadow-glow scale-[1.01]" : "hover:border-primary/40 hover:bg-accent/20"}`}
@@ -995,24 +1115,204 @@ export function ExamGenerator() {
                               ))}
                             </AnimatePresence>
                           </ul>
+                          {!hasGroundingDoc && <p className="mt-3 text-center text-xs font-medium text-amber-600 dark:text-amber-400">Upload at least one readable document to enable generation.</p>}
                         </div>
+                        )}
                       </FieldGroup>
+                    )}
+
+                    {step === 3 && (
+                      <div className="flex flex-col gap-4">
+                        <div>
+                          <h3 className="text-base font-semibold tracking-tight">Review exam configuration</h3>
+                          <p className="text-muted-foreground text-xs">Verify all parameters and source material before starting Gemini generation.</p>
+                        </div>
+
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          {/* 1. Source & Curriculum */}
+                          <div className="rounded-2xl border bg-card p-4 shadow-card flex flex-col justify-between">
+                            <div>
+                              <div className="flex items-center justify-between">
+                                <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                  <BookOpenIcon className="size-3.5 text-primary" /> Curriculum &amp; Topic
+                                </span>
+                                <Button type="button" variant="ghost" size="xs" onClick={() => go(0)} className="h-6 text-xs text-primary hover:underline px-1.5">
+                                  Edit
+                                </Button>
+                              </div>
+                              <div className="mt-3 space-y-2">
+                                <div>
+                                  <p className="text-xs text-muted-foreground">Subject &amp; Level</p>
+                                  <p className="text-sm font-semibold text-foreground">
+                                    {SUBJECT_LABELS[subject as keyof typeof SUBJECT_LABELS] ?? subject}
+                                    {subsidiary ? ` · ${SUBSIDIARY_LABELS[subsidiary] ?? subsidiary}` : ""}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {level === "primary"
+                                      ? `Primary · Class P${classLevel}`
+                                      : `Secondary (${subLevel === "a_level" ? "A-Level" : "O-Level"}) · Class S${classLevel}`}
+                                  </p>
+                                </div>
+                                <div>
+                                  <p className="text-xs text-muted-foreground">Topic / Theme</p>
+                                  <p className="text-sm font-medium text-foreground">{topic || "Not specified"}</p>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="mt-3 pt-3 border-t flex items-center justify-between text-xs text-muted-foreground">
+                              <span>Source Mode</span>
+                              <Badge variant={sourceMode === "pure_ai" ? "secondary" : "default"} className="text-[10px] gap-1">
+                                {sourceMode === "pure_ai" ? <SparklesIcon className="size-3" /> : <UploadCloudIcon className="size-3" />}
+                                {sourceMode === "pure_ai" ? "Pure AI" : `Grounded (${docs.filter(d => d.parseStatus === "parsed").length} docs)`}
+                              </Badge>
+                            </div>
+                          </div>
+
+                          {/* 2. Format & Calibration */}
+                          <div className="rounded-2xl border bg-card p-4 shadow-card flex flex-col justify-between">
+                            <div>
+                              <div className="flex items-center justify-between">
+                                <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                  <LayersIcon className="size-3.5 text-primary" /> Format &amp; Calibration
+                                </span>
+                                <Button type="button" variant="ghost" size="xs" onClick={() => go(1)} className="h-6 text-xs text-primary hover:underline px-1.5">
+                                  Edit
+                                </Button>
+                              </div>
+                              <div className="mt-3 space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <div>
+                                    <p className="text-xs text-muted-foreground">Volume &amp; Timing</p>
+                                    <p className="text-sm font-semibold text-foreground">{questionCount} Questions · {durationMinutes} min</p>
+                                  </div>
+                                  <div className="text-right">
+                                    <p className="text-xs text-muted-foreground">Difficulty</p>
+                                    <Badge variant="outline" className="gap-1 capitalize text-xs">
+                                      <span className={`size-2 rounded-full ${difficulty === "easy" ? "bg-emerald-500" : difficulty === "medium" ? "bg-amber-500" : difficulty === "hard" ? "bg-orange-500" : "bg-red-500"}`} />
+                                      {DIFFICULTY_LABELS[difficulty as keyof typeof DIFFICULTY_LABELS] ?? difficulty}
+                                    </Badge>
+                                  </div>
+                                </div>
+                                <div>
+                                  <p className="text-xs text-muted-foreground">Question Types</p>
+                                  <div className="mt-1 flex flex-wrap gap-1">
+                                    {(questionTypes ?? []).map((t) => (
+                                      <Badge key={t} variant="secondary" className="text-[10px]">
+                                        {QUESTION_TYPE_LABELS[t as keyof typeof QUESTION_TYPE_LABELS] ?? t}
+                                      </Badge>
+                                    ))}
+                                  </div>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5 pt-1 text-[11px] text-muted-foreground">
+                                  {includeHints && <span className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5">Hints</span>}
+                                  {includeExplanations && <span className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5">Explanations</span>}
+                                  {includeWorkedExamples && <span className="inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5">Worked Examples</span>}
+                                </div>
+                              </div>
+                            </div>
+                            {instructions && (
+                              <div className="mt-3 pt-3 border-t text-xs">
+                                <p className="text-muted-foreground">Instructions: <span className="font-medium text-foreground italic line-clamp-1">{instructions}</span></p>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* 3. Session Policy */}
+                          <div className="rounded-2xl border bg-card p-4 shadow-card flex flex-col justify-between">
+                            <div>
+                              <div className="flex items-center justify-between">
+                                <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                  <ShieldCheckIcon className="size-3.5 text-primary" /> Session Security
+                                </span>
+                                <Button type="button" variant="ghost" size="xs" onClick={() => go(2)} className="h-6 text-xs text-primary hover:underline px-1.5">
+                                  Edit
+                                </Button>
+                              </div>
+                              <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`size-2 rounded-full ${preventBacktrack ? "bg-emerald-500" : "bg-muted-foreground/30"}`} />
+                                  <span className={preventBacktrack ? "text-foreground font-medium" : "text-muted-foreground"}>No backtracking</span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`size-2 rounded-full ${allowReviewBeforeSubmit ? "bg-emerald-500" : "bg-muted-foreground/30"}`} />
+                                  <span className={allowReviewBeforeSubmit ? "text-foreground font-medium" : "text-muted-foreground"}>Review enabled</span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`size-2 rounded-full ${allowSkipping ? "bg-emerald-500" : "bg-muted-foreground/30"}`} />
+                                  <span className={allowSkipping ? "text-foreground font-medium" : "text-muted-foreground"}>Skipping allowed</span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`size-2 rounded-full ${requireFullscreen ? "bg-emerald-500" : "bg-muted-foreground/30"}`} />
+                                  <span className={requireFullscreen ? "text-foreground font-medium" : "text-muted-foreground"}>Fullscreen locked</span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`size-2 rounded-full ${enableCameraRecording ? "bg-emerald-500" : "bg-muted-foreground/30"}`} />
+                                  <span className={enableCameraRecording ? "text-foreground font-medium" : "text-muted-foreground"}>Camera recording</span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`size-2 rounded-full ${enableScreenRecording ? "bg-emerald-500" : "bg-muted-foreground/30"}`} />
+                                  <span className={enableScreenRecording ? "text-foreground font-medium" : "text-muted-foreground"}>Screen recording</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* 4. Grounding Material or Cost Quota */}
+                          <div className="rounded-2xl border bg-card p-4 shadow-card flex flex-col justify-between">
+                            <div>
+                              <div className="flex items-center justify-between">
+                                <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                                  {sourceMode === "document_grounded" ? <UploadCloudIcon className="size-3.5 text-primary" /> : <ZapIcon className="size-3.5 text-primary" />}
+                                  {sourceMode === "document_grounded" ? "Source Documents" : "Generation Estimate"}
+                                </span>
+                                {sourceMode === "document_grounded" && (
+                                  <Button type="button" variant="ghost" size="xs" onClick={() => go(2)} className="h-6 text-xs text-primary hover:underline px-1.5">
+                                    Edit
+                                  </Button>
+                                )}
+                              </div>
+                              {sourceMode === "document_grounded" ? (
+                                <div className="mt-3 space-y-1.5">
+                                  {docs.filter(d => d.parseStatus === "parsed").length > 0 ? (
+                                    docs.filter(d => d.parseStatus === "parsed").map(d => (
+                                      <div key={d.documentId} className="flex items-center justify-between rounded-lg bg-muted/40 px-2.5 py-1.5 text-xs">
+                                        <span className="truncate max-w-[180px] font-medium">{d.name}</span>
+                                        <span className="text-muted-foreground tabular-nums text-[11px]">{d.sizeLabel}</span>
+                                      </div>
+                                    ))
+                                  ) : (
+                                    <p className="text-xs text-amber-600 dark:text-amber-400 font-medium">No valid documents uploaded yet.</p>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="mt-3 space-y-2">
+                                  <p className="text-xs text-muted-foreground">Estimated tokens: <strong className="text-foreground">{estimate.toLocaleString()}</strong></p>
+                                  <p className="text-xs text-muted-foreground">Holding reserve: <strong className="text-foreground">{formatTokens(reserve)} tokens</strong></p>
+                                  <p className="text-[11px] text-muted-foreground leading-relaxed">Questions drafted with curriculum calibration.</p>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     )}
                   </motion.div>
                 </AnimatePresence>
 
                 {/* Wizard nav — explicit Generate button */}
                 <div className="mt-6 flex items-center justify-between gap-3 border-t pt-5">
-                  <Button type="button" variant="outline" onClick={() => go(step - 1)} disabled={step === 0} className="min-w-[96px] rounded-xl">
+                  <Button type="button" variant="outline" onClick={() => { if (step === 0) { setSourceMode(null); } else { go(step - 1); } }} className="min-w-[96px] rounded-xl">
                     <ChevronLeftIcon data-icon="inline-start" /> Back
                   </Button>
                   <div className="hidden items-center gap-1.5 sm:flex">
+                    <span className="h-1.5 w-3 rounded-full bg-primary/40" />
                     {STEPS.map((_, i) => (
                       <span key={i} className={`h-1.5 rounded-full transition-all ${i === step ? "w-6 bg-primary" : i < step ? "w-3 bg-primary/40" : "w-3 bg-muted-foreground/20"}`} />
                     ))}
                   </div>
                   {step < STEPS.length - 1 ? (
                     <Button
+                      key="btn-next"
                       type="button"
                       onClick={async () => {
                         if (await canNext()) go(step + 1);
@@ -1022,7 +1322,14 @@ export function ExamGenerator() {
                       Next <ChevronRightIcon data-icon="inline-end" />
                     </Button>
                   ) : (
-                    <Button type="submit" size="lg" className="shadow-glow h-11 min-w-[168px] rounded-xl font-semibold" disabled={busy || uploadsPending}>
+                    <Button
+                      key="btn-generate"
+                      type="button"
+                      onClick={() => void onSubmit()}
+                      size="lg"
+                      className="shadow-glow h-11 min-w-[168px] rounded-xl font-semibold"
+                      disabled={busy || uploadsPending || (docsRequired && !hasGroundingDoc)}
+                    >
                       {busy ? (
                         <>
                           <Loader2Icon data-icon="inline-start" className="animate-spin" /> Generating… {Math.round(genPct)}%
@@ -1072,7 +1379,7 @@ export function ExamGenerator() {
                     // This CTA sits outside the <form>, so submit programmatically.
                     // `onInvalid` handles jumping to the offending step.
                     onClick={() => void onSubmit()}
-                    disabled={busy || uploadsPending}
+                    disabled={busy || uploadsPending || (docsRequired && !hasGroundingDoc)}
                     className="shadow-glow hidden h-11 w-full rounded-xl font-semibold lg:inline-flex"
                   >
                     {busy ? (
@@ -1088,7 +1395,7 @@ export function ExamGenerator() {
                   <p className="hidden text-center text-[11px] text-muted-foreground lg:block">Explicit click required — we never generate on step change.</p>
                 </>
               ) : (
-                <p className="hidden text-center text-xs text-muted-foreground lg:block">Complete Curriculum and Format steps first — generation unlocks on the last step.</p>
+                <p className="hidden text-center text-xs text-muted-foreground lg:block">Complete configuration — generation unlocks on the Review step.</p>
               )}
 
               {/* Premium staged loader */}
@@ -1130,7 +1437,7 @@ export function ExamGenerator() {
                 <Button
                   type="button"
                   onClick={() => void onSubmit()}
-                  disabled={busy || uploadsPending}
+                  disabled={busy || uploadsPending || (docsRequired && !hasGroundingDoc)}
                   className="shadow-glow h-11 w-full rounded-xl font-semibold lg:hidden"
                 >
                   {busy ? (
@@ -1144,7 +1451,7 @@ export function ExamGenerator() {
                   )}
                 </Button>
               ) : (
-                <p className="text-center text-xs text-muted-foreground lg:hidden">Generation unlocks on the last step (Rules & Source).</p>
+                <p className="text-center text-xs text-muted-foreground lg:hidden">Generation unlocks on the Review step.</p>
               )}
 
               {!generating && result && (
@@ -1242,12 +1549,13 @@ export function ExamGenerator() {
 
               <div className="mt-6 flex flex-wrap gap-2">
                 <Button onClick={() => router.push(`/admin/exams/${result.examId}/review`)} className="shadow-glow rounded-xl"><ClipboardCheckIcon /> Review all {result.questions} questions</Button>
-                <Button variant="outline" onClick={() => { setResult(null); setPreviewQuestions(null); }} className="rounded-xl">Create another</Button>
+                <Button variant="outline" onClick={() => { setResult(null); setPreviewQuestions(null); setSourceMode(null); setDocs([]); }} className="rounded-xl">Create another</Button>
               </div>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
+      </>)}
     </div>
   );
 }
@@ -1322,6 +1630,17 @@ function readVoiceParams(sp: ReadonlyURLSearchParams) {
       ? requestedSubsidiary
       : null;
 
+  // Source mode hand-off: `?mode=grounded` skips the picker, `?mode=pure_ai`
+  // goes straight to the AI wizard, anything else (including absent) shows the
+  // mode picker so the admin makes an explicit choice.
+  const rawMode = sp.get("mode");
+  const mode: SourceMode =
+    rawMode === "pure_ai"
+      ? "pure_ai"
+      : rawMode === "grounded" || rawMode === "document_grounded"
+        ? "document_grounded"
+        : null;
+
   return {
     level,
     subLevel,
@@ -1333,5 +1652,6 @@ function readVoiceParams(sp: ReadonlyURLSearchParams) {
     durationMinutes: readInt(sp.get("duration"), 45, EXAM_DURATION_MIN, EXAM_DURATION_MAX),
     questionCount: readInt(sp.get("count"), 20, EXAM_QUESTIONS_MIN, EXAM_QUESTIONS_MAX),
     questionTypes,
+    mode,
   };
 }

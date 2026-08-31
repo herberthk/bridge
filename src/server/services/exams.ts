@@ -1754,11 +1754,17 @@ export async function assignExam(
   return created;
 }
 
+export interface ExamListResult {
+  exams: WithId<ExamDoc>[];
+  partial: boolean;
+  ordered: boolean;
+}
+
 export async function listExams(
   actor: SessionUser,
-  limit = 50,
-): Promise<WithId<ExamDoc>[]> {
-  let query = examsCol().orderBy("createdAt", "desc").limit(limit);
+  limit = 200,
+): Promise<ExamListResult> {
+  let query: FirebaseFirestore.Query<ExamDoc> = examsCol().orderBy("createdAt", "desc").limit(limit);
   if (actor.role === "admin" && actor.schoolId) {
     query = examsCol()
       .where("schoolId", "==", actor.schoolId)
@@ -1770,8 +1776,37 @@ export async function listExams(
       .orderBy("createdAt", "desc")
       .limit(limit);
   }
-  const snap = await query.get();
-  return snap.docs.map((d) => ({ id: d.id, ...d.data()! }));
+  let snap: FirebaseFirestore.QuerySnapshot<ExamDoc>;
+  let usedFallback = false;
+  try {
+    snap = await query.get();
+  } catch (error) {
+    usedFallback = true;
+    console.error("[exams] ordered exam query failed; using a partial, unordered fallback", {
+      actorId: actor.uid,
+      actorRole: actor.role,
+      schoolId: actor.schoolId ?? null,
+      limit,
+      error,
+    });
+    let fallbackQuery: FirebaseFirestore.Query<ExamDoc> = examsCol().limit(limit);
+    if (actor.role === "admin" && actor.schoolId) {
+      fallbackQuery = examsCol().where("schoolId", "==", actor.schoolId).limit(limit);
+    } else if (actor.role === "admin") {
+      fallbackQuery = examsCol().where("createdBy", "==", actor.uid).limit(limit);
+    }
+    snap = await fallbackQuery.get();
+  }
+  const exams = snap.docs.map((d) => {
+    const data = d.data();
+    return {
+      id: d.id,
+      ...data,
+      createdAt: data?.createdAt ?? (d.createTime as unknown as Timestamp),
+      updatedAt: data?.updatedAt ?? (d.updateTime as unknown as Timestamp) ?? data?.createdAt ?? (d.createTime as unknown as Timestamp),
+    };
+  });
+  return { exams, partial: usedFallback, ordered: !usedFallback };
 }
 
 export async function getExamForActor(
