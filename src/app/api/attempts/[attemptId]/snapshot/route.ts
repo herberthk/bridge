@@ -2,7 +2,6 @@ import { NextResponse, type NextRequest } from "next/server";
 import { generateText, Output } from "ai";
 import { z } from "zod";
 
-import { google } from "@/server/ai/provider";
 import { apiUser } from "@/server/auth/session";
 import {
   assertAttemptOwner,
@@ -74,7 +73,7 @@ export async function POST(
         },
       ],
       output: Output.object({ schema: verdictSchema }),
-      // maxOutputTokens: 60_000,
+      maxOutputTokens: 2_000,
     });
     verdict = result.output;
     const usage = result.usage;

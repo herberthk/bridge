@@ -129,6 +129,7 @@ export function ExamReviewWorkspace({
   /** Ids with a revision call in flight. */
   const [revising, setRevising] = useState<string[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [assignOpen, setAssignOpen] = useState(false);
   const [pending, startWrite] = useTransition();
 
   // Batching and view state (Dynamic for up to 60 questions with 7/batch)
@@ -477,6 +478,8 @@ export function ExamReviewWorkspace({
               students={students}
               variant="default"
               label={progress.complete ? "Assign to students" : "Assign exam"}
+              open={assignOpen}
+              onOpenChange={setAssignOpen}
             />
           </div>
         </div>
@@ -808,10 +811,7 @@ export function ExamReviewWorkspace({
               hasPrevious={selectedIndex > 0}
               hasNext={selectedIndex < questions.length - 1}
               isAllComplete={progress.complete}
-              onAssignClick={() => {
-                const btn = document.querySelector('[data-assign-trigger="true"]') as HTMLElement | null;
-                btn?.click();
-              }}
+              onAssignClick={() => setAssignOpen(true)}
             />
           )}
         </div>

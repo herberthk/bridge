@@ -188,7 +188,7 @@ function getInitials(name: string): string {
 /** Luxury Brand Mark with shimmering gradient & backdrop glow. */
 const BrandMark = memo(function BrandMark() {
   return (
-    <div className="relative flex size-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 via-purple-600 to-pink-500 shadow-md shadow-indigo-500/20 ring-1 ring-white/25 transition-transform duration-300 group-hover/brand:scale-105">
+    <div className="relative flex size-9 shrink-0 items-center justify-center rounded-xl bg-linear-to-br from-indigo-500 via-purple-600 to-pink-500 shadow-md shadow-indigo-500/20 ring-1 ring-white/25 transition-transform duration-300 group-hover/brand:scale-105">
       <div className="absolute inset-0 rounded-xl bg-white/10 opacity-0 transition-opacity duration-300 group-hover/brand:opacity-100" />
       <svg
         viewBox="0 0 24 24"
@@ -492,7 +492,7 @@ const UserAccountMenu = memo(function UserAccountMenu({
           <Avatar size="default" className="size-8.5 ring-1.5 ring-background shadow-xs">
             <AvatarFallback
               className={cn(
-                "bg-gradient-to-br font-semibold text-xs transition-transform duration-200 group-hover/user:scale-105",
+                "bg-linear-to-br font-semibold text-xs transition-transform duration-200 group-hover/user:scale-105",
                 avatarGradient
               )}
             >
@@ -529,7 +529,7 @@ const UserAccountMenu = memo(function UserAccountMenu({
         <DropdownMenuLabel className="p-2 font-normal">
           <div className="flex items-center gap-3">
             <Avatar size="lg" className="size-10 ring-1 ring-border">
-              <AvatarFallback className={cn("bg-gradient-to-br font-semibold text-sm", avatarGradient)}>
+              <AvatarFallback className={cn("bg-linear-to-br font-semibold text-sm", avatarGradient)}>
                 {initials}
               </AvatarFallback>
             </Avatar>
@@ -689,7 +689,7 @@ export function AppShell({
                 <BrandMark />
                 <div className="flex flex-col leading-tight group-data-[collapsible=icon]:hidden">
                   <div className="flex items-center gap-1.5">
-                    <span className="font-bold tracking-tight text-base bg-gradient-to-r from-foreground via-foreground to-foreground/75 bg-clip-text text-transparent">
+                    <span className="font-bold tracking-tight text-base bg-linear-to-r from-foreground via-foreground to-foreground/75 bg-clip-text text-transparent">
                       Bridge
                     </span>
                   </div>
