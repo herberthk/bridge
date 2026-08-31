@@ -50,7 +50,14 @@ export function createConverter<T>(): FirebaseFirestore.FirestoreDataConverter<T
       return stripUndefined(data) as FirebaseFirestore.DocumentData;
     },
     fromFirestore(snapshot: FirebaseFirestore.QueryDocumentSnapshot): T {
-      return snapshot.data() as T;
+      const data = snapshot.data();
+      const createdAt = data?.createdAt ?? snapshot.createTime;
+      const updatedAt = data?.updatedAt ?? snapshot.updateTime ?? createdAt;
+      return {
+        ...data,
+        ...(createdAt ? { createdAt } : {}),
+        ...(updatedAt ? { updatedAt } : {}),
+      } as T;
     },
   };
 }

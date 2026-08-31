@@ -12,11 +12,11 @@
  *
  * The failure it exists for: the model is asked for LaTeX and mostly obliges,
  * but a piecewise definition comes back as a bare brace group —
- * `$f(x) = {kx(2-x), 0 \le x \le 2, 0, \text{otherwise}$` — rather than as
- * `\begin{cases}`. KaTeX reads `{` as the start of a group that is never closed,
- * so the whole span fails and the conditions land underneath the formula as
- * unstyled text. Nothing downstream can recover it, because by then the exam is
- * stored and a student is looking at it.
+ * `$f(x) = {kx(2-x), 0 \le x \le 2, 0, \text{otherwise}$` — or as an inline
+ * `cases` block cramped inside a sentence, or where conditions were dropped or
+ * orphaned outside as unstyled text underneath the formula. Nothing downstream can
+ * recover it unless repaired here, because by then the exam is stored and a
+ * student is looking at it.
  *
  * Everything here is pure and dependency-free on purpose: it is imported by a
  * server service, by client components, and by a `environment: "node"` Vitest
@@ -54,7 +54,7 @@ const DISPLAY_ENV =
 
 /** Markers that make a fragment a *condition* rather than a *value* in a piecewise definition. */
 const CONDITION =
-  /\\l(?:e|eq|t)\b|\\g(?:e|eq|t)\b|\\neq?\b|\\in\b|\\text\s*\{\s*(?:otherwise|elsewhere|else)|\botherwise\b|\belsewhere\b|[<>≤≥≠]/i;
+  /\\l(?:e|eq|t)\b|\\g(?:e|eq|t)\b|\\neq?\b|\\in\b|\\text\s*\{\s*(?:otherwise|elsewhere|else|if|when)|\b(?:otherwise|elsewhere|else|if|when)\b|[<>≤≥≠]/i;
 
 /** Fenced blocks and inline code are markdown, not maths, and are passed through untouched. */
 const CODE_SPLIT = /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]+`)/;
@@ -100,10 +100,59 @@ function splitTopLevel(body: string, separators: readonly string[]): string[] {
 
 /** Renders `otherwise`/`else` upright, the way an examiner would set it. */
 function textualize(condition: string): string {
-  return condition.replace(
+  let res = condition.replace(
     /(^|[^\\{a-zA-Z])(otherwise|elsewhere|else)\b/gi,
     (_m, lead: string, word: string) => `${lead}\\text{${word}}`,
   );
+  // Clean up any double \text{\text{...}}
+  res = res.replace(/\\text\{\\text\{([^}]+)\}\}/g, "\\text{$1}");
+  return res.trim();
+}
+
+/**
+ * Cleans one row intended for a cases environment, ensuring value and condition
+ * are separated by `&` and words like `otherwise` are textualized.
+ */
+function cleanCasesRow(row: string): string {
+  const trimmed = row.trim();
+  if (!trimmed) return "";
+  if (trimmed.includes("&")) {
+    return trimmed.replace(/[,;]\s*(?=&)/g, " ").replace(/\s+&/, " &");
+  }
+
+  // Comma-separated value and condition: `kx(2-x), 0 \le x \le 2`
+  const commaParts = splitTopLevel(trimmed, [","]);
+  const lastCommaPart = commaParts[commaParts.length - 1];
+  if (commaParts.length >= 2 && lastCommaPart && CONDITION.test(lastCommaPart)) {
+    commaParts.pop();
+    return `${commaParts.join(", ").trim()} & ${textualize(lastCommaPart)}`;
+  }
+
+  // Semicolon-separated: `kx(2-x); 0 \le x \le 2`
+  const semiParts = splitTopLevel(trimmed, [";"]);
+  const lastSemiPart = semiParts[semiParts.length - 1];
+  if (semiParts.length >= 2 && lastSemiPart && CONDITION.test(lastSemiPart)) {
+    semiParts.pop();
+    return `${semiParts.join("; ").trim()} & ${textualize(lastSemiPart)}`;
+  }
+
+  // Suffix condition with `\text{otherwise}` or `otherwise`
+  if (/\b(?:\\text\s*\{\s*(?:otherwise|elsewhere|else)\s*\}|otherwise|elsewhere|else)\b/i.test(trimmed)) {
+    const match = /(?:[,;]|\s+)?(\\text\s*\{\s*(?:otherwise|elsewhere|else)\s*\}|\b(?:otherwise|elsewhere|else)\b.*$)/i.exec(trimmed);
+    if (match && match.index > 0) {
+      const val = trimmed.slice(0, match.index).trim();
+      const cond = match[1]!.trim();
+      if (val) return `${val} & ${textualize(cond)}`;
+    }
+  }
+
+  // Separated by `\quad` or `\qquad` before a condition: `kx(2-x) \quad 0 \le x \le 2`
+  const quadMatch = /^(.*?)(?:\\qquad|\\quad|\s{2,})([^\\]*(?:\\le|\\ge|<|>|\\in|\\text|otherwise|≤|≥).*)$/i.exec(trimmed);
+  if (quadMatch && quadMatch[1] && quadMatch[2] && CONDITION.test(quadMatch[2])) {
+    return `${quadMatch[1].trim()} & ${textualize(quadMatch[2].trim())}`;
+  }
+
+  return trimmed;
 }
 
 /**
@@ -116,20 +165,9 @@ function casesRows(inner: string): string | null {
   const byRow = splitTopLevel(inner, ["\\\\"]);
 
   if (byRow.length > 1) {
-    // The model already separated the cases; it just never opened the environment.
+    // The model already separated the cases; clean each row.
     for (const row of byRow) {
-      if (row.includes("&")) {
-        rows.push(row.replace(/,\s*(?=&)/, " "));
-        continue;
-      }
-      const parts = splitTopLevel(row, [","]);
-      const last = parts[parts.length - 1];
-      if (parts.length >= 2 && last && CONDITION.test(last)) {
-        parts.pop();
-        rows.push(`${parts.join(", ")} & ${textualize(last)}`);
-        continue;
-      }
-      rows.push(row);
+      rows.push(cleanCasesRow(row));
     }
   } else {
     // One flat list: values and conditions alternate, and only the conditions
@@ -154,39 +192,82 @@ function casesRows(inner: string): string | null {
 }
 
 /**
- * Rewrites `f(x) = {…}` as `f(x) = \begin{cases}…\end{cases}`.
+ * Normalizes existing `\begin{cases}` environments and array/matrix equivalents,
+ * ensuring each row carries `&` before its condition.
+ */
+function repairExistingCases(body: string): string {
+  // Normalize \left\{ \begin{matrix|array|aligned} ... \end{...} to \begin{cases}...\end{cases}
+  let out = body.replace(
+    /\\(?:left\s*)?\\\{\s*\\begin\{(?:matrix|array|aligned)\}(?:\{[lrc| ]*\})?([\s\S]*?)\\end\{(?:matrix|array|aligned)\}\s*(?:\\right[.]?)?/g,
+    (_m, inner: string) => `\\begin{cases}${inner}\\end{cases}`,
+  );
+
+  // Normalize rows inside \begin{cases}...\end{cases}
+  out = out.replace(
+    /\\begin\{cases\}([\s\S]*?)\\end\{cases\}/g,
+    (m, inner: string) => {
+      const rows = splitTopLevel(inner, ["\\\\"]);
+      if (rows.length === 0) return m;
+      const repairedRows = rows.map(cleanCasesRow);
+      return `\\begin{cases} ${repairedRows.join(" \\\\ ")} \\end{cases}`;
+    },
+  );
+
+  return out;
+}
+
+/**
+ * Rewrites `f(x) = {…}` or `f(x) = \{…\}` as `f(x) = \begin{cases}…\end{cases}`.
  *
  * Only a group opened immediately after a definition operator is considered. Any
  * other `{` is an argument to a command — `\frac{1}{2}`, `x^{n+1}` — and
  * rewriting one of those would corrupt maths that renders perfectly well.
  */
 function toCases(body: string): string {
-  if (/\\begin\{/.test(body)) return body;
-  const open = /(?:=|:=|\\coloneqq)\s*\{/.exec(body);
-  if (!open) return body;
+  const normalized = repairExistingCases(body);
+  if (/\\begin\{cases\}/.test(normalized)) return normalized;
+
+  const open = /(?:=|:=|\\coloneqq)\s*(?:\\left\s*)?(?:\\{|\\lbrace|(?<!\\)\{)/.exec(normalized);
+  if (!open) return normalized;
 
   const braceAt = open.index + open[0].length - 1;
+  const isBackslashEscaped = open[0].includes("\\{") || open[0].includes("\\lbrace");
+
   let depth = 0;
   let closeAt = -1;
-  for (let i = braceAt; i < body.length; i += 1) {
-    if (isEscaped(body, i)) continue;
-    if (body[i] === "{") depth += 1;
-    else if (body[i] === "}") {
+  for (let i = braceAt; i < normalized.length; i += 1) {
+    if (normalized.startsWith("\\right.", i) || normalized.startsWith("\\right\\}", i)) {
+      closeAt = i;
+      break;
+    }
+    if (isEscaped(normalized, i) && !isBackslashEscaped) continue;
+    const ch = normalized[i]!;
+    if (ch === "{" || (isBackslashEscaped && normalized.startsWith("\\{", i))) {
+      depth += 1;
+      if (isBackslashEscaped && normalized.startsWith("\\{", i)) i += 1;
+      continue;
+    }
+    if (ch === "}" || (isBackslashEscaped && normalized.startsWith("\\}", i))) {
       depth -= 1;
       if (depth === 0) {
         closeAt = i;
         break;
       }
+      if (isBackslashEscaped && normalized.startsWith("\\}", i)) i += 1;
     }
   }
 
   // A missing close is the common case, not an edge case: it is what breaks the
   // render in the first place.
-  const inner = body.slice(braceAt + 1, closeAt === -1 ? body.length : closeAt);
-  const tail = closeAt === -1 ? "" : body.slice(closeAt + 1);
+  const innerStart = braceAt + 1;
+  const inner = normalized.slice(innerStart, closeAt === -1 ? normalized.length : closeAt);
+  const tail = closeAt === -1 ? "" : normalized.slice(closeAt + 1);
   const rows = casesRows(inner);
-  if (!rows) return body;
-  return `${body.slice(0, braceAt)}\\begin{cases}${rows}\\end{cases}${tail}`;
+  if (!rows) return normalized;
+  const prefix = normalized
+    .slice(0, open.index + open[0].length)
+    .replace(/(?:\\left\s*)?(?:\\{|\\lbrace|(?<!\\)\{)$/, "");
+  return `${prefix}\\begin{cases}${rows}\\end{cases}${tail}`;
 }
 
 /* ── structural balancing ────────────────────────────────────── */
@@ -291,50 +372,116 @@ function rewriteMathSpans(text: string): string {
         continue;
       }
       const repaired = repairMathBody(tail);
-      const fence = display ? "$$" : "$";
-      out += repaired ? `${fence}${repaired}${fence}` : text.slice(i, limit);
+      const shouldDisplay = display || DISPLAY_ENV.test(repaired) || repaired.includes("\\\\");
+      const fence = shouldDisplay ? "\n\n$$" : "$";
+      const closeFence = shouldDisplay ? "$$\n\n" : "$";
+      out += repaired ? `${fence}${repaired}${closeFence}` : text.slice(i, limit);
       i = limit;
       continue;
     }
 
     const repaired = repairMathBody(text.slice(i + openLen, close));
-    const fence = display ? "$$" : "$";
-    out += repaired ? `${fence}${repaired}${fence}` : text.slice(i, close + openLen);
+    const shouldDisplay = display || DISPLAY_ENV.test(repaired) || repaired.includes("\\\\");
+    const fence = shouldDisplay ? "\n\n$$" : "$";
+    const closeFence = shouldDisplay ? "$$\n\n" : "$";
+    out += repaired ? `${fence}${repaired}${closeFence}` : text.slice(i, close + openLen);
     i = close + openLen;
   }
   return out;
 }
 
 /**
- * Promotes a formula that already occupies a whole line to display maths.
+ * Recovers piecewise definitions where the model closed `\end{cases}` around values
+ * alone, leaving conditions orphaned outside on subsequent lines or following spans.
  *
- * `remark-math` only produces block maths when `$$` opens a line, so a `cases`
- * matrix written as `$…$` renders at inline size and cramped. Restricting the
- * promotion to lines that hold nothing else keeps sentence-embedded maths inline
- * where it belongs.
+ * Example failure:
+ *   `$f(x) = \begin{cases} kx(2-x), \\ 0, \end{cases}$ $0 \le x \le 2$ $\text{otherwise}$`
+ * Transformed to:
+ *   `$$f(x) = \begin{cases} kx(2-x) & 0 \le x \le 2 \\ 0 & \text{otherwise} \end{cases}$$`
  */
-function promoteStandaloneDisplay(text: string): string {
-  return text
-    .split("\n")
-    .map((line) => {
-      const trimmed = line.trim();
-      if (trimmed.length < 4 || !trimmed.startsWith("$") || trimmed.startsWith("$$")) return line;
-      if (!trimmed.endsWith("$")) return line;
-      const body = trimmed.slice(1, -1);
-      if (body.includes("$")) return line; // two spans on one line
-      if (!DISPLAY_ENV.test(body) && !body.includes("\\\\")) return line;
-      return `\n$$${body}$$\n`;
-    })
-    .join("\n");
+function stitchOrphanedPiecewise(text: string): string {
+  // Pattern matching a cases definition inside delimiters
+  const pattern = /(?:\$\$|\$|\\\[)\s*([a-zA-Z]\w*(?:\([^)]*\))?\s*(?:=|:=|\\coloneqq)\s*\\begin\{cases\}([\s\S]*?)\\end\{cases\})\s*(?:\$\$|\$|\\\])([\s\S]*?)(?=(?:\n\s*\n|[A-Z][a-z]{2,}\b|\bFind\b|\bDetermine\b|\bCalculate\b|\bEvaluate\b|\bShow\b|\bWhat\b|\bWhere\b|$))/g;
+
+  return text.replace(pattern, (fullMatch, formulaHead: string, innerCases: string, trailingText: string) => {
+    const rawRows = splitTopLevel(innerCases, ["\\\\"])
+      .map((r) => r.trim().replace(/[,;]+$/, "").trim())
+      .filter((r) => r.length > 0);
+
+    // If rows already contain `&` or recognised conditions, this cases block is not orphaned.
+    if (rawRows.length < 2 || rawRows.some((r) => r.includes("&")) || rawRows.some((r) => CONDITION.test(r))) {
+      return fullMatch;
+    }
+
+    // Look for condition tokens in trailingText
+    const condSegments = trailingText
+      .split(/[\n,;]|(?<=\$)\s*(?=\$)/)
+      .map((s) => s.replace(/\$/g, "").trim())
+      .filter((s) => s.length > 0 && CONDITION.test(s));
+
+    if (condSegments.length === rawRows.length) {
+      const pairedRows = rawRows.map((val, idx) => `${val} & ${textualize(condSegments[idx]!)}`);
+      const eqSignIndex = formulaHead.indexOf("\\begin{cases}");
+      const prefix = eqSignIndex !== -1 ? formulaHead.slice(0, eqSignIndex).trim() : "";
+
+      // Strip consumed conditions from trailingText
+      let remainingTrailing = trailingText;
+      for (const cond of condSegments) {
+        remainingTrailing = remainingTrailing.replace(new RegExp(`\\\$?\\s*${cond.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\\$?`, "i"), "");
+      }
+      remainingTrailing = remainingTrailing.replace(/^\s*[,;.]\s*/, "").trim();
+
+      return `\n\n$$${prefix} \\begin{cases} ${pairedRows.join(" \\\\ ")} \\end{cases}$$\n\n${remainingTrailing ? `${remainingTrailing} ` : ""}`;
+    }
+
+    return fullMatch;
+  });
+}
+
+/**
+ * Formats sequential steps, cases, or methods in explanations and worked examples
+ * with clean paragraph breaks and bold step headings.
+ *
+ * Example:
+ *   "Step 1: Symmetry gives E(X) = 3. Step 2: Let u = x - 3. Step 3: Integrate."
+ * Transformed to:
+ *   "**Step 1:** Symmetry gives E(X) = 3.\n\n**Step 2:** Let u = x - 3.\n\n**Step 3:** Integrate."
+ */
+function formatPedagogicalProse(text: string): string {
+  let out = text;
+
+  // Format `Step N:`, `Step N.`, `Method N:`, `Case N:` at the start of a sentence or step
+  out = out.replace(
+    /(?:^|\s+|\n)(Step|Method|Case|Part)\s+(\d+|[A-Za-z])(?:\s*[:.]\s*|\s*[-–—]\s*)/gi,
+    (_match, kind: string, num: string) => {
+      const title = kind.charAt(0).toUpperCase() + kind.slice(1).toLowerCase();
+      return `\n\n**${title} ${num}:** `;
+    },
+  );
+
+  // If a question prompt or explanation has an equation introduction followed immediately by
+  // a question command without a break, add a clean break
+  out = out.replace(
+    /(?<=\$\$|\$|\))\s+(Find|Determine|Calculate|Evaluate|Show that|State|What is|Hence,?\s+[a-z])/g,
+    "\n\n$1",
+  );
+
+  return out;
 }
 
 function repairSegment(input: string): string {
-  const normalized = input
+  let normalized = input
     // `\[…\]` and `\(…\)` are display/inline intent that `remark-math` does not
     // recognise, so they reach the page as literal backslash-brackets.
     .replace(/(?<!\\)\\\[([\s\S]*?)(?<!\\)\\\]/g, (_m, b: string) => `\n\n$$${b.trim()}$$\n\n`)
     .replace(/(?<!\\)\\\(([\s\S]*?)(?<!\\)\\\)/g, (_m, b: string) => `$${b.trim()}$`);
-  return promoteStandaloneDisplay(rewriteMathSpans(normalized));
+
+  normalized = stitchOrphanedPiecewise(normalized);
+  normalized = formatPedagogicalProse(normalized);
+  const rewritten = rewriteMathSpans(normalized);
+
+  // Ensure display math blocks are isolated and clean excessive newlines
+  return rewritten.replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /* ── public API ──────────────────────────────────────────────── */
@@ -345,7 +492,7 @@ function repairSegment(input: string): string {
  */
 export function repairMath(input: unknown): string {
   if (typeof input !== "string") return "";
-  if (!input.includes("$") && !input.includes("\\")) return input;
+  if (!input.includes("$") && !input.includes("\\") && !/Step\s+\d+|Method\s+\d+|Case\s+\d+/i.test(input)) return input;
   return input
     .split(CODE_SPLIT)
     .map((part, idx) => (idx % 2 === 1 ? part : repairSegment(part ?? "")))
@@ -504,8 +651,7 @@ function toScript(value: string, digits: string, kind: "^" | "_"): string {
  *
  * For the places that cannot run KaTeX: SVG axis ticks and chart legends, the
  * one-line question summaries in the results view, and `aria-label`s. Those used
- * to strip `$`, `*` and `\` characters, which turned `$\sum x^2$` into
- * `sum x2` — the same information loss the renderer was fixed to avoid.
+ * to strip `$`, `*` and `\` characters, turning this into "sum x2".
  */
 export function plainMath(input: unknown): string {
   if (typeof input !== "string" || !input) return "";

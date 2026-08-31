@@ -17,26 +17,35 @@ export default async function AdminExamsPage() {
   let loadFailed = false;
   try {
     [exams, students] = await Promise.all([
-      listExams(actor),
+      listExams(actor, 200),
       listStudents(actor),
     ]);
     try {
       const map = await getRetakeCountsByExam(actor);
       retakeCounts = Object.fromEntries(map.entries());
-    } catch {}
+    } catch {
+      // Non-critical: Retake counts can fail gracefully
+    }
   } catch (err) {
     console.error("[admin/exams] load failed", err);
     loadFailed = true;
   }
 
   return (
-    <>
+    <div className="flex flex-col gap-6">
       {loadFailed && (
-        <p className="text-destructive rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm">
-          Your exam library could not be loaded. Try refreshing the page.
-        </p>
+        <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive shadow-xs">
+          <p className="font-medium">Failed to load exam library</p>
+          <p className="mt-0.5 text-xs text-destructive/80">
+            Some data could not be fetched from the database. Please try refreshing the page.
+          </p>
+        </div>
       )}
-      <ExamLibrary exams={serializeDocs(exams)} students={serializeDocs(students)} retakeCounts={retakeCounts} />
-    </>
+      <ExamLibrary
+        exams={serializeDocs(exams)}
+        students={serializeDocs(students)}
+        retakeCounts={retakeCounts}
+      />
+    </div>
   );
 }
