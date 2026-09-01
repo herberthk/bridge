@@ -79,22 +79,24 @@ const VISUAL_SHAPE_RULES: string[] = [
   // literal characters is exactly this: notation written without delimiters into a
   // column that is *about* notation.
   "    - Table cells DO render maths, so any notation in a header or cell must be wrapped: \"$\\\\sum x^{2}$\", not \"\\\\sum x^2\". Keep each cell under ~40 characters.",
-  "- Keep chart data realistic and curriculum-relevant; include a caption when the visual needs interpretation (e.g. \"Source: sample experiment\").",
-  "- Visual data must support the question without giving away the answer directly.",
+  "- Keep chart data realistic, curriculum-relevant, and mathematically consistent with the prompt; include a caption when the visual needs interpretation (e.g. \"Source: sample experiment\").",
+  "- Visual data must support the question without giving away the answer directly, and the question must be directly solvable from the provided visual data.",
+  "- For pie charts representing percentages or proportions, slice values must sum to 100.",
 ];
 
 /** Per-type authoring rules, shared by generation and revision. */
 const TYPE_GUIDES: Record<QuestionType, string> = {
   multiple_choice:
-    "Multiple choice: 4 options (A–D), exactly one correct; set correctOptionIndex (0-based). Options must be plausible but unambiguous.",
-  true_false: "True/false: a statement whose truth is clearly testable; set correctBool.",
+    "Multiple choice: 4 options (A–D), exactly one correct; set correctOptionIndex (0-based: 0 for 1st, 1 for 2nd, etc.). Ensure correctOptionIndex points strictly to the true option, all 3 distractors are definitively incorrect yet plausible, and explanation confirms this choice.",
+  true_false:
+    "True/false: an objective, factually testable statement (never subjective or trick question); set correctBool to accurately reflect whether the statement is true (true) or false (false), matching the explanation.",
   fill_in_the_blank:
-    "Fill in the blank: use ___ in the prompt where the blank sits; list acceptableAnswers (all case/spacing variants that should score).",
+    "Fill in the blank: use ___ in the prompt where the blank sits; list acceptableAnswers covering all valid case, spacing, and standard numerical/unit variants.",
   short_answer:
-    "Short answer: a concise question answerable in 1–3 words or a phrase; list acceptableAnswers covering fair variants.",
+    "Short answer: a concise question answerable in 1–3 words or a phrase; list acceptableAnswers covering fair variants and equivalent standard forms.",
   essay: "Essay: an open prompt with clear marking criteria implied; 5–10 points; acceptableAnswers null.",
   matching:
-    "Matching: exactly 4 pairs mapping left items to right items; shuffle is handled by the app.",
+    "Matching: exactly 4 pairs mapping unique left items to unique right items (strictly 1-to-1; no duplicate left or right items); shuffle is handled by the app.",
 };
 
 /** The learner/level framing every call shares. */
@@ -120,6 +122,7 @@ function learnerContextLines(params: ExamParamsInput): (string | null)[] {
     subsidiaryLine,
     `Topic/theme: ${params.topic}.`,
     `Difficulty: ${DIFFICULTY_LABELS[params.difficulty as Difficulty] ?? params.difficulty} — calibrate language, depth, and distractors to this band.`,
+    "Curriculum: Strictly adhere to Ugandan national curriculum (UNEB / NCDC) standards, terminology, and regional contexts (e.g. UGX for currency). Do not introduce out-of-syllabus concepts.",
   ];
 }
 
@@ -152,7 +155,8 @@ export function examGenerationInstructions(params: ExamParamsInput): string {
     ...params.questionTypes.map((t) => `- ${TYPE_GUIDES[t]}`),
     "",
     "Content rules:",
-    "- Questions must be factually correct, unambiguous, and self-contained.",
+    "- Questions must be factually correct, unambiguous, curriculum-accurate, and self-contained.",
+    "- Verify all calculations, logic, and question parameters step-by-step before finalizing: ensure problems have solvable, realistic values and that the answer key, explanation, and workedExample are 100% consistent with each other.",
     "- Use Markdown for structure and LaTeX for ALL mathematics (e.g. $x^2 + 2x$), following the maths formatting rules below.",
     "- Never leak the answer inside the prompt text.",
     "- Spread points sensibly (default 1; essays 5–10; matching 2).",
@@ -214,7 +218,7 @@ export function examGenerationPrompt(
       `--- Source material: ${doc.name} ---`,
       doc.text,
       `--- End of ${doc.name} ---`,
-      "Base the questions, terminology, and difficulty on this material where it is relevant.",
+      "When source material is provided, questions, facts, calculations, and answers MUST be strictly grounded in and faithful to this material. Do not invent external facts or contradictory information.",
     );
   }
   return lines.join("\n");
@@ -279,7 +283,7 @@ export function questionRevisionInstructions(
     // answers shaped by the question's type, so a type change would leave a recorded
     // response pointing at a shape that no longer exists.
     "- NEVER change a question's `type` or its `id`. Both are fixed. Echo the `id` back exactly as given.",
-    "- Keep the answer key correct and consistent with your rewrite. If you reorder or replace options, move `correctOptionIndex` to match — an out-of-date index is worse than the original question.",
+    "- Keep all dependent fields (options, correctOptionIndex/correctBool/acceptableAnswers, explanation, workedExample, visual) completely synchronized with your rewrite. If you reorder or replace options, move `correctOptionIndex` to match — an out-of-date index is worse than the original question.",
     "- If the instruction is impossible or would make the question wrong, return the closest correct question you can and say so in `changeNote`.",
     "- `changeNote` is one short sentence naming what you changed, for the teacher to read above the diff.",
     "",
