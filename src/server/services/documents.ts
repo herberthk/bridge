@@ -4,6 +4,7 @@ import { adminStorage } from "@/server/firebase/admin";
 import { sourceDocumentDoc, sourceDocumentsCol } from "@/server/firebase/collections";
 import type { SessionUser } from "@/server/auth/session";
 import type { WithId, UploadedDocumentDoc, WriteModel } from "@/types/firestore";
+import { vertex } from "@/lib/vertext";
 
 export class DocumentsServiceError extends Error {
   constructor(
@@ -14,9 +15,12 @@ export class DocumentsServiceError extends Error {
   }
 }
 
-const MAX_BYTES = 50 * 1024 * 1024;
+const MAX_BYTES = 10 * 1024 * 1024;
 const ALLOWED_TYPES = new Set([
   "application/pdf",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "text/plain",
 ]);
@@ -32,19 +36,29 @@ export async function uploadAndParseDocument(
 ): Promise<ParsedUpload> {
   if (!ALLOWED_TYPES.has(file.mimeType)) {
     throw new DocumentsServiceError(
-      "Unsupported file type — upload PDF, DOCX, or TXT.",
+      "Unsupported file type — upload PDF, scanned documents/images (JPG, PNG, WEBP), DOCX, or TXT.",
       415,
     );
   }
   if (file.buffer.byteLength > MAX_BYTES) {
-    throw new DocumentsServiceError("File too large (max 50 MB).", 413);
+    throw new DocumentsServiceError("File too large (max 10 MB).", 413);
   }
 
   const { text, pageCount } = await extractText(file.buffer, file.mimeType);
 
   const uniqueSuffix = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${sanitize(file.name)}`;
   const storagePath = `docs/${actor.uid}/${uniqueSuffix}`;
-  const bucket = adminStorage().bucket();
+  const bucketName = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET;
+  const bucket = (() => {
+    try {
+      return bucketName ? adminStorage().bucket(bucketName) : adminStorage().bucket();
+    } catch {
+      throw new DocumentsServiceError(
+        "Storage is not configured — set NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET or configure a default Firebase Admin bucket.",
+        500,
+      );
+    }
+  })();
   await bucket.file(storagePath).save(file.buffer, {
     metadata: { contentType: file.mimeType },
   });
@@ -81,13 +95,75 @@ async function extractText(
       // pdf-parse v2: class API — always destroy to free the worker.
       const { PDFParse } = await import("pdf-parse");
       const parser = new PDFParse({ data: new Uint8Array(buffer) });
+      let parsedText = "";
+      let pagesCount: number | null = null;
       try {
         const result = await parser.getText();
-        return { text: result.text ?? "", pageCount: result.pages?.length ?? null };
+        parsedText = (result.text ?? "").trim();
+        pagesCount = result.pages?.length ?? null;
       } finally {
         await parser.destroy().catch(() => undefined);
       }
+
+      // If PDF had text extracted directly, return it
+      if (parsedText.length > 20) {
+        return { text: parsedText, pageCount: pagesCount };
+      }
+
+      // If text layer is sparse/empty (scanned PDF), use Gemini multimodal OCR
+      try {
+        const { generateText } = await import("ai");
+        const { text } = await generateText({
+        model: vertex("gemini-3.1-flash-lite"),
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: "Extract and transcribe all questions, instructions, text, formulas, and content from this scanned document PDF completely and cleanly.",
+                },
+                {
+                  type: "file",
+                  data: buffer,
+                  mediaType: "application/pdf",
+                },
+              ],
+            },
+          ],
+        });
+        return { text: text.trim() || parsedText, pageCount: pagesCount };
+      } catch (ocrErr) {
+        console.warn("[documents] PDF OCR fallback failed", ocrErr);
+        return { text: parsedText, pageCount: pagesCount };
+      }
     }
+
+    if (mimeType.startsWith("image/")) {
+      // Scanned document image (JPEG, PNG, WEBP)
+      const { generateText } = await import("ai");
+      const { text } = await generateText({
+        model: vertex("gemini-3.1-flash-lite"),
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "Extract and transcribe all questions, instructions, text, formulas, and content from this scanned document image completely and cleanly.",
+              },
+              {
+                type: "file",
+                data: buffer,
+                mediaType: mimeType,
+              },
+            ],
+          },
+        ],
+      });
+      return { text: text.trim(), pageCount: 1 };
+    }
+
     if (
       mimeType ===
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -125,7 +201,7 @@ export async function listDocuments(actor: SessionUser): Promise<WithId<Uploaded
   const snap = await sourceDocumentsCol()
     .where("ownerId", "==", actor.uid)
     .orderBy("createdAt", "desc")
-    .limit(50)
+    .limit(10)
     .get();
   return snap.docs.map((d) => ({ id: d.id, ...d.data()! }));
 }

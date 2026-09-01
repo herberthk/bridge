@@ -1,4 +1,4 @@
-import type { CollectionReference, Query } from "firebase-admin/firestore";
+import { FieldValue, type CollectionReference, type Query } from "firebase-admin/firestore";
 
 import { adminDb } from "./admin";
 import type {
@@ -32,8 +32,12 @@ function stripUndefined<T>(value: T): T {
       .map((v) => stripUndefined(v)) as unknown as T;
   }
   if (value && typeof value === "object" && value !== null) {
-    if (typeof (value as { toDate?: unknown }).toDate === "function") {
-      return value; // Timestamp-like — leave untouched
+    if (
+      value instanceof FieldValue ||
+      typeof (value as { toDate?: unknown }).toDate === "function" ||
+      value instanceof Date
+    ) {
+      return value; // FieldValue sentinel or Timestamp-like — leave untouched
     }
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
@@ -51,8 +55,30 @@ export function createConverter<T>(): FirebaseFirestore.FirestoreDataConverter<T
     },
     fromFirestore(snapshot: FirebaseFirestore.QueryDocumentSnapshot): T {
       const data = snapshot.data();
-      const createdAt = data?.createdAt ?? snapshot.createTime;
-      const updatedAt = data?.updatedAt ?? snapshot.updateTime ?? createdAt;
+      const rawCreated = data?.createdAt;
+      const isValidCreated =
+        rawCreated !== null &&
+        rawCreated !== undefined &&
+        (typeof rawCreated.toDate === "function" ||
+          typeof rawCreated._seconds === "number" ||
+          typeof rawCreated.seconds === "number" ||
+          rawCreated instanceof Date ||
+          typeof rawCreated === "string" ||
+          typeof rawCreated === "number");
+      const createdAt = isValidCreated ? rawCreated : snapshot.createTime;
+
+      const rawUpdated = data?.updatedAt;
+      const isValidUpdated =
+        rawUpdated !== null &&
+        rawUpdated !== undefined &&
+        (typeof rawUpdated.toDate === "function" ||
+          typeof rawUpdated._seconds === "number" ||
+          typeof rawUpdated.seconds === "number" ||
+          rawUpdated instanceof Date ||
+          typeof rawUpdated === "string" ||
+          typeof rawUpdated === "number");
+      const updatedAt = isValidUpdated ? rawUpdated : (snapshot.updateTime ?? createdAt);
+
       return {
         ...data,
         ...(createdAt ? { createdAt } : {}),

@@ -462,19 +462,22 @@ export function ExamGenerator() {
         const code = rejection.errors[0]?.code;
         const reason =
           code === "file-too-large"
-            ? "it's larger than 50 MB"
+            ? "it's larger than 10 MB"
             : code === "file-invalid-type"
-              ? "only PDF, DOCX, and TXT are supported"
+              ? "only PDF, scanned images (JPG, PNG, WEBP), DOCX, and TXT are supported"
               : (rejection.errors[0]?.message ?? "it was rejected");
         toast.error(`${rejection.file.name} was skipped — ${reason}.`);
       }
     },
     accept: {
       "application/pdf": [".pdf"],
+      "image/jpeg": [".jpg", ".jpeg"],
+      "image/png": [".png"],
+      "image/webp": [".webp"],
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document": [".docx"],
       "text/plain": [".txt"],
     },
-    maxSize: 50 * 1024 * 1024,
+    maxSize: 10 * 1024 * 1024,
     disabled: busy || docs.length >= MAX_SOURCE_DOCS,
   });
 
@@ -673,7 +676,7 @@ export function ExamGenerator() {
                 <p className="text-sm text-muted-foreground leading-relaxed">Upload past papers, PDFs, or scanned documents. Questions are derived exclusively from your material — the AI structures and formats them.</p>
                 <ul className="flex flex-col gap-2 text-sm">
                   <li className="flex items-center gap-2"><CheckCircle2Icon className="size-3.5 shrink-0 text-violet-500" /> Questions faithful to your source</li>
-                  <li className="flex items-center gap-2"><CheckCircle2Icon className="size-3.5 shrink-0 text-violet-500" /> PDF, DOCX &amp; TXT up to 50 MB</li>
+                  <li className="flex items-center gap-2"><CheckCircle2Icon className="size-3.5 shrink-0 text-violet-500" /> PDF, scanned docs &amp; images up to 10 MB</li>
                   <li className="flex items-center gap-2"><CheckCircle2Icon className="size-3.5 shrink-0 text-violet-500" /> Perfect for past-paper exams</li>
                 </ul>
                 <span className="mt-auto inline-flex items-center gap-1.5 text-xs font-medium text-primary opacity-0 transition-opacity duration-200 group-hover:opacity-100"><ChevronRightIcon className="size-3.5" /> Select &amp; continue</span>
@@ -1060,59 +1063,83 @@ export function ExamGenerator() {
                           </div>
                         ) : (
                         <div className="rounded-2xl border bg-card p-4 shadow-card">
-                          <div className="flex items-center gap-2">
-                            <p className="flex items-center gap-2 text-sm font-medium"><UploadCloudIcon className="size-4 text-primary" /> Source material</p>
-                            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-amber-500/10 text-amber-700 border-amber-500/20 dark:text-amber-300">required</Badge>
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <p className="flex items-center gap-2 text-sm font-medium"><UploadCloudIcon className="size-4 text-primary" /> Source material</p>
+                              <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-amber-500/10 text-amber-700 border-amber-500/20 dark:text-amber-300">required</Badge>
+                            </div>
+                            <span className="text-[11px] text-muted-foreground font-medium">Max 10 MB per file</span>
                           </div>
-                          <p className="text-muted-foreground mt-1 text-xs">Upload at least one document — questions will be derived exclusively from your material.</p>
+                          <p className="text-muted-foreground mt-1 text-xs">Upload past papers, PDFs, or scanned documents — questions will be derived faithfully from your material.</p>
                           <div
                             {...getRootProps()}
-                            className={`mt-3 flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-6 py-7 text-center transition-all ${isDragActive ? "border-primary bg-primary/5 shadow-glow scale-[1.01]" : "hover:border-primary/40 hover:bg-accent/20"}`}
+                            className={`mt-3 flex cursor-pointer flex-col items-center justify-center gap-2.5 rounded-xl border-2 border-dashed px-6 py-7 text-center transition-all ${isDragActive ? "border-primary bg-primary/5 shadow-glow scale-[1.01]" : "hover:border-primary/40 hover:bg-accent/20"}`}
                           >
                             <input {...getInputProps()} />
-                            <span className={`grid size-10 place-items-center rounded-xl transition-colors ${isDragActive ? "bg-primary text-primary-foreground shadow-glow" : "bg-muted text-muted-foreground"}`}><UploadCloudIcon className="size-5" /></span>
-                            <p className="text-sm font-medium">{isDragActive ? "Drop files here…" : "Drag & drop or click to upload"}</p>
-                            <p className="text-muted-foreground text-xs">Questions will be grounded on your material</p>
+                            <span className={`grid size-11 place-items-center rounded-2xl transition-colors ${isDragActive ? "bg-primary text-primary-foreground shadow-glow" : "bg-muted text-muted-foreground"}`}><UploadCloudIcon className="size-5" /></span>
+                            <div>
+                              <p className="text-sm font-semibold">{isDragActive ? "Drop documents here…" : "Drag & drop files or click to browse"}</p>
+                              <p className="text-muted-foreground mt-0.5 text-xs">Supports PDF, scanned documents/photos (JPG, PNG, WEBP), DOCX &amp; TXT</p>
+                            </div>
+                            <div className="flex flex-wrap items-center justify-center gap-1.5 pt-1 text-[11px]">
+                              <span className="rounded-md border bg-muted/40 px-2 py-0.5 font-medium text-muted-foreground">PDF</span>
+                              <span className="rounded-md border bg-muted/40 px-2 py-0.5 font-medium text-muted-foreground">Scanned Papers</span>
+                              <span className="rounded-md border bg-muted/40 px-2 py-0.5 font-medium text-muted-foreground">JPG / PNG</span>
+                              <span className="rounded-md border bg-muted/40 px-2 py-0.5 font-medium text-muted-foreground">Up to 10 MB</span>
+                            </div>
                           </div>
 
                           <ul className="mt-3 flex flex-col gap-3">
                             <AnimatePresence initial={false}>
-                              {docs.map((d) => (
-                                <motion.li key={d.documentId} initial={{ opacity: 0, y: 8, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.97, y: -6 }} className="group overflow-hidden rounded-2xl border bg-card shadow-card hover:shadow-lifted transition-all">
-                                  <div className="flex items-center gap-3 px-3.5 py-3">
-                                    <span className={`grid size-9 place-items-center rounded-xl border shadow-sm transition-colors ${d.uploading ? "bg-brand text-primary-foreground border-primary shadow-glow" : d.parseStatus === "parsed" ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-600" : "bg-amber-500/10 border-amber-500/20 text-amber-600"}`}>
-                                      {d.uploading ? <Loader2Icon className="size-4 animate-spin" /> : d.parseStatus === "parsed" ? <CheckCircle2Icon className="size-4" /> : <FileTextIcon className="size-4" />}
-                                    </span>
-                                    <div className="min-w-0 flex-1">
-                                      <p className="truncate text-sm font-medium leading-none">{d.name}</p>
-                                      <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-                                        <span className="tabular-nums">{d.sizeLabel}</span>
-                                        <span className="size-1 rounded-full bg-muted-foreground/30" />
-                                        {d.uploading ? <span className="inline-flex items-center gap-1 text-primary font-medium"><span className="size-1.5 animate-pulse rounded-full bg-primary" />Uploading {d.progress}%</span> : d.parseStatus === "parsed" ? <span className="text-emerald-600">Ready — grounded</span> : <span className="text-amber-600">Unreadable — will skip</span>}
-                                      </p>
+                              {docs.map((d) => {
+                                const isImg = /\.(jpe?g|png|webp|gif|bmp)$/i.test(d.name);
+                                const IconComp = isImg ? CameraIcon : FileTextIcon;
+                                return (
+                                  <motion.li key={d.documentId} initial={{ opacity: 0, y: 8, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.97, y: -6 }} className="group overflow-hidden rounded-2xl border bg-card shadow-card hover:shadow-lifted transition-all">
+                                    <div className="flex items-center gap-3 px-3.5 py-3">
+                                      <span className={`grid size-9 place-items-center rounded-xl border shadow-sm transition-colors ${d.uploading ? "bg-brand text-primary-foreground border-primary shadow-glow" : d.parseStatus === "parsed" ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-600" : "bg-amber-500/10 border-amber-500/20 text-amber-600"}`}>
+                                        {d.uploading ? <Loader2Icon className="size-4 animate-spin" /> : d.parseStatus === "parsed" ? <CheckCircle2Icon className="size-4" /> : <IconComp className="size-4" />}
+                                      </span>
+                                      <div className="min-w-0 flex-1">
+                                        <p className="truncate text-sm font-medium leading-none">{d.name}</p>
+                                        <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                                          <span className="tabular-nums">{d.sizeLabel}</span>
+                                          <span className="size-1 rounded-full bg-muted-foreground/30" />
+                                          {d.uploading ? (
+                                            <span className="inline-flex items-center gap-1 text-primary font-medium">
+                                              <span className="size-1.5 animate-pulse rounded-full bg-primary" />
+                                              Uploading &amp; analyzing {d.progress}%
+                                            </span>
+                                          ) : d.parseStatus === "parsed" ? (
+                                            <span className="text-emerald-600 font-medium">Ready — grounded with AI</span>
+                                          ) : (
+                                            <span className="text-amber-600 font-medium">Unreadable — will skip</span>
+                                          )}
+                                        </p>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        {d.uploading ? (
+                                          <Badge variant="secondary" className="tabular-nums bg-primary/10 text-primary border-primary/20">{d.progress}%</Badge>
+                                        ) : d.parseStatus === "parsed" ? (
+                                          <Badge variant="secondary" className="gap-1 bg-emerald-500/10 text-emerald-700 border-emerald-500/20 dark:text-emerald-300"><CheckCircle2Icon className="size-3" /> Ready</Badge>
+                                        ) : (
+                                          <Badge variant="outline" className="border-amber-500/30 text-amber-700">Unreadable</Badge>
+                                        )}
+                                        <Button type="button" variant="ghost" size="icon-xs" aria-label={`Remove ${d.name}`} onClick={() => setDocs((prev) => prev.filter((x) => x.documentId !== d.documentId))} className="opacity-60 group-hover:opacity-100"><XIcon className="size-3" /></Button>
+                                      </div>
                                     </div>
-                                    <div className="flex items-center gap-2">
-                                      {d.uploading ? (
-                                        <Badge variant="secondary" className="tabular-nums bg-primary/10 text-primary border-primary/20">{d.progress}%</Badge>
-                                      ) : d.parseStatus === "parsed" ? (
-                                        <Badge variant="secondary" className="gap-1 bg-emerald-500/10 text-emerald-700 border-emerald-500/20 dark:text-emerald-300"><CheckCircle2Icon className="size-3" /> Ready</Badge>
-                                      ) : (
-                                        <Badge variant="outline" className="border-amber-500/30 text-amber-700">Unreadable</Badge>
-                                      )}
-                                      <Button type="button" variant="ghost" size="icon-xs" aria-label={`Remove ${d.name}`} onClick={() => setDocs((prev) => prev.filter((x) => x.documentId !== d.documentId))} className="opacity-60 group-hover:opacity-100"><XIcon className="size-3" /></Button>
+                                    {/* Beautiful progress */}
+                                    <div className="h-1.5 w-full bg-muted/30 overflow-hidden">
+                                      <motion.div
+                                        className={`h-full ${d.uploading ? "bg-brand shadow-glow bg-shimmer" : d.parseStatus === "parsed" ? "bg-emerald-500" : "bg-amber-500"}`}
+                                        initial={{ width: 0 }}
+                                        animate={{ width: `${d.uploading ? d.progress : 100}%` }}
+                                        transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+                                      />
                                     </div>
-                                  </div>
-                                  {/* Beautiful progress */}
-                                  <div className="h-1.5 w-full bg-muted/30 overflow-hidden">
-                                    <motion.div
-                                      className={`h-full ${d.uploading ? "bg-brand shadow-glow bg-shimmer" : d.parseStatus === "parsed" ? "bg-emerald-500" : "bg-amber-500"}`}
-                                      initial={{ width: 0 }}
-                                      animate={{ width: `${d.uploading ? d.progress : 100}%` }}
-                                      transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
-                                    />
-                                  </div>
-                                </motion.li>
-                              ))}
+                                  </motion.li>
+                                );
+                              })}
                             </AnimatePresence>
                           </ul>
                           {!hasGroundingDoc && <p className="mt-3 text-center text-xs font-medium text-amber-600 dark:text-amber-400">Upload at least one readable document to enable generation.</p>}
