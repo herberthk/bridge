@@ -105,9 +105,11 @@ export interface BatchInfo {
 export function ExamReviewWorkspace({
   exam,
   students,
+  assignedStudentIds = [],
 }: {
   exam: SerializedWithId<ExamDoc>;
   students: SerializedWithId<UserDoc>[];
+  assignedStudentIds?: string[];
 }) {
   /**
    * Local, and initialised from props exactly once.
@@ -476,6 +478,7 @@ export function ExamReviewWorkspace({
             <AssignExamDialog
               exam={{ ...exam, questions, review }}
               students={students}
+              assignedStudentIds={assignedStudentIds}
               variant="default"
               label={progress.complete ? "Assign to students" : "Assign exam"}
               open={assignOpen}

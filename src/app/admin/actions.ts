@@ -10,13 +10,19 @@ import {
   setUserStatus,
   UsersServiceError,
 } from "@/server/services/users";
-import { assignExam, ExamsServiceError } from "@/server/services/exams";
+import {
+  assignExam,
+  getAssignedStudentIdsForExam,
+  ExamsServiceError,
+} from "@/server/services/exams";
 import { saveQuestions, setApproval } from "@/server/services/exam-review";
 import { decideRetake, RetakesServiceError } from "@/server/services/retakes";
 import type { ExamReview, Question } from "@/types/firestore";
 import type { z } from "zod";
 
-export type ActionState = { ok: true } | { ok: false; error: string };
+export type ActionState =
+  | { ok: true; createdCount?: number; assignedIds?: string[] }
+  | { ok: false; error: string };
 
 export async function createStudentAction(
   _prev: ActionState | null,
@@ -120,9 +126,10 @@ export async function assignExamAction(
     });
     revalidatePath("/admin/exams");
     revalidatePath(`/admin/exams/${examId}/review`);
+    revalidatePath(`/admin/exams/${examId}`);
     revalidatePath("/admin");
     return created > 0
-      ? { ok: true }
+      ? { ok: true, createdCount: created, assignedIds: studentIds }
       : { ok: false, error: "Those students already have this exam assigned." };
   } catch (err) {
     return {
@@ -131,6 +138,25 @@ export async function assignExamAction(
         err instanceof ExamsServiceError
           ? err.message
           : "Assignment failed. Try again.",
+    };
+  }
+}
+
+export async function getAssignedStudentIdsAction(
+  examId: string,
+): Promise<{ ok: true; studentIds: string[] } | { ok: false; error: string }> {
+  const actor = await apiUser("admin", "super_admin");
+  if (!actor) return { ok: false, error: "Not authorized." };
+  try {
+    const studentIds = await getAssignedStudentIdsForExam(actor, examId);
+    return { ok: true, studentIds };
+  } catch (err) {
+    return {
+      ok: false,
+      error:
+        err instanceof ExamsServiceError
+          ? err.message
+          : "Failed to load assigned students.",
     };
   }
 }

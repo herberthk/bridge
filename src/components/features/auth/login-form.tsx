@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { signInWithEmailAndPassword } from "firebase/auth";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { AlertCircleIcon, ArrowRightIcon, EyeIcon, EyeOffIcon } from "lucide-react";
+import { AlertCircleIcon, ArrowRightIcon, EyeIcon, EyeOffIcon, Loader2Icon } from "lucide-react";
 import { toast } from "sonner";
 
 import { authClient } from "@/lib/firebase/client";
@@ -130,11 +130,20 @@ export function LoginForm({ nextPath }: { nextPath?: string }) {
 
         <Button
           type="submit"
-          className="shadow-glow mt-2 h-10 w-full"
+          className="shadow-glow mt-2 h-10 w-full font-medium"
           disabled={form.formState.isSubmitting}
         >
-          {form.formState.isSubmitting ? "Signing in…" : "Sign in"}
-          {!form.formState.isSubmitting && <ArrowRightIcon data-icon="inline-end" />}
+          {form.formState.isSubmitting ? (
+            <>
+              <Loader2Icon className="size-4 animate-spin" data-icon="inline-start" />
+              <span>Signing in…</span>
+            </>
+          ) : (
+            <>
+              <span>Sign in to Portal</span>
+              <ArrowRightIcon data-icon="inline-end" />
+            </>
+          )}
         </Button>
       </FieldGroup>
     </form>
