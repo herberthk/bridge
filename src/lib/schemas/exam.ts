@@ -20,38 +20,137 @@ import {
 /** Exam parameters — shared by generation form, voice builder, and storage. */
 export const examParamsSchema = z
   .object({
-    subject: z.string().min(1),
-    level: z.enum(SCHOOL_LEVELS),
+    subject: z
+      .string()
+      .min(1)
+      .describe(
+        "Academic subject according to the Ugandan National Curriculum (e.g. 'mathematics', 'english', 'biology', 'chemistry', 'physics', 'geography', 'history', 'computer_studies', 'agriculture', 'commerce', 'cre', 'ire', 'economics_entrepreneurship').",
+      ),
+    level: z
+      .enum(SCHOOL_LEVELS)
+      .describe(
+        "School education tier: 'primary' (Primary 1 to Primary 7, PLE curriculum for ages ~6–13) or 'secondary' (Ordinary / Advanced Level for ages ~13–19).",
+      ),
     /** Required for secondary; must be null for primary. */
-    secondarySubLevel: z.enum(SECONDARY_SUB_LEVELS).nullable().default(null),
-    classLevel: z.number().int(),
-    topic: z.string().trim().min(2, "Describe the topic or theme").max(200),
+    secondarySubLevel: z
+      .enum(SECONDARY_SUB_LEVELS)
+      .nullable()
+      .default(null)
+      .describe(
+        "Secondary school curriculum sub-level: 'o_level' (Ordinary Level / UCE: Senior 1 to Senior 4, ages ~13–16) or 'a_level' (Advanced Level / UACE: Senior 5 to Senior 6, ages ~17–19). Must be null for primary school.",
+      ),
+    classLevel: z
+      .number()
+      .int()
+      .describe(
+        "Numerical class/grade year: 1 to 7 for primary (representing P1–P7), 1 to 4 for O-level secondary (representing S1–S4), or 5 to 6 for A-level secondary (representing S5–S6).",
+      ),
+    topic: z
+      .string()
+      .trim()
+      .min(2, "Describe the topic or theme")
+      .max(200)
+      .describe(
+        "Specific topic, theme, or curriculum syllabus unit to assess (e.g. 'Photosynthesis and Plant Nutrition', 'Quadratic Equations', 'The Scramble for Africa', 'Newtonian Mechanics').",
+      ),
     /** Required when the subject has subsidiaries (e.g. History). */
-    subsidiary: z.string().trim().min(1).nullable().default(null),
-    difficulty: z.enum(DIFFICULTIES),
+    subsidiary: z
+      .string()
+      .trim()
+      .min(1)
+      .nullable()
+      .default(null)
+      .describe(
+        "Specialized subject paper or branch when a subject splits into distinct curricula (e.g. 'african_history' vs 'european_history' for History). Set to null if the subject has no subsidiary branch.",
+      ),
+    difficulty: z
+      .enum(DIFFICULTIES)
+      .describe(
+        "Target cognitive rigor and question difficulty: 'easy' (foundational recall and basic definitions), 'medium' (standard curriculum application and understanding), 'hard' (complex analysis, multi-step calculation, and synthesis), or 'very_hard' (advanced evaluation and challenging problem-solving).",
+      ),
     durationMinutes: z
       .number()
       .int()
       .min(EXAM_DURATION_MIN, `Minimum ${EXAM_DURATION_MIN} minutes`)
-      .max(EXAM_DURATION_MAX, `Maximum ${EXAM_DURATION_MAX} minutes`),
+      .max(EXAM_DURATION_MAX, `Maximum ${EXAM_DURATION_MAX} minutes`)
+      .describe(
+        "Allocated time limit for the examination session in minutes (range: 5 to 240 minutes).",
+      ),
     questionCount: z
       .number()
       .int()
       .min(EXAM_QUESTIONS_MIN)
-      .max(EXAM_QUESTIONS_MAX),
-    questionTypes: z.array(z.enum(QUESTION_TYPES)).min(1, "Pick at least one question type"),
-    includeHints: z.boolean(),
-    includeExplanations: z.boolean(),
-    includeWorkedExamples: z.boolean(),
-    instructions: z.string().trim().max(2000).nullable(),
+      .max(EXAM_QUESTIONS_MAX)
+      .describe(
+        "Total number of questions to generate for the exam paper (range: 1 to 60).",
+      ),
+    questionTypes: z
+      .array(z.enum(QUESTION_TYPES))
+      .min(1, "Pick at least one question type")
+      .describe(
+        "Array of allowed question formats to generate: 'multiple_choice', 'true_false', 'fill_in_the_blank', 'short_answer', 'essay', or 'matching'.",
+      ),
+    includeHints: z
+      .boolean()
+      .describe(
+        "Whether to generate scaffolding hints to guide struggling students without revealing the answer.",
+      ),
+    includeExplanations: z
+      .boolean()
+      .describe(
+        "Whether to generate detailed pedagogical explanations explaining why the correct answer is right and why distractors are wrong.",
+      ),
+    includeWorkedExamples: z
+      .boolean()
+      .describe(
+        "Whether to generate full step-by-step model solutions showing methodology and marking breakdown.",
+      ),
+    instructions: z
+      .string()
+      .trim()
+      .max(2000)
+      .nullable()
+      .describe(
+        "Optional examination instructions, rubric notes, or special directives shown to students at the beginning of the exam paper.",
+      ),
     // Strict exam controls — admin configurable, secure defaults as per spec
-    preventBacktrack: z.boolean().default(true),
-    allowReviewBeforeSubmit: z.boolean().default(false),
-    allowSkipping: z.boolean().default(true),
-    requireFullscreen: z.boolean().default(true),
+    preventBacktrack: z
+      .boolean()
+      .default(true)
+      .describe(
+        "Security policy: whether students are prevented from navigating backwards to earlier questions once submitted or passed.",
+      ),
+    allowReviewBeforeSubmit: z
+      .boolean()
+      .default(false)
+      .describe(
+        "Exam policy: whether students can review an overview of all their answers before final submission.",
+      ),
+    allowSkipping: z
+      .boolean()
+      .default(true)
+      .describe(
+        "Exam policy: whether students may skip questions to answer later within navigation constraints.",
+      ),
+    requireFullscreen: z
+      .boolean()
+      .default(true)
+      .describe(
+        "Proctoring policy: whether the exam browser runner enforces locked fullscreen mode to deter cheating.",
+      ),
     // Recording is optional and disabled by default; onboarding still requires permissions
-    enableCameraRecording: z.boolean().default(false),
-    enableScreenRecording: z.boolean().default(false),
+    enableCameraRecording: z
+      .boolean()
+      .default(false)
+      .describe(
+        "Proctoring policy: whether continuous webcam video recording is active during the exam session.",
+      ),
+    enableScreenRecording: z
+      .boolean()
+      .default(false)
+      .describe(
+        "Proctoring policy: whether continuous screen recording is active during the exam session.",
+      ),
   })
   .superRefine((p, ctx) => {
     // Subjects with subsidiaries require a choice. Checked before the level
@@ -129,32 +228,84 @@ export const examParamsSchema = z
 export type ExamParamsInput = z.infer<typeof examParamsSchema>;
 
 export const generateExamSchema = z.object({
-  params: examParamsSchema,
+  params: examParamsSchema.describe("Exam specification parameters driving the generation pipeline."),
   /** Source document ids to ground generation on (optional). */
-  documentIds: z.array(z.string()).max(10).default([]),
+  documentIds: z
+    .array(z.string())
+    .max(10)
+    .default([])
+    .describe(
+      "Optional IDs of uploaded reference notes, textbooks, or syllabus documents to ground question generation.",
+    ),
 });
 export type GenerateExamInput = z.infer<typeof generateExamSchema>;
 
 /* ── AI output contract ─────────────────────────────────────── */
 
 const chartVisualSchema = z.object({
-  kind: z.literal("chart"),
-  chartType: z.enum(["bar", "line", "pie", "area"]),
-  title: z.string().min(1).max(120).optional(),
-  caption: z.string().max(300).nullable().default(null),
+  kind: z.literal("chart").describe("Visual aid discriminator type: 'chart'."),
+  chartType: z
+    .enum(["bar", "line", "pie", "area"])
+    .describe(
+      "Type of chart: 'bar' (discrete categories/comparisons), 'line' (continuous trends over time), 'pie' (proportions <=6 slices summing to 100), or 'area' (cumulative trends).",
+    ),
+  title: z
+    .string()
+    .min(1)
+    .max(120)
+    .optional()
+    .describe("Short, informative title displayed above the chart graphic."),
+  caption: z
+    .string()
+    .max(300)
+    .nullable()
+    .default(null)
+    .describe(
+      "Explanatory caption or data source citation (e.g. 'Source: 2023 Agricultural Survey').",
+    ),
   /** Array of uniform objects, e.g. [{label:"Q1", value:40}, ...] */
-  data: z.array(z.record(z.string(), z.union([z.string(), z.number()]))).min(2).max(12),
+  data: z
+    .array(z.record(z.string(), z.union([z.string(), z.number()])))
+    .min(2)
+    .max(12)
+    .describe(
+      "Array of 2 to 12 uniform data point records (e.g. [{'label': '2019', 'value': 40}, {'label': '2020', 'value': 55}]). Do NOT use LaTeX or '$' in chart labels or values.",
+    ),
   /** Key in data for X/label axis; defaults to first string key or "label" */
-  xKey: z.string().min(1).max(30).optional(),
+  xKey: z
+    .string()
+    .min(1)
+    .max(30)
+    .optional()
+    .describe("Object property key name used for category labels / X-axis (e.g. 'label' or 'year')."),
   /** Key in data for Y/value axis; defaults to first numeric key or "value" */
-  yKey: z.string().min(1).max(30).optional(),
+  yKey: z
+    .string()
+    .min(1)
+    .max(30)
+    .optional()
+    .describe("Object property key name used for numeric measurements / Y-axis (e.g. 'value' or 'rainfall')."),
 });
 
 const tableVisualSchema = z.object({
-  kind: z.literal("table"),
-  title: z.string().min(1).max(120).optional(),
-  caption: z.string().max(300).nullable().default(null),
-  headers: z.array(z.string().min(1).max(60)).min(2).max(8),
+  kind: z.literal("table").describe("Visual aid discriminator type: 'table'."),
+  title: z
+    .string()
+    .min(1)
+    .max(120)
+    .optional()
+    .describe("Title displayed above the data table."),
+  caption: z
+    .string()
+    .max(300)
+    .nullable()
+    .default(null)
+    .describe("Footnote or explanatory context describing table data."),
+  headers: z
+    .array(z.string().min(1).max(60))
+    .min(2)
+    .max(8)
+    .describe("Array of 2 to 8 column header labels. Wrap any math formulas with '$...$'."),
   /**
    * The *wire* shape: a row is a flat array of cells, which is how a model
    * naturally emits a table. Firestore cannot store an array whose elements are
@@ -162,7 +313,13 @@ const tableVisualSchema = z.object({
    * storage — see `QuestionVisualTable` in `@/types/firestore`. Do not use this
    * type for anything that is read back out of the database.
    */
-  rows: z.array(z.array(z.string().min(1).max(100))).min(1).max(12),
+  rows: z
+    .array(z.array(z.string().min(1).max(100)))
+    .min(1)
+    .max(12)
+    .describe(
+      "2D array of table rows (1 to 12 rows). Every row must have exactly the same number of cells as headers. Wrap math formulas with '$...$'.",
+    ),
 });
 
 export const questionVisualSchema = z.union([chartVisualSchema, tableVisualSchema]);
@@ -185,25 +342,96 @@ export type AiQuestionVisual = z.infer<typeof questionVisualSchema>;
  */
 
 const questionOutput = z.object({
-  type: z.enum(QUESTION_TYPES),
-  prompt: z.string().min(1),
+  type: z
+    .enum(QUESTION_TYPES)
+    .describe(
+      "Question format type: 'multiple_choice', 'true_false', 'fill_in_the_blank', 'short_answer', 'essay', or 'matching'.",
+    ),
+  prompt: z
+    .string()
+    .min(1)
+    .describe(
+      "The complete question prompt or problem statement. Wrap inline math with '$...$' and standalone equations with '$$...$$'. For fill_in_the_blank, use '___' (three underscores) where the blank sits.",
+    ),
   // Coerced because a maths model writes `options: [1, 2, 4, 8]` often enough to
   // matter, and a stringified number is a perfectly good option.
-  options: z.array(z.coerce.string()).nullable().default(null),
-  correctOptionIndex: z.number().int().nullable().default(null).catch(null),
-  correctBool: z.boolean().nullable().default(null).catch(null),
-  acceptableAnswers: z.array(z.coerce.string()).nullable().default(null),
-  pairs: z
-    .array(z.object({ left: z.string(), right: z.string() }))
+  options: z
+    .array(z.coerce.string())
     .nullable()
-    .default(null),
+    .default(null)
+    .describe(
+      "Array of 4 distinct answer choices (A, B, C, D) for multiple_choice questions. Wrap math expressions with '$...$'. Null for non-multiple_choice types.",
+    ),
+  correctOptionIndex: z
+    .number()
+    .int()
+    .nullable()
+    .default(null)
+    .catch(null)
+    .describe(
+      "0-based index of the correct answer in the options array (0 for A, 1 for B, 2 for C, 3 for D) for multiple_choice questions. Null for other question types.",
+    ),
+  correctBool: z
+    .boolean()
+    .nullable()
+    .default(null)
+    .catch(null)
+    .describe(
+      "The correct boolean answer (true or false) for true_false questions. Null for other question types.",
+    ),
+  acceptableAnswers: z
+    .array(z.coerce.string())
+    .nullable()
+    .default(null)
+    .describe(
+      "List of acceptable plain-text string answers for fill_in_the_blank or short_answer questions (e.g. ['9/5', '1.8']). Never use '$' or LaTeX commands here because student input is exact-matched. Null for other question types.",
+    ),
+  pairs: z
+    .array(
+      z.object({
+        left: z.string().describe("Left item/term in the matching pair"),
+        right: z.string().describe("Right matching definition/concept corresponding to the left item"),
+      }),
+    )
+    .nullable()
+    .default(null)
+    .describe(
+      "Array of 4 matching key-value pairs for matching questions (e.g. [{ left: 'Photosynthesis', right: 'Chloroplast' }]). Null for other question types.",
+    ),
   // `.catch` rather than a wider `.max`: the ceiling still means something (it is
   // what the grader and the score bar assume), but breaching it now costs the one
   // question's weighting instead of the whole chunk.
-  points: z.number().int().min(1).max(50).default(1).catch(1),
-  hint: z.string().nullable().default(null),
-  explanation: z.string().nullable().default(null),
-  workedExample: z.string().nullable().default(null),
+  points: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .default(1)
+    .catch(1)
+    .describe(
+      "Score weight / marks allocated to this question (typically 1 for objective questions, 5–20 for essays/structured questions).",
+    ),
+  hint: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe(
+      "Scaffolding hint to guide students toward the correct reasoning without revealing the answer. Null if hints were not requested.",
+    ),
+  explanation: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe(
+      "Pedagogical explanation explaining why the correct answer is right and why distractors are wrong. Null if explanations were not requested.",
+    ),
+  workedExample: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe(
+      "Step-by-step model solution demonstrating how to solve this and similar problems. Null if worked examples were not requested.",
+    ),
   /**
    * Accepted unvalidated on purpose. `questionVisualSchema` above documents the
    * shape the prompt asks for, but `sanitizeVisual` in `exams.ts` already pads
@@ -211,7 +439,13 @@ const questionOutput = z.object({
    * rejects and returns null for anything unusable — so validating here can only
    * turn a visual that would have been repaired into a lost chunk.
    */
-  visual: z.unknown().nullable().default(null),
+  visual: z
+    .unknown()
+    .nullable()
+    .default(null)
+    .describe(
+      "Optional accompanying visual aid object (chart or table conforming to visual schema), or null if no visual is needed.",
+    ),
 });
 
 export const examOutputSchema = z.object({
@@ -221,8 +455,14 @@ export const examOutputSchema = z.object({
     .string()
     .trim()
     .min(3)
-    .transform((s) => s.slice(0, 160)),
-  questions: z.array(questionOutput).min(1),
+    .transform((s) => s.slice(0, 160))
+    .describe(
+      "Formal examination title indicating subject, class level, and topic (e.g. 'Senior 4 Physics: Waves and Optics Mid-Term Examination').",
+    ),
+  questions: z
+    .array(questionOutput)
+    .min(1)
+    .describe("List of generated assessment questions conforming to the requested parameters."),
 });
 
 export type ExamOutput = z.infer<typeof examOutputSchema>;
@@ -246,7 +486,10 @@ export const questionRevisionOutputSchema = z.object({
   questions: z
     .array(
       questionOutput.extend({
-        id: z.string().min(1),
+        id: z
+          .string()
+          .min(1)
+          .describe("The unique question ID being revised, echoed back to ensure exact question matching."),
         /**
          * Nullable here, where generation defaults it to 1.
          *
@@ -256,11 +499,27 @@ export const questionRevisionOutputSchema = z.object({
          * change a reviewer reading a diff of the *prompt* has no reason to look
          * for. Null means "unchanged", and the mapper carries the stored value.
          */
-        points: z.number().int().min(1).max(50).nullable().default(null).catch(null),
-        changeNote: z.string().nullable().default(null).catch(null),
+        points: z
+          .number()
+          .int()
+          .min(1)
+          .max(50)
+          .nullable()
+          .default(null)
+          .catch(null)
+          .describe("Updated mark weight for the revised question, or null to preserve existing points."),
+        changeNote: z
+          .string()
+          .nullable()
+          .default(null)
+          .catch(null)
+          .describe(
+            "One-line summary describing the revision made (e.g. 'Updated distractor D to be more plausible and fixed LaTeX notation in prompt').",
+          ),
       }),
     )
-    .min(1),
+    .min(1)
+    .describe("Array of revised questions matching the requested revision IDs."),
 });
 export type QuestionRevisionOutput = z.infer<typeof questionRevisionOutputSchema>;
 export type RevisedQuestionOutput = QuestionRevisionOutput["questions"][number];
@@ -268,9 +527,19 @@ export type RevisedQuestionOutput = QuestionRevisionOutput["questions"][number];
 /* ── Assignment / scheduling ────────────────────────────────── */
 
 export const assignExamSchema = z.object({
-  examId: z.string().min(1),
-  studentIds: z.array(z.string().min(1)).min(1, "Select at least one student"),
-  scheduledFor: z.string().datetime().nullable().default(null),
+  examId: z.string().min(1).describe("Unique identifier of the exam to assign to students."),
+  studentIds: z
+    .array(z.string().min(1))
+    .min(1, "Select at least one student")
+    .describe("Array of student user IDs who should receive and sit this examination."),
+  scheduledFor: z
+    .string()
+    .datetime()
+    .nullable()
+    .default(null)
+    .describe(
+      "Optional ISO-8601 UTC timestamp scheduling when the exam becomes accessible. Null for immediate availability.",
+    ),
   /**
    * Set only when the reviewer has confirmed the "assign anyway" dialog on a draft
    * exam whose questions are not all approved.
@@ -279,6 +548,11 @@ export const assignExamSchema = z.object({
    * forgets this field — gets the gate rather than bypasses it. A permission this
    * shape has to fail closed.
    */
-  acknowledgeUnreviewed: z.boolean().default(false),
+  acknowledgeUnreviewed: z
+    .boolean()
+    .default(false)
+    .describe(
+      "Explicit confirmation to assign the exam even if some questions remain unapproved drafts.",
+    ),
 });
 export type AssignExamInput = z.infer<typeof assignExamSchema>;

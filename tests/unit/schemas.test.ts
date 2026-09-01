@@ -6,6 +6,7 @@ import {
   generateExamSchema,
 } from "@/lib/schemas/exam";
 import { setupSchema, loginSchema } from "@/lib/schemas/auth";
+import { setUserStatusSchema } from "@/lib/schemas/users";
 import { parseUserAgent } from "@/lib/user-agent";
 import {
   COUNTRY_CURRICULA,
@@ -117,6 +118,24 @@ describe("auth schemas", () => {
   it("login requires an email + password", () => {
     expect(loginSchema.safeParse({ email: "not-an-email", password: "x" }).success).toBe(false);
     expect(loginSchema.safeParse({ email: "a@b.co", password: "x" }).success).toBe(true);
+  });
+});
+
+describe("user status schema", () => {
+  it("requires an expiry for suspended users", () => {
+    const suspended = { userId: "u1", status: "suspended" };
+    expect(setUserStatusSchema.safeParse(suspended).success).toBe(false);
+    expect(
+      setUserStatusSchema.safeParse({
+        ...suspended,
+        suspendedUntil: "2026-09-08T00:00:00.000Z",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("keeps the suspension expiry optional for other statuses", () => {
+    expect(setUserStatusSchema.safeParse({ userId: "u1", status: "active" }).success).toBe(true);
+    expect(setUserStatusSchema.safeParse({ userId: "u1", status: "banned" }).success).toBe(true);
   });
 });
 
