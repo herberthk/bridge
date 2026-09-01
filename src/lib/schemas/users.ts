@@ -118,31 +118,36 @@ export const createStandaloneAdminSchema = z.object({
 });
 export type CreateStandaloneAdminInput = z.infer<typeof createStandaloneAdminSchema>;
 
-export const setUserStatusSchema = z.object({
-  userId: z
-    .string()
-    .min(1)
-    .describe("Unique identifier of the user account whose status is being modified."),
-  status: z
-    .enum(["active", "suspended", "banned"])
-    .describe(
-      "Account operational status: 'active' (normal full access), 'suspended' (temporarily blocked until a date), or 'banned' (permanently deactivated).",
-    ),
-  reason: z
-    .string()
-    .trim()
-    .max(300)
-    .optional()
-    .describe("Administrative explanation or justification for the status change."),
-  /** ISO date; only for suspensions. */
-  suspendedUntil: z
-    .string()
-    .datetime()
-    .optional()
-    .describe(
-      "ISO-8601 UTC timestamp indicating when a temporary account suspension ends (required when status is 'suspended').",
-    ),
-});
+export const setUserStatusSchema = z
+  .object({
+    userId: z
+      .string()
+      .min(1)
+      .describe("Unique identifier of the user account whose status is being modified."),
+    status: z
+      .enum(["active", "suspended", "banned"])
+      .describe(
+        "Account operational status: 'active' (normal full access), 'suspended' (temporarily blocked until a date), or 'banned' (permanently deactivated).",
+      ),
+    reason: z
+      .string()
+      .trim()
+      .max(300)
+      .optional()
+      .describe("Administrative explanation or justification for the status change."),
+    /** ISO date; only for suspensions. */
+    suspendedUntil: z
+      .string()
+      .datetime()
+      .optional()
+      .describe(
+        "ISO-8601 UTC timestamp indicating when a temporary account suspension ends (required when status is 'suspended').",
+      ),
+  })
+  .refine((input) => input.status !== "suspended" || Boolean(input.suspendedUntil), {
+    message: "Choose when the suspension ends",
+    path: ["suspendedUntil"],
+  });
 export type SetUserStatusInput = z.infer<typeof setUserStatusSchema>;
 
 /**

@@ -260,6 +260,21 @@ export function refineQuestionPatch(
   if (patch.type === "matching" && filledPairs.length < 2) {
     ctx.addIssue({ code: "custom", path: ["pairs"], message: "Give at least 2 complete pairs" });
   }
+
+  if (patch.type === "matching") {
+    const leftValues = (patch.pairs ?? []).map((pair) => pair.left.trim()).filter(Boolean);
+    const rightValues = (patch.pairs ?? []).map((pair) => pair.right.trim()).filter(Boolean);
+    if (
+      new Set(leftValues).size !== leftValues.length ||
+      new Set(rightValues).size !== rightValues.length
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["pairs"],
+        message: "Use each left and right value only once",
+      });
+    }
+  }
 }
 
 /** A patch plus its per-type completeness rules — what the server accepts. */

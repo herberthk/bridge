@@ -305,6 +305,47 @@ describe("validatedQuestionPatchSchema", () => {
     ).toContain("pairs");
   });
 
+  it("requires matching pairs to be one-to-one", () => {
+    const base = { id: "q1", type: "matching", prompt: "Match them.", points: 4 };
+    expect(
+      issuePaths({
+        ...base,
+        pairs: [
+          { left: "a", right: "b" },
+          { left: "a", right: "d" },
+        ],
+      } as QuestionPatchInput),
+    ).toContain("pairs");
+    expect(
+      issuePaths({
+        ...base,
+        pairs: [
+          { left: "a", right: "b" },
+          { left: "c", right: "b" },
+        ],
+      } as QuestionPatchInput),
+    ).toContain("pairs");
+    expect(
+      issuePaths({
+        ...base,
+        pairs: [
+          { left: "a", right: "b" },
+          { left: "c", right: "d" },
+          { left: " a ", right: "" },
+        ],
+      } as QuestionPatchInput),
+    ).toContain("pairs");
+    expect(
+      validatedQuestionPatchSchema.safeParse({
+        ...base,
+        pairs: [
+          { left: "a", right: "b" },
+          { left: "c", right: "d" },
+        ],
+      }).success,
+    ).toBe(true);
+  });
+
   it("bounds marks to something a paper can carry", () => {
     expect(validatedQuestionPatchSchema.safeParse(patch({ points: 0 })).success).toBe(false);
     expect(validatedQuestionPatchSchema.safeParse(patch({ points: 51 })).success).toBe(false);

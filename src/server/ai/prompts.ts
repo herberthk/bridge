@@ -283,7 +283,7 @@ export function questionRevisionInstructions(
     // answers shaped by the question's type, so a type change would leave a recorded
     // response pointing at a shape that no longer exists.
     "- NEVER change a question's `type` or its `id`. Both are fixed. Echo the `id` back exactly as given.",
-    "- Keep all dependent fields (options, correctOptionIndex/correctBool/acceptableAnswers, explanation, workedExample, visual) completely synchronized with your rewrite. If you reorder or replace options, move `correctOptionIndex` to match — an out-of-date index is worse than the original question.",
+    "- Keep all dependent fields (options, correctOptionIndex/correctBool/acceptableAnswers, pairs, explanation, workedExample, visual) completely synchronized with your rewrite. If you reorder or replace options, move `correctOptionIndex` to match — an out-of-date index is worse than the original question.",
     "- If the instruction is impossible or would make the question wrong, return the closest correct question you can and say so in `changeNote`.",
     "- `changeNote` is one short sentence naming what you changed, for the teacher to read above the diff.",
     "",
