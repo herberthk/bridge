@@ -1573,6 +1573,27 @@ export async function generateExam(
   };
 }
 
+/** Returns student IDs who already have an attempt for this exam */
+export async function getAssignedStudentIdsForExam(
+  actor: SessionUser,
+  examId: string,
+): Promise<string[]> {
+  if (actor.role !== "admin" && actor.role !== "super_admin") {
+    throw new ExamsServiceError("Not allowed.", 403);
+  }
+  let query = attemptsCol().where("examId", "==", examId);
+  if (actor.role === "admin" && actor.schoolId) {
+    query = query.where("schoolId", "==", actor.schoolId);
+  }
+  const snap = await query.select("studentId").get();
+  const ids = new Set<string>();
+  snap.docs.forEach((d) => {
+    const sid = d.data().studentId as string;
+    if (sid) ids.add(sid);
+  });
+  return Array.from(ids);
+}
+
 /** Assign an exam to students → creates pending attempts (optionally scheduled). */
 export async function assignExam(
   actor: SessionUser,

@@ -6,6 +6,7 @@ import { ArrowLeftIcon } from "lucide-react";
 
 import { requireRole } from "@/server/auth/session";
 import { getExamForReview } from "@/server/services/exam-review";
+import { getAssignedStudentIdsForExam } from "@/server/services/exams";
 import { listStudents } from "@/server/services/users";
 import { ExamReviewWorkspace } from "@/components/features/admin/exam-review";
 import { Button } from "@/components/ui/button";
@@ -38,15 +39,22 @@ export default async function AdminExamReviewPage({
   }
   if (!exam) notFound();
 
-  // Loaded here so the assign dialog opens without a round trip — the whole point
-  // of the review screen is to finish at "assigned". A failure to list students
-  // must not take the review surface with it, hence the empty fallback.
-  let students: WithId<UserDoc>[] = [];
-  try {
-    students = await listStudents(actor);
-  } catch (err) {
-    console.error("[admin/exams/review] student load failed", err);
-  }
+  // Concurrently fetch students and assigned student IDs for ultra-fast, zero-waterfall modal opening
+  const [studentsResult, assignedResult] = await Promise.allSettled([
+    listStudents(actor).catch((err) => {
+      console.error("[admin/exams/review] student load failed", err);
+      return [] as WithId<UserDoc>[];
+    }),
+    getAssignedStudentIdsForExam(actor, examId).catch((err) => {
+      console.error("[admin/exams/review] assigned students load failed", err);
+      return [] as string[];
+    }),
+  ]);
+
+  const students: WithId<UserDoc>[] =
+    studentsResult.status === "fulfilled" ? studentsResult.value : [];
+  const assignedStudentIds: string[] =
+    assignedResult.status === "fulfilled" ? assignedResult.value : [];
 
   return (
     <div className="flex flex-col gap-4">
@@ -60,7 +68,11 @@ export default async function AdminExamReviewPage({
         <ArrowLeftIcon data-icon="inline-start" /> Back to library
       </Button>
 
-      <ExamReviewWorkspace exam={serializeDoc(exam)} students={serializeDocs(students)} />
+      <ExamReviewWorkspace
+        exam={serializeDoc(exam)}
+        students={serializeDocs(students)}
+        assignedStudentIds={assignedStudentIds}
+      />
     </div>
   );
 }

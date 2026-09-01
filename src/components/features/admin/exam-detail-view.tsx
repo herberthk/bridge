@@ -143,6 +143,11 @@ export function ExamDetailView({ exam, attempts, students }: ExamDetailViewProps
     [exam.questions],
   );
 
+  const assignedStudentIds = useMemo(
+    () => Array.from(new Set(attempts.map((a) => a.studentId))),
+    [attempts],
+  );
+
   // Group attempts by student
   const studentSummaries = useMemo<StudentPerformanceSummary[]>(() => {
     const byStudent = new Map<string, SerializedWithId<AttemptDoc>[]>();
@@ -426,6 +431,7 @@ export function ExamDetailView({ exam, attempts, students }: ExamDetailViewProps
           <AssignExamDialog
             exam={exam}
             students={students}
+            assignedStudentIds={assignedStudentIds}
             size="sm"
             variant="default"
             label="Assign Exam"
