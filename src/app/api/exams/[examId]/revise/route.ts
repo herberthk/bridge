@@ -25,7 +25,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ examId: string }> },
 ) {
-  const actor = await apiUser("admin", "super_admin");
+  const actor = await apiUser("admin", "teacher", "super_admin");
   if (!actor) return NextResponse.json({ error: "Not authorized." }, { status: 401 });
 
   const { examId } = await params;

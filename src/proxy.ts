@@ -6,7 +6,15 @@ import { NextResponse, type NextRequest } from "next/server";
  * request (Node runtime), so it must stay cheap: cookie presence, no I/O.
  */
 
-const PROTECTED_PREFIXES = ["/admin", "/student", "/super", "/dashboard", "/exam"];
+const PROTECTED_PREFIXES = [
+  "/admin",
+  "/teacher",
+  "/student",
+  "/super",
+  "/dashboard",
+  "/exam",
+  "/onboarding",
+];
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;

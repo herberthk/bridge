@@ -168,17 +168,97 @@ export const QUESTION_TYPE_LABELS: Record<QuestionType, string> = {
   matching: "Matching",
 };
 
-export const ROLES = ["super_admin", "admin", "student"] as const;
+export const ROLES = [
+  "super_admin",
+  "admin",
+  "teacher",
+  "student",
+  "member",
+] as const;
 export type Role = (typeof ROLES)[number];
 
 export const ROLE_LABELS: Record<Role, string> = {
   super_admin: "Super Admin",
-  admin: "Admin",
+  admin: "School Admin",
+  teacher: "Teacher",
   student: "Student",
+  member: "Member",
 };
 
+/** Roles that manage a school (create classes, students, exams). */
+export const STAFF_ROLES = ["admin", "teacher"] as const;
+export type StaffRole = (typeof STAFF_ROLES)[number];
+
+export function isStaffRole(role: Role): role is StaffRole {
+  return role === "admin" || role === "teacher";
+}
+
+/**
+ * "member" is a signed-up user who has not created (or joined) a school yet.
+ * They complete onboarding to become the school's admin.
+ */
 export const USER_STATUSES = ["active", "suspended", "banned"] as const;
 export type UserStatus = (typeof USER_STATUSES)[number];
+
+/* ── School verification ("blue tick") ─────────────────────────────── */
+
+export const SCHOOL_VERIFICATION_STATUSES = [
+  "unverified",
+  "pending",
+  "verified",
+] as const;
+export type SchoolVerificationStatus =
+  (typeof SCHOOL_VERIFICATION_STATUSES)[number];
+
+export const SCHOOL_VERIFICATION_LABELS: Record<SchoolVerificationStatus, string> = {
+  unverified: "Not verified",
+  pending: "Verification pending",
+  verified: "Verified school",
+};
+
+/* ── Classes ───────────────────────────────────────────────────────── */
+
+/**
+ * Standard class set per school level: Primary 1–7, or Secondary 1–6
+ * (S1–S4 Ordinary level, S5–S6 Advanced level).
+ */
+export function standardClassLevelsForLevel(
+  level: SchoolLevel,
+): readonly number[] {
+  return level === "primary" ? PRIMARY_CLASSES : SECONDARY_CLASSES;
+}
+
+/** Display label for a class year, e.g. "Primary 4" or "Senior 2". */
+export function classLabel(level: SchoolLevel, classLevel: number): string {
+  return level === "primary"
+    ? `Primary ${classLevel}`
+    : `Senior ${classLevel}`;
+}
+
+/* ── Teacher invites ───────────────────────────────────────────────── */
+
+export const INVITE_STATUSES = [
+  "pending",
+  "accepted",
+  "revoked",
+] as const;
+export type InviteStatus = (typeof INVITE_STATUSES)[number];
+
+export type InviteRole = "teacher";
+
+/** How long an invite link stays valid before the admin must re-invite. */
+export const INVITE_TTL_DAYS = 7;
+
+/* ── Wallet top-ups (pay-as-you-go credits) ────────────────────────── */
+
+export const TOPUP_STATUSES = [
+  "pending",
+  "processing",
+  "completed",
+  "failed",
+  "cancelled",
+] as const;
+export type TopupStatus = (typeof TOPUP_STATUSES)[number];
 
 export const EXAM_STATUSES = [
   "draft",

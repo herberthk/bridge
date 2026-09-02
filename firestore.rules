@@ -16,6 +16,12 @@ service cloud.firestore {
     function isAdmin() {
       return isSignedIn() && role() == 'admin';
     }
+    function isTeacher() {
+      return isSignedIn() && role() == 'teacher';
+    }
+    function isStaff() {
+      return isAdmin() || isTeacher();
+    }
     function isStudent() {
       return isSignedIn() && role() == 'student';
     }
@@ -23,7 +29,7 @@ service cloud.firestore {
       return request.auth.token.schoolId;
     }
     function sameSchool(docSchoolId) {
-      return isAdmin() && docSchoolId != null && docSchoolId == mySchool();
+      return isStaff() && docSchoolId != null && docSchoolId == mySchool();
     }
 
     /* ── users ───────────────────────────────────────────────── */
@@ -31,7 +37,7 @@ service cloud.firestore {
       function canRead(data) {
         return isSuper()
           || request.auth.uid == uid
-          || (isAdmin() && data.role == 'student' && sameSchool(data.schoolId))
+          || (isStaff() && data.role in ['student', 'teacher', 'admin'] && sameSchool(data.schoolId))
           // Standalone admins can see the students they created.
           || (isAdmin() && mySchool() == null && data.createdBy == request.auth.uid);
       }
@@ -45,7 +51,7 @@ service cloud.firestore {
         || (isSignedIn() && request.auth.uid == uid
             && request.resource.data.diff(resource.data).affectedKeys()
                  .hasOnly(['displayName', 'photoURL', 'updatedAt']))
-        // Admins may moderate students in their school.
+        // Admins may moderate students in their school (teachers cannot).
         || (isAdmin() && resource.data.role == 'student'
             && (sameSchool(resource.data.schoolId)
                 || (mySchool() == null && resource.data.createdBy == request.auth.uid))
@@ -57,6 +63,29 @@ service cloud.firestore {
     match /schools/{schoolId} {
       allow get, list: if isSuper() || (isSignedIn() && (mySchool() == schoolId || resource.data.ownerUid == request.auth.uid));
       allow write: if false; // Admin SDK only
+    }
+
+    /* ── classes (school-scoped) ─────────────────────────────── */
+    match /classes/{classId} {
+      allow get, list: if isSuper()
+        || sameSchool(resource.data.schoolId)
+        // Students can read their own school's classes (labels for their class).
+        || (isStudent() && resource.data.schoolId == mySchool());
+      allow write: if false; // Server actions / Admin SDK only
+    }
+
+    /* ── teacher invites (staff read; accepted via API) ──────── */
+    match /invites/{inviteId} {
+      allow get, list: if isSuper() || sameSchool(resource.data.schoolId);
+      allow write: if false; // Create/accept/revoke flow through server APIs only
+    }
+
+    /* ── top-ups (pay-as-you-go credit purchases) ────────────── */
+    match /topups/{topupId} {
+      allow get, list: if isSuper()
+        || (isStaff() && resource.data.walletId == mySchool())
+        || (isAdmin() && resource.data.walletId == request.auth.uid);
+      allow write: if false; // Checkout + confirmation flow through server APIs only
     }
 
     /* ── billing (server-written; readable by owners) ─────────── */
@@ -76,7 +105,7 @@ service cloud.firestore {
       function canReadExam(data) {
         return isSuper()
           || sameSchool(data.schoolId)
-          || (isAdmin() && data.schoolId == null && data.createdBy == request.auth.uid)
+          || (isStaff() && data.schoolId == null && data.createdBy == request.auth.uid)
           || (isStudent() && data.schoolId != null && data.schoolId == mySchool());
       }
       allow get, list: if isSignedIn() && canReadExam(resource.data);

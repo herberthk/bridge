@@ -24,7 +24,7 @@ export const maxDuration = 180;
 
 /** AI exam generation — metered against the caller's wallet. */
 export async function POST(request: NextRequest) {
-  const actor = await apiUser("admin", "super_admin");
+  const actor = await apiUser("admin", "teacher", "super_admin");
   if (!actor) return NextResponse.json({ error: "Not authorized." }, { status: 401 });
 
   const parsed = generateExamSchema.safeParse(await request.json().catch(() => null));

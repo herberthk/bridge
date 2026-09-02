@@ -73,6 +73,8 @@ export async function POST(request: NextRequest) {
     role: "super_admin",
     schoolId: null,
     status: "active",
+    classId: null,
+    assignedClassIds: null,
     classLevel: null,
     level: null,
     secondarySubLevel: null,

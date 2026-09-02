@@ -10,7 +10,7 @@ const MAX_BYTES = 10 * 1024 * 1024;
 
 /** Upload a source document (PDF, scanned images, DOCX, TXT) for AI-grounded generation. */
 export async function POST(request: NextRequest) {
-  const actor = await apiUser("admin", "super_admin");
+  const actor = await apiUser("admin", "teacher", "super_admin");
   if (!actor) return NextResponse.json({ error: "Not authorized." }, { status: 401 });
 
   let form: FormData;

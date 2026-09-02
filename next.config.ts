@@ -16,6 +16,7 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   // CJS server-only libs that must not be bundled.
   serverExternalPackages: ["pdf-parse", "mammoth", "firebase-admin", "@react-pdf/renderer"],
+  allowedDevOrigins: ['127.0.0.1'],
   async headers() {
     return [
       { source: "/(.*)", headers: securityHeaders },

@@ -126,6 +126,58 @@ export async function consumeTokens(
   return result.ledger;
 }
 
+interface CreditWalletInput {
+  walletId: string;
+  tokens: number;
+  description: string;
+  refType?: string | null;
+  refId?: string | null;
+  actorId: string | null;
+  /** Amount actually paid, for the ledger (mock checkouts pass the price). */
+  usdMicros?: number;
+  ugx?: number;
+}
+
+/**
+ * Atomically credit tokens and append a ledger transaction. Shared by the
+ * super-admin manual top-up and completed payment-provider checkouts.
+ */
+export async function creditWallet(input: CreditWalletInput): Promise<number> {
+  const tokens = Math.round(input.tokens);
+  if (tokens <= 0) throw new BillingError("Credit amount must be positive.");
+
+  const balanceAfter = await adminDb().runTransaction(async (tx) => {
+    const walletRef = walletDoc(input.walletId);
+    const snap = await tx.get(walletRef);
+    if (!snap.exists) throw new BillingError("Wallet not found.", 404);
+    const wallet = snap.data()!;
+    const nextBalance = wallet.balanceTokens + tokens;
+    tx.update(walletRef, {
+      balanceTokens: nextBalance,
+      totalTopupTokens: wallet.totalTopupTokens + tokens,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    const ledger: WriteModel<TransactionDoc> = {
+      walletId: input.walletId,
+      ownerId: wallet.ownerId,
+      type: "topup",
+      category: "topup",
+      tokensDelta: tokens,
+      balanceAfter: nextBalance,
+      usdMicros: input.usdMicros ?? 0,
+      ugx: input.ugx ?? 0,
+      description: input.description,
+      refType: input.refType ?? null,
+      refId: input.refId ?? null,
+      createdBy: input.actorId,
+      createdAt: FieldValue.serverTimestamp(),
+    };
+    tx.create(transactionsCol().doc(), ledger);
+    return nextBalance;
+  });
+  return balanceAfter;
+}
+
 /** Super Admin credits a wallet (manual top-up). */
 export async function topupWallet(
   actor: SessionUser,
@@ -137,33 +189,11 @@ export async function topupWallet(
   const tokens = Math.round(input.tokens);
   if (tokens <= 0) throw new BillingError("Top-up must be positive.");
 
-  await adminDb().runTransaction(async (tx) => {
-    const walletRef = walletDoc(input.walletId);
-    const snap = await tx.get(walletRef);
-    if (!snap.exists) throw new BillingError("Wallet not found.", 404);
-    const wallet = snap.data()!;
-    const balanceAfter = wallet.balanceTokens + tokens;
-    tx.update(walletRef, {
-      balanceTokens: balanceAfter,
-      totalTopupTokens: wallet.totalTopupTokens + tokens,
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-    const ledger: WriteModel<TransactionDoc> = {
-      walletId: input.walletId,
-      ownerId: wallet.ownerId,
-      type: "topup",
-      category: "topup",
-      tokensDelta: tokens,
-      balanceAfter,
-      usdMicros: 0,
-      ugx: 0,
-      description: input.description ?? "Manual top-up",
-      refType: null,
-      refId: null,
-      createdBy: actor.uid,
-      createdAt: FieldValue.serverTimestamp(),
-    };
-    tx.create(transactionsCol().doc(), ledger);
+  await creditWallet({
+    walletId: input.walletId,
+    tokens,
+    description: input.description ?? "Manual top-up",
+    actorId: actor.uid,
   });
 
   await writeAudit({

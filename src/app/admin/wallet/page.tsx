@@ -31,6 +31,7 @@ export default async function AdminWalletPage() {
       transactions={serializeDocs(transactions)}
       ownerLabel={actor.schoolId ? "your school" : "your account"}
       loadFailed={loadFailed}
+      selfTopup
     />
   );
 }

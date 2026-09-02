@@ -129,3 +129,82 @@ export function BanNoticeEmail({
     </EmailLayout>
   );
 }
+
+export function TeacherInviteEmail({
+  displayName,
+  schoolName,
+  invitedByName,
+  inviteUrl,
+  expiresAt,
+}: {
+  displayName: string;
+  schoolName: string;
+  invitedByName: string | null;
+  inviteUrl: string;
+  expiresAt: Date;
+}) {
+  return (
+    <EmailLayout
+      preview={`You've been invited to teach at ${schoolName} on Bridge`}
+      heading={`Join ${schoolName} on Bridge`}
+      footer="Bridge — AI-powered assessment for Ugandan schools."
+    >
+      <Text style={{ fontSize: 15, color: "#3f3f4a" }}>
+        Hi {displayName || "there"}, {invitedByName ?? "a school admin"} has
+        invited you to join <strong>{schoolName}</strong> as a teacher on
+        Bridge — the AI-powered assessment platform.
+      </Text>
+      <Text style={{ fontSize: 15, color: "#3f3f4a" }}>
+        Accept your invite to set up your account, see your classes, generate
+        AI exams and track your students&apos; performance.
+      </Text>
+      <Text style={{ textAlign: "center", margin: "24px 0" }}>
+        <a
+          href={inviteUrl}
+          style={{
+            background: "#4f46e5",
+            color: "#ffffff",
+            borderRadius: 10,
+            padding: "12px 28px",
+            fontSize: 15,
+            fontWeight: 600,
+            textDecoration: "none",
+          }}
+        >
+          Accept invitation
+        </a>
+      </Text>
+      <Text style={{ fontSize: 13, color: "#8b8b9a" }}>
+        This link is personal and expires on{" "}
+        {expiresAt.toLocaleDateString(undefined, {
+          day: "numeric",
+          month: "long",
+          year: "numeric",
+        })}
+        . If the button doesn&apos;t work, paste this into your browser:{" "}
+        <a href={inviteUrl} style={{ color: "#4f46e5", wordBreak: "break-all" }}>
+          {inviteUrl}
+        </a>
+      </Text>
+    </EmailLayout>
+  );
+}
+
+export function InviteRevokedEmail({ schoolName }: { schoolName: string }) {
+  return (
+    <EmailLayout
+      preview={`Your Bridge invite to ${schoolName} was revoked`}
+      heading="Invitation revoked"
+      footer="Bridge — AI-powered assessment for Ugandan schools."
+    >
+      <Text style={{ fontSize: 15, color: "#3f3f4a" }}>
+        Your invitation to join <strong>{schoolName}</strong> on Bridge has been
+        revoked by the school administration and the link is no longer active.
+      </Text>
+      <Text style={{ fontSize: 14, color: "#8b8b9a" }}>
+        If you think this was a mistake, contact the school&apos;s administration —
+        they can send you a fresh invitation.
+      </Text>
+    </EmailLayout>
+  );
+}

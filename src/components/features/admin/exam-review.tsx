@@ -106,10 +106,12 @@ export function ExamReviewWorkspace({
   exam,
   students,
   assignedStudentIds = [],
+  basePath = "/admin",
 }: {
   exam: SerializedWithId<ExamDoc>;
   students: SerializedWithId<UserDoc>[];
   assignedStudentIds?: string[];
+  basePath?: string;
 }) {
   /**
    * Local, and initialised from props exactly once.
@@ -483,6 +485,7 @@ export function ExamReviewWorkspace({
               label={progress.complete ? "Assign to students" : "Assign exam"}
               open={assignOpen}
               onOpenChange={setAssignOpen}
+              basePath={basePath}
             />
           </div>
         </div>

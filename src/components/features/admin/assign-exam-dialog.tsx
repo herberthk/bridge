@@ -57,6 +57,7 @@ export function AssignExamDialog({
   className,
   open: controlledOpen,
   onOpenChange,
+  basePath = "/admin",
 }: {
   exam: SerializedWithId<ExamDoc>;
   students: SerializedWithId<UserDoc>[];
@@ -67,6 +68,7 @@ export function AssignExamDialog({
   className?: string;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  basePath?: string;
 }) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
   const open = controlledOpen ?? uncontrolledOpen;
@@ -381,7 +383,7 @@ export function AssignExamDialog({
                       size="sm"
                       variant="outline"
                       className="h-7 border-amber-500/30 bg-background/80 text-xs text-foreground hover:bg-background"
-                      render={<Link href={`/admin/exams/${exam.id}/review`} />}
+                      render={<Link href={`${basePath}/exams/${exam.id}/review`} />}
                     >
                       <ClipboardCheckIcon data-icon="inline-start" className="size-3.5 text-amber-600" />
                       Review questions

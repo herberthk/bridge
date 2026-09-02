@@ -11,7 +11,6 @@
 
 import { generateText } from "ai";
 
-import { textModel } from "@/server/ai/provider";
 import {
   adminAuth,
   adminDb,
@@ -82,6 +81,7 @@ async function main() {
   // 2. School + owner admin + student (real Auth users + Firestore docs).
   const { school, owner } = await createSchoolWithOwner(superAdmin, {
     schoolName: `E2E Test School ${stamp}`,
+    level: "secondary",
     ownerName: "E2E Owner",
     ownerEmail: `bridge-e2e-owner+${stamp}@example.com`,
     ownerPassword: "E2eTestPass123",

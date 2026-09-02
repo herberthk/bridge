@@ -51,6 +51,30 @@ export function clearClientSession(): void {
   } catch {}
 }
 
+/**
+ * Force-refresh the Firebase ID token and re-mint the httpOnly session cookie.
+ *
+ * Custom claims only reach a session cookie when a *new* ID token is exchanged
+ * — a force refresh picks them up immediately, where the normal hourly renewal
+ * would leave the server seeing the old role (e.g. after onboarding promotes a
+ * member to school admin). Returns false when the refresh could not complete.
+ */
+export async function refreshSession(): Promise<boolean> {
+  const user = authClient().currentUser;
+  if (!user) return false;
+  try {
+    const idToken = await user.getIdToken(true);
+    const res = await fetch("/api/auth/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken, kind: "refresh" }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 /** Sign out everywhere: Firebase client + session cookie and clear local session. Navigation is handled by the caller via useRouter().push('/login'). */
 export async function logout(): Promise<void> {
   await fbSignOut(authClient()).catch(() => undefined);

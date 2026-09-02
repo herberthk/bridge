@@ -71,7 +71,7 @@ const OUTPUT_CAP_HEADROOM = 3;
 /* ── Guards ──────────────────────────────────────────────────── */
 
 function assertStaff(actor: SessionUser): void {
-  if (actor.role !== "admin" && actor.role !== "super_admin") {
+  if (actor.role !== "admin" && actor.role !== "teacher" && actor.role !== "super_admin") {
     throw new ExamsServiceError("Not allowed.", 403);
   }
 }

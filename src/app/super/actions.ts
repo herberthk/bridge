@@ -7,10 +7,12 @@ import {
   createStandaloneAdminSchema,
   topupWalletSchema,
 } from "@/lib/schemas/users";
+import { setSchoolVerificationSchema } from "@/lib/schemas/school";
 import { apiUser } from "@/server/auth/session";
 import {
   createSchoolWithOwner,
   createStandaloneAdmin,
+  setSchoolVerification,
   SchoolsServiceError,
 } from "@/server/services/schools";
 import { topupWallet, BillingError } from "@/server/services/billing";
@@ -25,6 +27,7 @@ export async function createSchoolAction(
 
   const parsed = createSchoolSchema.safeParse({
     schoolName: formData.get("schoolName"),
+    level: formData.get("level"),
     ownerName: formData.get("ownerName"),
     ownerEmail: formData.get("ownerEmail"),
     ownerPassword: formData.get("ownerPassword"),
@@ -46,6 +49,40 @@ export async function createSchoolAction(
         err instanceof SchoolsServiceError
           ? err.message
           : "Could not create the school. Try again.",
+    };
+  }
+}
+
+/** Grant or revoke a school's verification blue tick. */
+export async function setSchoolVerificationAction(
+  _prev: ActionState | null,
+  formData: FormData,
+): Promise<ActionState> {
+  const actor = await apiUser("super_admin");
+  if (!actor) return { ok: false, error: "Not authorized." };
+
+  const parsed = setSchoolVerificationSchema.safeParse({
+    schoolId: formData.get("schoolId"),
+    status: formData.get("status"),
+  });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid request." };
+  }
+
+  try {
+    await setSchoolVerification(actor, parsed.data.schoolId, parsed.data.status === "verified");
+    revalidatePath("/super/schools");
+    revalidatePath("/super");
+    revalidatePath("/admin");
+    revalidatePath("/teacher");
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error:
+        err instanceof SchoolsServiceError
+          ? err.message
+          : "Could not update verification. Try again.",
     };
   }
 }

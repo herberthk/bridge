@@ -17,8 +17,10 @@ import {
 import {
   attemptDoc,
   attemptsCol,
+  classDoc,
   examDoc,
   examsCol,
+  schoolDoc,
   usersCol,
 } from "@/server/firebase/collections";
 import { adminDb } from "@/server/firebase/admin";
@@ -45,6 +47,7 @@ import type {
 import { examOutputSchema } from "@/lib/schemas/exam";
 import type { Difficulty } from "@/lib/constants";
 import { mathifyCell, repairMath } from "@/lib/exam/latex";
+import { formatExpiry, isExamExpired } from "@/lib/exam/expiry";
 import { isAssignGated, readReview, reviewProgress } from "@/lib/exam/review";
 import { estimateGenerationTokens, reserveForGeneration } from "@/lib/pricing";
 import type { Question } from "@/types/firestore";
@@ -849,7 +852,61 @@ export async function generateExam(
     input.params.questionCount,
     input.documentIds.length > 0,
   );
+
+  // Scope validation runs before the affordability check so authorization
+  // errors surface before billing ones.
+  //
+  // Class scoping: teachers generate only from a class they manage; admins
+  // from any class of their school. The class pins the exam's level and year.
+  let classId: string | null = null;
+  if (input.classId) {
+    const classSnap = await classDoc(input.classId).get();
+    if (!classSnap.exists) throw new ExamsServiceError("Class not found.", 404);
+    const cls = classSnap.data()!;
+    if (actor.schoolId && cls.schoolId !== actor.schoolId) {
+      throw new ExamsServiceError("This class belongs to another school.", 403);
+    }
+    if (actor.role === "teacher" && !(cls.teacherIds ?? []).includes(actor.uid)) {
+      throw new ExamsServiceError("You are not assigned to this class.", 403);
+    }
+    if (cls.level !== input.params.level || cls.classLevel !== input.params.classLevel) {
+      throw new ExamsServiceError(
+        "Exam level/class doesn't match the selected class.",
+        400,
+      );
+    }
+    classId = input.classId;
+  } else if (actor.role === "teacher") {
+    // A class-less exam could never be assigned by a teacher (assignment is
+    // restricted to their exam's class), so require the class up front.
+    throw new ExamsServiceError(
+      "Teachers generate exams from a class — open one of your classes and generate there.",
+      403,
+    );
+  } else if (actor.schoolId) {
+    // A school chose primary OR secondary at creation; its exams can't cross
+    // that line even when generated outside a class dashboard.
+    const schoolSnap = await schoolDoc(actor.schoolId).get();
+    if (schoolSnap.exists && schoolSnap.data()!.level !== input.params.level) {
+      throw new ExamsServiceError(
+        `This exam is for a ${input.params.level} class, but your school is a ${schoolSnap.data()!.level} school.`,
+        400,
+      );
+    }
+  }
+
   await assertCanAfford(walletId, reserveForGeneration(estimate));
+
+  // Deadline/expiry: after this instant students can no longer start the exam.
+  let expiresAt: Timestamp | null = null;
+  if (input.expiresAt) {
+    const ms = Date.parse(input.expiresAt);
+    if (Number.isNaN(ms)) throw new ExamsServiceError("Invalid expiry date.", 400);
+    if (ms <= Date.now()) {
+      throw new ExamsServiceError("The deadline must be in the future.", 400);
+    }
+    expiresAt = Timestamp.fromMillis(ms);
+  }
 
   // Decided before a token is spent or a document is read. This exact shape —
   // 20 questions with hints, explanations and worked examples — used to burn the
@@ -1453,6 +1510,8 @@ export async function generateExam(
     status: "draft",
     createdBy: actor.uid,
     schoolId: actor.schoolId,
+    classId,
+    expiresAt,
     usage: {
       generationInputTokens: inputTokensUsed,
       generationOutputTokens: outputTokensUsed,
@@ -1578,11 +1637,11 @@ export async function getAssignedStudentIdsForExam(
   actor: SessionUser,
   examId: string,
 ): Promise<string[]> {
-  if (actor.role !== "admin" && actor.role !== "super_admin") {
+  if (actor.role !== "admin" && actor.role !== "super_admin" && actor.role !== "teacher") {
     throw new ExamsServiceError("Not allowed.", 403);
   }
   let query = attemptsCol().where("examId", "==", examId);
-  if (actor.role === "admin" && actor.schoolId) {
+  if ((actor.role === "admin" || actor.role === "teacher") && actor.schoolId) {
     query = query.where("schoolId", "==", actor.schoolId);
   }
   const snap = await query.select("studentId").get();
@@ -1599,14 +1658,39 @@ export async function assignExam(
   actor: SessionUser,
   input: AssignExamInput,
 ): Promise<number> {
-  if (actor.role !== "admin" && actor.role !== "super_admin") {
+  if (actor.role !== "admin" && actor.role !== "super_admin" && actor.role !== "teacher") {
     throw new ExamsServiceError("Not allowed.", 403);
   }
   const examSnap = await examDoc(input.examId).get();
   if (!examSnap.exists) throw new ExamsServiceError("Exam not found.", 404);
   const exam = examSnap.data()!;
-  if (actor.role === "admin" && exam.schoolId && exam.schoolId !== actor.schoolId) {
+  if (
+    (actor.role === "admin" || actor.role === "teacher") &&
+    exam.schoolId &&
+    exam.schoolId !== actor.schoolId
+  ) {
     throw new ExamsServiceError("This exam belongs to another school.", 403);
+  }
+  if (isExamExpired({ expiresAt: exam.expiresAt ?? null })) {
+    throw new ExamsServiceError(
+      `This exam closed on ${formatExpiry({ expiresAt: exam.expiresAt ?? null }) ?? "its deadline"}.`,
+      409,
+    );
+  }
+
+  // Teachers manage only their assigned classes: the exam's class must be one
+  // of theirs, and invited students must belong to that same class.
+  if (actor.role === "teacher") {
+    if (!exam.classId) {
+      throw new ExamsServiceError("This exam is not tied to one of your classes.", 403);
+    }
+    const classSnap = await classDoc(exam.classId).get();
+    if (!classSnap.exists || classSnap.data()!.schoolId !== actor.schoolId) {
+      throw new ExamsServiceError("This exam's class belongs to another school.", 403);
+    }
+    if (!(classSnap.data()!.teacherIds ?? []).includes(actor.uid)) {
+      throw new ExamsServiceError("You are not assigned to this exam's class.", 403);
+    }
   }
 
   /**
@@ -1644,10 +1728,14 @@ export async function assignExam(
   for (let i = 0; i < input.studentIds.length; i += CHUNK) {
     const chunk = input.studentIds.slice(i, i + CHUNK);
     let query = usersCol().where("role", "==", "student");
-    if (actor.role === "admin" && actor.schoolId) {
+    if ((actor.role === "admin" || actor.role === "teacher") && actor.schoolId) {
       query = query.where("schoolId", "==", actor.schoolId);
     } else if (actor.role === "admin") {
       query = query.where("createdBy", "==", actor.uid);
+    }
+    // Teachers invite students from their exam's class only.
+    if (actor.role === "teacher" && exam.classId) {
+      query = query.where("classId", "==", exam.classId);
     }
     const snap = await query.where(FieldPath.documentId(), "in", chunk).get();
     snap.docs.forEach((d) => allowedIds.add(d.id));
@@ -1677,7 +1765,7 @@ export async function assignExam(
     if (!lockedExamSnap.exists) throw new ExamsServiceError("Exam not found.", 404);
     const lockedExam = lockedExamSnap.data()!;
     if (
-      actor.role === "admin" &&
+      (actor.role === "admin" || actor.role === "teacher") &&
       lockedExam.schoolId &&
       lockedExam.schoolId !== actor.schoolId
     ) {
@@ -1786,12 +1874,12 @@ export async function listExams(
   limit = 200,
 ): Promise<ExamListResult> {
   let query: FirebaseFirestore.Query<ExamDoc> = examsCol().orderBy("createdAt", "desc").limit(limit);
-  if (actor.role === "admin" && actor.schoolId) {
+  if ((actor.role === "admin" || actor.role === "teacher") && actor.schoolId) {
     query = examsCol()
       .where("schoolId", "==", actor.schoolId)
       .orderBy("createdAt", "desc")
       .limit(limit);
-  } else if (actor.role === "admin") {
+  } else if (actor.role === "admin" || actor.role === "teacher") {
     query = examsCol()
       .where("createdBy", "==", actor.uid)
       .orderBy("createdAt", "desc")
@@ -1811,9 +1899,9 @@ export async function listExams(
       error,
     });
     let fallbackQuery: FirebaseFirestore.Query<ExamDoc> = examsCol().limit(limit);
-    if (actor.role === "admin" && actor.schoolId) {
+    if ((actor.role === "admin" || actor.role === "teacher") && actor.schoolId) {
       fallbackQuery = examsCol().where("schoolId", "==", actor.schoolId).limit(limit);
-    } else if (actor.role === "admin") {
+    } else if (actor.role === "admin" || actor.role === "teacher") {
       fallbackQuery = examsCol().where("createdBy", "==", actor.uid).limit(limit);
     }
     snap = await fallbackQuery.get();
@@ -1839,7 +1927,7 @@ export async function getExamForActor(
   const exam = { id: snap.id, ...snap.data()! } as WithId<ExamDoc>;
   const allowed =
     actor.role === "super_admin" ||
-    (actor.role === "admin" &&
+    ((actor.role === "admin" || actor.role === "teacher") &&
       (exam.createdBy === actor.uid || (exam.schoolId && exam.schoolId === actor.schoolId))) ||
     (actor.role === "student" && exam.schoolId && exam.schoolId === actor.schoolId);
   if (!allowed) throw new ExamsServiceError("Not allowed.", 403);
@@ -1856,7 +1944,7 @@ export async function getAttemptForActor(
   const allowed =
     actor.role === "super_admin" ||
     attempt.studentId === actor.uid ||
-    (actor.role === "admin" &&
+    ((actor.role === "admin" || actor.role === "teacher") &&
       attempt.schoolId !== null &&
       attempt.schoolId === actor.schoolId);
   if (!allowed) throw new ExamsServiceError("Not allowed.", 403);

@@ -249,7 +249,7 @@ function SortableHead({
 
 // ─── Create Student Dialog ────────────────────────────────────────────────────────
 
-function CreateStudentDialog() {
+function CreateStudentDialog({ classId }: { classId?: string }) {
   const [open, setOpen] = useState(false);
   const [level, setLevel] = useState<"primary" | "secondary">("secondary");
   const [subLevel, setSubLevel] = useState<"o_level" | "a_level">("o_level");
@@ -275,6 +275,7 @@ function CreateStudentDialog() {
         </DialogHeader>
         <form action={formAction} key={state?.ok ? "reset" : "form"}>
           <FieldGroup>
+            {classId && <input type="hidden" name="classId" value={classId} />}
             <Field>
               <FieldLabel htmlFor="displayName">Full name</FieldLabel>
               <Input
@@ -301,7 +302,7 @@ function CreateStudentDialog() {
                 At least 10 characters with upper/lowercase and a number.
               </FieldDescription>
             </Field>
-            <div className="grid grid-cols-2 gap-3">
+            <div className={classId ? "hidden" : "grid grid-cols-2 gap-3"}>
               <Field>
                 <FieldLabel htmlFor="level">Level</FieldLabel>
                 <Select
@@ -338,7 +339,7 @@ function CreateStudentDialog() {
                 </Select>
               </Field>
             </div>
-            {level === "secondary" && (
+            {!classId && level === "secondary" && (
               <Field>
                 <FieldLabel>Secondary sub-level</FieldLabel>
                 <input type="hidden" name="secondarySubLevel" value={subLevel} />
@@ -376,7 +377,13 @@ function CreateStudentDialog() {
 
 // ─── Row Actions ──────────────────────────────────────────────────────────────────
 
-function StudentRowActions({ student }: { student: SerializedWithId<UserDoc> }) {
+function StudentRowActions({
+  student,
+  canModerate = true,
+}: {
+  student: SerializedWithId<UserDoc>;
+  canModerate?: boolean;
+}) {
   const [banOpen, setBanOpen] = useState(false);
   const [state, formAction] = useActionState<ActionState | null, FormData>(
     setUserStatusAction,
@@ -416,7 +423,7 @@ function StudentRowActions({ student }: { student: SerializedWithId<UserDoc> }) 
               Reactivate
             </DropdownMenuItem>
           )}
-          {student.status === "active" && (
+          {canModerate && student.status === "active" && (
             <DropdownMenuItem
               onClick={() =>
                 submit("suspended", {
@@ -428,7 +435,7 @@ function StudentRowActions({ student }: { student: SerializedWithId<UserDoc> }) 
               Suspend 7 days
             </DropdownMenuItem>
           )}
-          {student.status !== "banned" && (
+          {canModerate && student.status !== "banned" && (
             <>
               <DropdownMenuSeparator />
               <DropdownMenuItem variant="destructive" onClick={() => setBanOpen(true)}>
@@ -470,11 +477,14 @@ export function StudentsTable({
   students,
   viewerRole,
   total = null,
+  fixedClassId,
 }: {
   students: SerializedWithId<UserDoc>[];
   viewerRole: Role;
   /** Exact count when available — lets us show "X of Y" on capped lists. */
   total: number | null;
+  /** When set (class dashboards), new students are created straight into this class. */
+  fixedClassId?: string;
 }) {
   // ── Filter / search ──────────────────────────────────────────────────────────
   const [query, setQuery] = useState("");
@@ -564,10 +574,14 @@ export function StudentsTable({
               ? `Showing ${students.length} of ${total} students`
               : `${students.length} student${students.length === 1 ? "" : "s"}`}
             {" · "}
-            {viewerRole === "admin" ? "managed by you" : "across the platform"}
+            {viewerRole === "super_admin"
+              ? "across the platform"
+              : viewerRole === "teacher"
+                ? "at your school"
+                : "managed by you"}
           </p>
         </div>
-        <CreateStudentDialog />
+        <CreateStudentDialog classId={fixedClassId} />
       </div>
 
       {/* ── Stat Pills ────────────────────────────────────────────────────────────── */}
@@ -764,7 +778,10 @@ export function StudentsTable({
 
                       {/* Actions */}
                       <TableCell className="pr-3">
-                        <StudentRowActions student={s} />
+                        <StudentRowActions
+                          student={s}
+                          canModerate={viewerRole === "admin" || viewerRole === "super_admin"}
+                        />
                       </TableCell>
                     </TableRow>
                   );

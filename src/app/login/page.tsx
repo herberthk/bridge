@@ -190,6 +190,16 @@ export default async function LoginPage({
           <div className="flex flex-col gap-4 border-t border-border/70 pt-5 text-center sm:text-left">
             <div className="text-muted-foreground flex flex-col gap-1 text-xs sm:flex-row sm:items-center sm:justify-between">
               <p>
+                New to Bridge?{" "}
+                <Link
+                  href="/signup"
+                  className="text-foreground hover:text-primary font-semibold underline underline-offset-4 transition-colors"
+                >
+                  Create your school&apos;s account
+                </Link>
+              </p>
+              <span className="text-muted-foreground/60 hidden sm:inline">•</span>
+              <p>
                 Need an institutional account?{" "}
                 <Link
                   href="/setup"
@@ -198,8 +208,6 @@ export default async function LoginPage({
                   Platform setup
                 </Link>
               </p>
-              <span className="text-muted-foreground/60 hidden sm:inline">•</span>
-              <p className="text-muted-foreground">Ask your administrator for access</p>
             </div>
 
             <div className="flex items-center justify-center gap-4 text-[11px] text-muted-foreground/80 sm:justify-start">
