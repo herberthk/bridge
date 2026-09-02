@@ -48,6 +48,7 @@ import {
   voiceMinutesToUsd,
 } from "@/lib/pricing";
 import type { TransactionCategory, TransactionDoc, WalletDoc } from "@/types/firestore";
+import { AddCreditDialog } from "@/components/features/school/add-credit-dialog";
 import { parseDate, type SerializedWithId } from "@/lib/serialize";
 import { AnimatedCounter, FadeIn } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
@@ -458,11 +459,14 @@ export function WalletView({
   transactions,
   ownerLabel,
   loadFailed = false,
+  selfTopup = false,
 }: {
   wallet: SerializedWithId<WalletDoc> | null;
   transactions: SerializedWithId<TransactionDoc>[];
   ownerLabel: string;
   loadFailed?: boolean;
+  /** Staff wallets can buy credit via the pay-as-you-go checkout. */
+  selfTopup?: boolean;
 }) {
   // ─── State ──────────────────────────────────────────────────────────────────
   const [search, setSearch] = useState("");
@@ -660,6 +664,7 @@ export function WalletView({
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
+            {selfTopup && <AddCreditDialog />}
             <CostEstimatorDialog currentBalance={balance} />
             <TopupGuideDialog walletId={wallet?.id ?? "school"} ownerLabel={ownerLabel} />
             <Button

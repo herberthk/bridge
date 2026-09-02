@@ -12,7 +12,7 @@ const bodySchema = z.object({
 
 /** Bill a completed voice session at $0.08 / minute (school wallet). */
 export async function POST(request: NextRequest) {
-  const actor = await apiUser("admin", "super_admin");
+  const actor = await apiUser("admin", "teacher", "super_admin");
   if (!actor) return NextResponse.json({ error: "Not authorized." }, { status: 401 });
 
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));

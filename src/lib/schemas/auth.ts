@@ -42,3 +42,27 @@ export const setupSchema = z.object({
 });
 export type SetupInput = z.infer<typeof setupSchema>;
 
+/** Public sign-up — "join the platform as a normal user". */
+export const signupSchema = z.object({
+  displayName: z
+    .string()
+    .trim()
+    .min(2, "Enter your full name")
+    .max(80)
+    .describe("Full name shown across dashboards and exams."),
+  email: z
+    .string()
+    .trim()
+    .email("Enter a valid email address")
+    .describe("Email address used for sign-in."),
+  password: z
+    .string()
+    .min(10, "Use at least 10 characters")
+    .max(100)
+    .regex(/[a-z]/, "Include a lowercase letter")
+    .regex(/[A-Z]/, "Include an uppercase letter")
+    .regex(/[0-9]/, "Include a number")
+    .describe("Password meeting security complexity standards."),
+});
+export type SignupInput = z.infer<typeof signupSchema>;
+

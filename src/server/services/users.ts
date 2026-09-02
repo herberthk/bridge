@@ -3,6 +3,7 @@ import React from "react";
 
 import { adminAuth } from "@/server/firebase/admin";
 import {
+  classDoc,
   schoolsCol,
   userDoc,
   usersCol,
@@ -12,7 +13,7 @@ import { appUrl, sendTemplateEmail } from "@/server/services/email";
 import { StudentInviteEmail, BanNoticeEmail } from "@/emails/templates";
 import type { SessionUser } from "@/server/auth/session";
 import type { WithId, UserDoc, WriteModel } from "@/types/firestore";
-import type { Role } from "@/lib/constants";
+import { isStaffRole, type Role } from "@/lib/constants";
 import type {
   CreateStudentInput,
   SetUserStatusInput,
@@ -36,6 +37,10 @@ interface ProvisionInput {
   level?: "primary" | "secondary" | null;
   secondarySubLevel?: "o_level" | "a_level" | null;
   classLevel?: number | null;
+  /** Students only: class membership (classes collection). */
+  classId?: string | null;
+  /** Teachers only: classes assigned to manage. */
+  assignedClassIds?: string[] | null;
   /** Skip the invite email (e.g. the temp password was shown in-UI only). */
   suppressInviteEmail?: boolean;
 }
@@ -69,6 +74,8 @@ export async function provisionUser(
     classLevel: input.classLevel ?? null,
     level: input.level ?? null,
     secondarySubLevel: input.secondarySubLevel ?? null,
+    classId: input.classId ?? null,
+    assignedClassIds: input.assignedClassIds ?? null,
     createdBy: actor.uid,
     banReason: null,
     suspendedUntil: null,
@@ -121,26 +128,63 @@ export async function provisionUser(
   } satisfies WithId<UserDoc>;
 }
 
-/** Admin creates a student under their school (or standalone household). */
+/**
+ * Staff (admin or teacher) create a student under their school — optionally
+ * directly into a class, which then determines the student's level/class year.
+ */
 export async function createStudent(
   actor: SessionUser,
   input: CreateStudentInput,
 ): Promise<WithId<UserDoc>> {
-  if (actor.role !== "admin") {
-    throw new UsersServiceError("Only admins can create students.", 403);
+  if (!isStaffRole(actor.role) && actor.role !== "super_admin") {
+    throw new UsersServiceError("Only school staff can create students.", 403);
   }
   const schoolId = actor.schoolId ?? input.schoolId ?? null;
+
+  // Membership of a class fully determines level + class year.
+  let classId: string | null = null;
+  let level = input.level ?? null;
+  let classLevel = input.classLevel ?? null;
+  let secondarySubLevel = input.secondarySubLevel ?? null;
+  if (input.classId) {
+    const classSnap = await classDoc(input.classId).get();
+    if (!classSnap.exists) {
+      throw new UsersServiceError("Class not found.", 404);
+    }
+    const cls = classSnap.data()!;
+    if (!schoolId || cls.schoolId !== schoolId) {
+      throw new UsersServiceError("This class belongs to another school.", 403);
+    }
+    if (
+      actor.role === "teacher" &&
+      !(cls.teacherIds ?? []).includes(actor.uid)
+    ) {
+      throw new UsersServiceError("You are not assigned to this class.", 403);
+    }
+    classId = input.classId;
+    level = cls.level;
+    classLevel = cls.classLevel;
+    secondarySubLevel = cls.secondarySubLevel;
+  }
+
   const student = await provisionUser(actor, {
     ...input,
     role: "student",
     schoolId,
-    level: input.level,
-    secondarySubLevel: input.secondarySubLevel,
-    classLevel: input.classLevel,
+    level,
+    secondarySubLevel,
+    classLevel,
+    classId,
   });
 
   if (schoolId) {
     await schoolsCol().doc(schoolId).update({
+      studentCount: FieldValue.increment(1),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+  }
+  if (classId) {
+    await classDoc(classId).update({
       studentCount: FieldValue.increment(1),
       updatedAt: FieldValue.serverTimestamp(),
     });
@@ -208,28 +252,55 @@ export async function setUserStatus(
   }
 }
 
-/** Total students visible to an admin — cheap count aggregate. */
+/** Total students visible to staff — cheap count aggregate. */
 export async function countStudents(actor: SessionUser): Promise<number> {
   let query = usersCol().where("role", "==", "student");
-  if (actor.role === "admin" && actor.schoolId) {
+  if (actor.schoolId && isStaffRole(actor.role)) {
     query = query.where("schoolId", "==", actor.schoolId);
-  } else if (actor.role === "admin") {
+  } else if (isStaffRole(actor.role)) {
+    // Standalone admin: students they created.
     query = query.where("createdBy", "==", actor.uid);
   }
   const snap = await query.count().get();
   return snap.data().count;
 }
 
-/** Students visible to an admin: same school, or all students for super admin. */
+/** Students visible to staff: same school, or all students for super admin. */
 export async function listStudents(actor: SessionUser): Promise<WithId<UserDoc>[]> {
   let query = usersCol().where("role", "==", "student");
-  if (actor.role === "admin" && actor.schoolId) {
+  if (actor.schoolId && isStaffRole(actor.role)) {
     query = query.where("schoolId", "==", actor.schoolId);
-  } else if (actor.role === "admin") {
+  } else if (isStaffRole(actor.role)) {
     // Standalone admin: students they created.
     query = query.where("createdBy", "==", actor.uid);
   }
   const snap = await query.orderBy("createdAt", "desc").limit(500).get();
+  return snap.docs.map((d) => ({ id: d.id, ...d.data()! }));
+}
+
+/** All teachers + admins of the acting staff member's school. */
+export async function listSchoolStaff(
+  actor: SessionUser,
+): Promise<{ admins: WithId<UserDoc>[]; teachers: WithId<UserDoc>[] }> {
+  if (!actor.schoolId) return { admins: [], teachers: [] };
+  const [adminsSnap, teachersSnap] = await Promise.all([
+    usersCol().where("role", "==", "admin").where("schoolId", "==", actor.schoolId).get(),
+    usersCol().where("role", "==", "teacher").where("schoolId", "==", actor.schoolId).get(),
+  ]);
+  return {
+    admins: adminsSnap.docs.map((d) => ({ id: d.id, ...d.data()! })),
+    teachers: teachersSnap.docs.map((d) => ({ id: d.id, ...d.data()! })),
+  };
+}
+
+/** All teachers of a school (admin view; callable for any school by super admin). */
+export async function listTeachers(schoolId: string): Promise<WithId<UserDoc>[]> {
+  const snap = await usersCol()
+    .where("role", "==", "teacher")
+    .where("schoolId", "==", schoolId)
+    .orderBy("createdAt", "desc")
+    .limit(200)
+    .get();
   return snap.docs.map((d) => ({ id: d.id, ...d.data()! }));
 }
 
@@ -241,7 +312,7 @@ export async function getStudent(
   if (!snap.exists) throw new UsersServiceError("Student not found.", 404);
   const doc = { id: snap.id, ...snap.data()! } as WithId<UserDoc>;
   if (doc.role !== "student") throw new UsersServiceError("Not a student.", 400);
-  if (actor.role === "admin" && actor.schoolId && doc.schoolId !== actor.schoolId) {
+  if (isStaffRole(actor.role) && actor.schoolId && doc.schoolId !== actor.schoolId) {
     throw new UsersServiceError("This student belongs to another school.", 403);
   }
   return doc;

@@ -7,9 +7,22 @@ teachers and platform administrators.
 
 ## Highlights
 
+- **Self-serve school setup** — join as a normal user, create your school
+  (primary **or** secondary — an exclusive choice that drives the standard
+  class set: P1–P7 or S1–S6), and become its admin through a guided wizard.
+- **Classes & teachers** — class entities with rosters and dashboards;
+  teachers join via emailed, single-use invite links and manage the classes
+  assigned to them (admins can create/assign classes and revoke invites).
 - **AI exam generation** — configure subject, level, topic, duration,
-  difficulty, question count, and question types; or upload past papers,
-  textbooks, and notes (PDF/DOCX) as source material.
+  difficulty, question count, and question types; set a deadline/expiry, or
+  upload past papers, textbooks, and notes (PDF/DOCX) as source material.
+- **Class dashboards & leaderboards** — per-class roster, ranked performance
+  leaderboard (average + best score + trend), per-exam analytics, and
+  one-click exam generation/assignment from the class page.
+- **Retakes, two ways** — students request retakes as before, or staff grant
+  one directly from results.
+- **School verification (blue tick)** — schools add their registration
+  details and request verification; a Super Admin grants the blue tick.
 - **Voice-configured exams** — converse with a Gemini Live assistant that
   builds the exam spec through tool calling.
 - **AI-proctored exam sessions** — fullscreen distraction-free UI,
@@ -19,11 +32,14 @@ teachers and platform administrators.
 - **Automatic grading & feedback** — objective questions scored instantly;
   essays graded against rubrics with per-question feedback and recommended
   improvement areas.
-- **Three roles** — Super Admin (platform analytics, schools, billing),
-  Admin (school/teacher/parent: generate, schedule, monitor, authorize
-  retakes, ban/unban), Student (take exams, view results, request retakes).
-- **Pay-as-you-go billing** — token wallets per admin:
-  `$0.027 / 1,000 text tokens`, `$0.08 / voice minute`, `1 USD = 3,800 UGX`.
+- **Five roles** — Super Admin (platform analytics, schools, verification,
+  billing), Admin (school owner), Teacher (assigned classes), Student (take
+  exams, view results, request retakes), Member (signed-up user who has not
+  created a school yet).
+- **Pay-as-you-go billing** — token wallets per school/admin with self-serve
+  top-up checkout (a simulated gateway today; real providers plug into the
+  same `PaymentProvider` seam later): `$0.027 / 1,000 text tokens`,
+  `$0.08 / voice minute`, `1 USD = 3,800 UGX`.
 - **Premium UI** — Tailwind v4 + shadcn/ui (Base UI primitives) with
   gradient/mesh backgrounds, layered shadows, and Framer Motion animations
   that respect `prefers-reduced-motion`.
@@ -63,10 +79,24 @@ npx -y firebase-tools@latest emulators:start
 
 ### First-run bootstrap
 
-1. Visit `/setup` and paste your `SETUP_ADMIN_KEY`.
-2. Create the Super Admin account.
-3. Sign in, create a school (or act as a standalone parent/tutor admin),
-   then invite or create students.
+1. Visit `/signup` to join as a normal user, then follow the onboarding
+   wizard to create your school (you become its admin).
+2. Or visit `/setup` and paste your `SETUP_ADMIN_KEY` to create the Super
+   Admin account, then create schools and admins from `/super/schools`.
+3. Invite teachers (email link), add students to classes, and generate your
+   first exam from a class dashboard.
+
+### Migrating pre-existing data
+
+After pulling this architecture, run once against an existing dev project:
+
+```bash
+bun --env-file=.env.local scripts/migrate-school-architecture.ts
+```
+
+It backfills school `level`/verification fields, creates the standard class
+set per school, assigns existing students to matching classes, and seeds
+`expiresAt` on old exams. It is idempotent.
 
 ## Scripts
 

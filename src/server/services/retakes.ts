@@ -113,7 +113,7 @@ export async function decideRetake(
   requestId: string,
   approve: boolean,
 ): Promise<{ newAttemptId: string | null }> {
-  if (actor.role !== "admin" && actor.role !== "super_admin") {
+  if (actor.role !== "admin" && actor.role !== "super_admin" && actor.role !== "teacher") {
     throw new RetakesServiceError("Not allowed.", 403);
   }
   const requestRef = retakeRequestDoc(requestId);
@@ -125,7 +125,11 @@ export async function decideRetake(
     if (request.status !== "pending") {
       throw new RetakesServiceError("This request was already decided.", 409);
     }
-    if (actor.role === "admin" && actor.schoolId && request.schoolId !== actor.schoolId) {
+    if (
+      (actor.role === "admin" || actor.role === "teacher") &&
+      actor.schoolId &&
+      request.schoolId !== actor.schoolId
+    ) {
       throw new RetakesServiceError("This student belongs to another school.", 403);
     }
 
@@ -191,7 +195,7 @@ export async function decideRetake(
   return { newAttemptId };
 }
 
-/** Pending retake requests visible to an admin (their school only). */
+/** Pending retake requests visible to staff (their school only). */
 export async function listPendingRetakeRequests(
   actor: SessionUser,
 ): Promise<WithId<RetakeRequestDoc>[]> {
@@ -199,7 +203,7 @@ export async function listPendingRetakeRequests(
     .where("status", "==", "pending")
     .orderBy("createdAt", "desc")
     .limit(100);
-  if (actor.role === "admin" && actor.schoolId) {
+  if ((actor.role === "admin" || actor.role === "teacher") && actor.schoolId) {
     query = retakeRequestsCol()
       .where("status", "==", "pending")
       .where("schoolId", "==", actor.schoolId)
@@ -208,6 +212,99 @@ export async function listPendingRetakeRequests(
   }
   const snap = await query.get();
   return snap.docs.map((d) => ({ id: d.id, ...d.data()! }));
+}
+
+/**
+ * Staff grant a retake directly, without waiting for the student to ask —
+ * "allow students to reattempt the exam". Creates a fresh pending attempt
+ * chained to the original via `retakeOf`.
+ */
+export async function authorizeRetake(
+  actor: SessionUser,
+  attemptId: string,
+): Promise<{ newAttemptId: string }> {
+  if (actor.role !== "admin" && actor.role !== "super_admin" && actor.role !== "teacher") {
+    throw new RetakesServiceError("Not allowed.", 403);
+  }
+  const newAttemptRef = attemptsCol().doc();
+  await adminDb().runTransaction(async (tx) => {
+    const originalSnap = await tx.get(attemptDoc(attemptId));
+    if (!originalSnap.exists) throw new RetakesServiceError("Attempt not found.", 404);
+    const original = originalSnap.data()!;
+    if (
+      (actor.role === "admin" || actor.role === "teacher") &&
+      actor.schoolId &&
+      original.schoolId !== actor.schoolId
+    ) {
+      throw new RetakesServiceError("This student belongs to another school.", 403);
+    }
+    if (original.status !== "graded" && original.status !== "flagged") {
+      throw new RetakesServiceError(
+        "Retakes can be granted once results are out.",
+        409,
+      );
+    }
+    const examSnap = await tx.get(examDoc(original.examId));
+    if (examSnap.exists) {
+      const expiresAt = examSnap.data()!.expiresAt ?? null;
+      if (expiresAt && expiresAt.toMillis() <= Date.now()) {
+        throw new RetakesServiceError("This exam has passed its deadline.", 409);
+      }
+    }
+
+    const openQuery = attemptsCol().where("retakeOf", "==", attemptId);
+    const openSnap = await tx.get(openQuery);
+    for (const retakeDoc of openSnap.docs) {
+      const retake = retakeDoc.data();
+      if (retake.studentId !== original.studentId) continue;
+      if (
+        retake.status === "pending" ||
+        retake.status === "in_progress" ||
+        retake.status === "submitted"
+      ) {
+        throw new RetakesServiceError(
+          "An open retake already exists for this exam — the student must complete it first.",
+          409,
+        );
+      }
+    }
+
+    const now = FieldValue.serverTimestamp();
+    const attempt: WriteModel<AttemptDoc> = {
+      examId: original.examId,
+      studentId: original.studentId,
+      schoolId: original.schoolId,
+      status: "pending",
+      scheduledFor: null,
+      startedAt: null,
+      submittedAt: null,
+      autoSubmitted: false,
+      timeSpentSeconds: null,
+      answers: [],
+      score: null,
+      violationsCount: 0,
+      warningsIssued: 0,
+      recordings: { cameraPath: null, screenPath: null },
+      gradedAt: null,
+      feedback: null,
+      retakeOf: attemptId,
+      retakeAuthorizedBy: actor.uid,
+      createdAt: now,
+      updatedAt: now,
+    };
+    tx.create(newAttemptRef, attempt);
+  });
+
+  await writeAudit({
+    actorId: actor.uid,
+    actorRole: actor.role,
+    action: "retake.granted",
+    targetType: "attempt",
+    targetId: attemptId,
+    meta: { newAttemptId: newAttemptRef.id },
+  });
+
+  return { newAttemptId: newAttemptRef.id };
 }
 
 export async function getExamTitle(examId: string): Promise<string | null> {
@@ -251,8 +348,11 @@ export async function getRetakeCountsByExam(
   actor: SessionUser,
 ): Promise<Map<string, number>> {
   let query: Query<AttemptDoc> = attemptsCol();
-  if (actor.schoolId) query = query.where("schoolId", "==", actor.schoolId);
-  else if (actor.role === "admin") query = query.where("schoolId", "==", null);
+  if (actor.schoolId && (actor.role === "admin" || actor.role === "teacher")) {
+    query = query.where("schoolId", "==", actor.schoolId);
+  } else if (actor.role === "admin" || actor.role === "teacher") {
+    query = query.where("schoolId", "==", null);
+  }
   return aggregateRetakesByExam(query, 1_000);
 }
 

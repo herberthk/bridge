@@ -237,6 +237,23 @@ export const generateExamSchema = z.object({
     .describe(
       "Optional IDs of uploaded reference notes, textbooks, or syllabus documents to ground question generation.",
     ),
+  /** Class the exam is generated for (from a class dashboard); validated server-side. */
+  classId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Optional class id the exam belongs to — students are invited from that class."),
+  /**
+   * Deadline/expiry instant (ISO-8601). After it passes students can no longer
+   * start the exam. Must be in the future — enforced server-side at generation.
+   */
+  expiresAt: z
+    .string()
+    .datetime()
+    .optional()
+    .nullable()
+    .describe("Optional deadline (ISO-8601) after which the exam can no longer be taken."),
 });
 export type GenerateExamInput = z.infer<typeof generateExamSchema>;
 

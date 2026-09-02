@@ -32,8 +32,16 @@ export const createStudentSchema = z
       .email("Enter a valid email address")
       .describe("Unique email address for the student account login."),
     password: passwordSchema.describe("Initial password assigned to the student account."),
+    /** When provided, the class defines level + class year (derived server-side). */
+    classId: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("Class the student joins; overrides level/classLevel when present."),
     level: z
       .enum(["primary", "secondary"])
+      .optional()
       .describe(
         "School education tier: 'primary' (Primary 1 to Primary 7, PLE curriculum) or 'secondary' (Ordinary / Advanced Level).",
       ),
@@ -48,6 +56,7 @@ export const createStudentSchema = z
     classLevel: z
       .number()
       .int()
+      .optional()
       .describe(
         "Numerical class/grade year: 1 to 7 for primary (representing P1–P7), 1 to 4 for O-level secondary (representing S1–S4), or 5 to 6 for A-level secondary (representing S5–S6).",
       ),
@@ -59,15 +68,19 @@ export const createStudentSchema = z
       .describe("Unique identifier of the school or academic institution the student belongs to."),
   })
   .refine(
-    (s) =>
-      s.level === "primary"
+    (s) => {
+      // A class membership fully determines level + class year — no manual pick.
+      if (s.classId) return true;
+      if (!s.level || s.classLevel === undefined) return false;
+      return s.level === "primary"
         ? (PRIMARY_CLASSES as readonly number[]).includes(s.classLevel) &&
-          s.secondarySubLevel === null
+            s.secondarySubLevel === null
         : Boolean(s.secondarySubLevel) &&
-          ((s.secondarySubLevel === "o_level"
-            ? O_LEVEL_CLASSES
-            : A_LEVEL_CLASSES
-          ) as readonly number[]).includes(s.classLevel),
+            ((s.secondarySubLevel === "o_level"
+              ? O_LEVEL_CLASSES
+              : A_LEVEL_CLASSES
+            ) as readonly number[]).includes(s.classLevel);
+    },
     {
       message:
         "Class must match the level (P1–P7; O level S1–S4; A level S5–S6)",
@@ -83,6 +96,10 @@ export const createSchoolSchema = z.object({
     .min(2, "Enter the school's name")
     .max(120)
     .describe("Official registered name of the school or educational institution."),
+  /** Primary or secondary — drives the standard class set the school gets. */
+  level: z
+    .enum(["primary", "secondary"])
+    .describe("School tier: 'primary' (P1–P7) or 'secondary' (S1–S6). Mutually exclusive."),
   ownerName: z
     .string()
     .trim()

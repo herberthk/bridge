@@ -4,12 +4,15 @@ import { useActionState, useEffect, useRef, useState } from "react";
 import { format } from "date-fns";
 import { toast } from "sonner";
 import {
+  BadgeCheckIcon,
   Building2Icon,
   EyeIcon,
   EyeOffIcon,
   PlusIcon,
   UserRoundPlusIcon,
 } from "lucide-react";
+import { setSchoolVerificationAction } from "@/app/super/actions";
+import { VerifiedBadge } from "@/components/features/school/verified-badge";
 
 import {
   createSchoolAction,
@@ -132,6 +135,22 @@ function CreateSchoolDialog() {
             <Field>
               <FieldLabel htmlFor="schoolName">School name</FieldLabel>
               <Input id="schoolName" name="schoolName" required placeholder="e.g. St. Mary's College Kisubi" />
+            </Field>
+            <Field>
+              <FieldLabel>School level</FieldLabel>
+              <FieldDescription>
+                A school is primary OR secondary — this sets its standard classes (P1-P7 or S1-S6).
+              </FieldDescription>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="hover:bg-accent/60 flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm">
+                  <input type="radio" name="level" value="primary" className="accent-indigo-600" />
+                  Primary (P1-P7)
+                </label>
+                <label className="hover:bg-accent/60 flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm">
+                  <input type="radio" name="level" value="secondary" defaultChecked className="accent-indigo-600" />
+                  Secondary (S1-S6)
+                </label>
+              </div>
             </Field>
             <Field>
               <FieldLabel htmlFor="ownerName">Owner (principal) name</FieldLabel>
@@ -268,19 +287,33 @@ export function SchoolsManager({
             <TableHeader>
               <TableRow>
                 <TableHead>School</TableHead>
-                <TableHead>Admins</TableHead>
+                <TableHead>Level</TableHead>
+                <TableHead>Verification</TableHead>
+                <TableHead>Staff</TableHead>
                 <TableHead>Students</TableHead>
                 <TableHead>Created</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {schools.map((s) => (
                 <TableRow key={s.id}>
                   <TableCell className="font-medium">{s.name}</TableCell>
-                  <TableCell>{s.adminCount}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className="capitalize">
+                      {s.level ?? "—"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <VerifiedBadge status={s.verification} />
+                  </TableCell>
+                  <TableCell>{(s.adminCount ?? 0) + (s.teacherCount ?? 0)}</TableCell>
                   <TableCell>{s.studentCount}</TableCell>
                   <TableCell className="text-muted-foreground text-sm">
                     {s.createdAt ? format(parseDate(s.createdAt)!, "d MMM yyyy") : "–"}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <VerifyAction schoolId={s.id} verified={s.verification === "verified"} />
                   </TableCell>
                 </TableRow>
               ))}
@@ -322,5 +355,42 @@ export function SchoolsManager({
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+
+/** Grant or revoke a school's blue tick. */
+function VerifyAction({
+  schoolId,
+  verified,
+}: {
+  schoolId: string;
+  verified: boolean;
+}) {
+  const [state, formAction, pending] = useActionState<ActionState | null, FormData>(
+    setSchoolVerificationAction,
+    null,
+  );
+  useActionToast(state, undefined, verified ? "Verification revoked" : "School verified");
+
+  return (
+    <form action={formAction}>
+      <input type="hidden" name="schoolId" value={schoolId} />
+      <input type="hidden" name="status" value={verified ? "unverified" : "verified"} />
+      <Button
+        type="submit"
+        variant={verified ? "outline" : "default"}
+        size="sm"
+        disabled={pending}
+        title={
+          verified
+            ? "Revoke the blue tick"
+            : "Verify this school (requires their registration details)"
+        }
+      >
+        <BadgeCheckIcon data-icon="inline-start" />
+        {pending ? "Saving…" : verified ? "Unverify" : "Verify"}
+      </Button>
+    </form>
   );
 }

@@ -4,12 +4,15 @@ import { adminDb } from "./admin";
 import type {
   AttemptDoc,
   AuditLogDoc,
+  ClassDoc,
   DailyMetricDoc,
   ExamDoc,
+  InviteDoc,
   PlatformFlagsDoc,
   ProctoringEventDoc,
   RetakeRequestDoc,
   SchoolDoc,
+  TopupDoc,
   TransactionDoc,
   UploadedDocumentDoc,
   UserDoc,
@@ -93,6 +96,9 @@ export function createConverter<T>(): FirebaseFirestore.FirestoreDataConverter<T
 export const COLLECTIONS = {
   users: "users",
   schools: "schools",
+  classes: "classes",
+  invites: "invites",
+  topups: "topups",
   wallets: "wallets",
   transactions: "transactions",
   exams: "exams",
@@ -118,6 +124,26 @@ export const schoolsCol = () =>
   adminDb().collection(COLLECTIONS.schools).withConverter(createConverter<SchoolDoc>());
 export const schoolDoc = (id: string) =>
   adminDb().doc(`${COLLECTIONS.schools}/${id}`).withConverter(createConverter<SchoolDoc>());
+
+// Classes (one grade within a school)
+export const classesCol = () =>
+  adminDb().collection(COLLECTIONS.classes).withConverter(createConverter<ClassDoc>());
+export const classDoc = (id: string) =>
+  adminDb().doc(`${COLLECTIONS.classes}/${id}`).withConverter(createConverter<ClassDoc>());
+export const classesBySchool = (schoolId: string): Query<ClassDoc> =>
+  classesCol().where("schoolId", "==", schoolId);
+
+// Teacher invites
+export const invitesCol = () =>
+  adminDb().collection(COLLECTIONS.invites).withConverter(createConverter<InviteDoc>());
+export const inviteDoc = (id: string) =>
+  adminDb().doc(`${COLLECTIONS.invites}/${id}`).withConverter(createConverter<InviteDoc>());
+
+// Wallet top-ups (pay-as-you-go credit purchases)
+export const topupsCol = () =>
+  adminDb().collection(COLLECTIONS.topups).withConverter(createConverter<TopupDoc>());
+export const topupDoc = (id: string) =>
+  adminDb().doc(`${COLLECTIONS.topups}/${id}`).withConverter(createConverter<TopupDoc>());
 
 // Billing
 export const walletsCol = () =>

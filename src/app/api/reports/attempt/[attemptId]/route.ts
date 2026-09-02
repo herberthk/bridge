@@ -10,7 +10,7 @@ export async function GET(
   _request: NextRequest,
   ctx: { params: Promise<{ attemptId: string }> },
 ) {
-  const actor = await apiUser("student", "admin", "super_admin");
+  const actor = await apiUser("student", "admin", "teacher", "super_admin");
   if (!actor) return NextResponse.json({ error: "Not authorized." }, { status: 401 });
 
   const { attemptId } = await ctx.params;

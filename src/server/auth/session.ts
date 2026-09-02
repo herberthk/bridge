@@ -32,8 +32,12 @@ export function roleHome(role: Role): string {
       return "/super";
     case "admin":
       return "/admin";
+    case "teacher":
+      return "/teacher";
     case "student":
       return "/student";
+    case "member":
+      return "/onboarding";
   }
 }
 

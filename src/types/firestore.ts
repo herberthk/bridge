@@ -4,10 +4,14 @@ import type {
   QuestionType,
   Role,
   SchoolLevel,
+  SchoolVerificationStatus,
   SecondarySubLevel,
   Subject,
+  TopupStatus,
   UserStatus,
   ExamStatus,
+  InviteStatus,
+  InviteRole,
 } from "@/lib/constants";
 import type { FieldValue } from "firebase/firestore";
 
@@ -60,7 +64,7 @@ export interface UserDoc {
   displayName: string;
   photoURL: string | null;
   role: Role;
-  /** Owning school; null for super admins and standalone (parent/tutor) admins. */
+  /** Owning school; null for super admins, standalone (parent/tutor) admins and members. */
   schoolId: string | null;
   status: UserStatus;
   /** Students only: P1–P7 / S1–S6. */
@@ -69,6 +73,10 @@ export interface UserDoc {
   level: SchoolLevel | null;
   /** Students only: O level vs A level (null for primary). */
   secondarySubLevel: SecondarySubLevel | null;
+  /** Students only: the class (in `classes`) they belong to; null = unassigned. */
+  classId: string | null;
+  /** Teachers only: ids of the classes assigned to them for management. */
+  assignedClassIds: string[] | null;
   createdBy: string | null;
   banReason: string | null;
   suspendedUntil: Timestamp | null;
@@ -78,12 +86,95 @@ export interface UserDoc {
   lastLoginMeta: LoginMeta | null;
 }
 
+/**
+ * A school is either a primary OR a secondary school (chosen once, at
+ * creation) — that choice drives the standard class set (P1–P7 vs S1–S6).
+ */
 export interface SchoolDoc {
   name: string;
   ownerUid: string;
   country: string;
+  /** Primary or secondary — mutually exclusive by design. */
+  level: SchoolLevel;
+  motto: string | null;
+  address: string | null;
+  phone: string | null;
+  email: string | null;
+  /** Official registration number (e.g. MoES EMIS) — required for verification. */
+  registrationNumber: string | null;
+  logoUrl: string | null;
+  description: string | null;
+  /** Blue-tick workflow: super admin verifies once the info is provided. */
+  verification: SchoolVerificationStatus;
+  verifiedAt: Timestamp | null;
+  verifiedBy: string | null;
   adminCount: number;
+  teacherCount: number;
   studentCount: number;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+/** `classes/{classId}` — one class (grade) within a school. */
+export interface ClassDoc {
+  schoolId: string;
+  /** Denormalized from the school — a class never changes school level. */
+  level: SchoolLevel;
+  /** 1–7 for primary, 1–6 for secondary. */
+  classLevel: number;
+  /** O level vs A level (secondary only, derived from classLevel). */
+  secondarySubLevel: SecondarySubLevel | null;
+  /** Display name, e.g. "Primary 4" or "Senior 2". */
+  name: string;
+  /** Teacher uids assigned to manage this class. */
+  teacherIds: string[];
+  studentCount: number;
+  createdBy: string;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+/** `invites/{inviteId}` — teacher invitations with single-use tokens. */
+export interface InviteDoc {
+  schoolId: string;
+  /** Denormalized for the accept screen. */
+  schoolName: string;
+  email: string;
+  role: InviteRole;
+  /** Classes pre-assigned to the teacher on acceptance. */
+  classIds: string[];
+  status: InviteStatus;
+  /** SHA-256 of the raw token — the raw token itself is never stored. */
+  tokenHash: string;
+  invitedBy: string;
+  invitedByName: string | null;
+  expiresAt: Timestamp;
+  acceptedAt: Timestamp | null;
+  acceptedBy: string | null;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+/** `topups/{topupId}` — pay-as-you-go wallet credit purchases. */
+export interface TopupDoc {
+  walletId: string;
+  ownerId: string;
+  ownerType: "admin" | "school";
+  /** Which preset pack was purchased, when one was. */
+  packId: string | null;
+  tokens: number;
+  amountUsdMicros: number;
+  amountUgx: number;
+  currency: "USD" | "UGX";
+  status: TopupStatus;
+  /** Payment provider id (e.g. "mock" until real gateways are wired). */
+  provider: string;
+  providerRef: string | null;
+  /** Hosted-checkout URL the buyer was sent to. */
+  checkoutUrl: string | null;
+  completedAt: Timestamp | null;
+  failedReason: string | null;
+  createdBy: string;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -268,6 +359,13 @@ export interface ExamDoc {
   status: ExamStatus;
   createdBy: string;
   schoolId: string | null;
+  /** Class the exam was generated for (from the class dashboard); null = unscoped. */
+  classId: string | null;
+  /**
+   * Deadline after which attempts can no longer start (and the exam can't be
+   * assigned or retaken). Null = the exam never expires.
+   */
+  expiresAt: Timestamp | null;
   usage: ExamUsage;
   /** Absent on exams generated before the review screen shipped. */
   review?: ExamReview | null;

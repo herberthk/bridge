@@ -181,10 +181,13 @@ export function ExamLibrary({
   exams,
   students,
   retakeCounts = {},
+  basePath = "/admin",
 }: {
   exams: SerializedWithId<ExamDoc>[];
   students: SerializedWithId<UserDoc>[];
   retakeCounts?: Record<string, number>;
+  /** Route prefix for links — teachers reuse this from /teacher. */
+  basePath?: string;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -475,7 +478,7 @@ export function ExamLibrary({
             <Button
               className="shadow-glow transition-all hover:scale-[1.02] active:scale-[0.98]"
               nativeButton={false}
-              render={<Link href="/admin/generate" />}
+              render={<Link href={`${basePath}/generate`} />}
             >
               <SparklesIcon data-icon="inline-start" className="size-4 text-amber-300" />
               Generate Exam
@@ -829,7 +832,7 @@ export function ExamLibrary({
             </div>
             <Button
               className="shadow-glow mt-2"
-              onClick={() => router.push("/admin/generate")}
+              onClick={() => router.push(`${basePath}/generate`)}
             >
               <SparklesIcon data-icon="inline-start" className="size-4 text-amber-300" />
               Generate your first exam
@@ -958,7 +961,7 @@ export function ExamLibrary({
                           <div className="flex flex-col gap-1">
                             <div className="flex items-center gap-1.5">
                               <Link
-                                href={`/admin/exams/${e.id}`}
+                                href={`${basePath}/exams/${e.id}`}
                                 className="truncate font-semibold text-foreground transition-colors hover:text-primary hover:underline"
                               >
                                 {e.title}
@@ -1064,7 +1067,7 @@ export function ExamLibrary({
                               <Button
                                 size="xs"
                                 variant={e.needsReview ? "default" : "outline"}
-                                render={<Link href={`/admin/exams/${e.id}/review`} />}
+                                render={<Link href={`${basePath}/exams/${e.id}/review`} />}
                                 className={e.needsReview ? "shadow-xs" : ""}
                               >
                                 <ClipboardCheckIcon data-icon="inline-start" className="size-3.5" />
@@ -1073,7 +1076,7 @@ export function ExamLibrary({
                             )}
 
                             {e.status !== "archived" && (
-                              <AssignExamDialog exam={e.raw} students={students} size="sm" />
+                              <AssignExamDialog exam={e.raw} students={students} size="sm" basePath={basePath} />
                             )}
 
                             <DropdownMenu>
@@ -1087,11 +1090,11 @@ export function ExamLibrary({
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end" className="w-48">
                                 <DropdownMenuLabel>Exam Options</DropdownMenuLabel>
-                                <DropdownMenuItem render={<Link href={`/admin/exams/${e.id}`} />}>
+                                <DropdownMenuItem render={<Link href={`${basePath}/exams/${e.id}`} />}>
                                   <EyeIcon data-icon="inline-start" className="size-4" />
                                   View Details & Attempts
                                 </DropdownMenuItem>
-                                <DropdownMenuItem render={<Link href={`/admin/exams/${e.id}/review`} />}>
+                                <DropdownMenuItem render={<Link href={`${basePath}/exams/${e.id}/review`} />}>
                                   <ClipboardCheckIcon data-icon="inline-start" className="size-4" />
                                   Review Questions
                                 </DropdownMenuItem>
@@ -1140,7 +1143,7 @@ export function ExamLibrary({
                     {/* Title and Topic */}
                     <div>
                       <Link
-                        href={`/admin/exams/${e.id}`}
+                        href={`${basePath}/exams/${e.id}`}
                         className="line-clamp-2 text-base font-bold tracking-tight text-foreground transition-colors hover:text-primary hover:underline"
                       >
                         {e.title}
@@ -1206,7 +1209,7 @@ export function ExamLibrary({
                       <Button
                         size="xs"
                         variant="ghost"
-                        render={<Link href={`/admin/exams/${e.id}`} />}
+                        render={<Link href={`${basePath}/exams/${e.id}`} />}
                         className="text-xs"
                       >
                         <EyeIcon data-icon="inline-start" className="size-3.5" />
@@ -1218,14 +1221,14 @@ export function ExamLibrary({
                           <Button
                             size="xs"
                             variant={e.needsReview ? "default" : "outline"}
-                            render={<Link href={`/admin/exams/${e.id}/review`} />}
+                            render={<Link href={`${basePath}/exams/${e.id}/review`} />}
                           >
                             <ClipboardCheckIcon data-icon="inline-start" className="size-3.5" />
                             Review
                           </Button>
                         )}
                         {e.status !== "archived" && (
-                          <AssignExamDialog exam={e.raw} students={students} size="sm" />
+                          <AssignExamDialog exam={e.raw} students={students} size="sm" basePath={basePath} />
                         )}
                       </div>
                     </div>

@@ -11,7 +11,7 @@ import { apiUser } from "@/server/auth/session";
  * executed client-side (they build the draft exam spec).
  */
 export async function POST() {
-  const actor = await apiUser("admin", "super_admin");
+  const actor = await apiUser("admin", "teacher", "super_admin");
   if (!actor) return NextResponse.json({ error: "Not authorized." }, { status: 401 });
 
   const tools = {

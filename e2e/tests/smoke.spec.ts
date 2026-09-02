@@ -28,6 +28,19 @@ test.describe("public pages", () => {
     await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
   });
 
+  test("signup page renders the join form", async ({ page }) => {
+    await page.goto("/signup");
+    await expect(page.getByLabel("Full name")).toBeVisible();
+    await expect(page.getByLabel("Email")).toBeVisible();
+    await expect(page.getByLabel("Password", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: /create your account/i })).toBeVisible();
+  });
+
+  test("an invalid invite link shows a clear dead end", async ({ page }) => {
+    await page.goto("/invite/not-a-real-token-value");
+    await expect(page.getByText(/invite unavailable/i)).toBeVisible();
+  });
+
   test("manifest is served", async ({ request }) => {
     const res = await request.get("/manifest.webmanifest");
     expect(res.ok()).toBeTruthy();
@@ -44,6 +57,16 @@ test.describe("optimistic auth redirects", () => {
 
   test("protected /student bounces to /login", async ({ page }) => {
     await page.goto("/student");
+    await expect(page).toHaveURL(/\/login/);
+  });
+
+  test("protected /teacher area bounces to /login", async ({ page }) => {
+    await page.goto("/teacher");
+    await expect(page).toHaveURL(/\/login\?next=%2Fteacher/);
+  });
+
+  test("member onboarding is protected", async ({ page }) => {
+    await page.goto("/onboarding");
     await expect(page).toHaveURL(/\/login/);
   });
 

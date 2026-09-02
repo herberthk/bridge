@@ -32,6 +32,7 @@ import {
   ZapIcon,
   EyeIcon,
   ClockIcon,
+  CalendarClockIcon,
   FileQuestionIcon,
   ClipboardCheckIcon,
 } from "lucide-react";
@@ -215,6 +216,11 @@ export function ExamGenerator() {
   const [previewQuestions, setPreviewQuestions] = useState<PreviewQuestion[] | null>(null);
   const [previewFailed, setPreviewFailed] = useState(false);
   const [step, setStep] = useState(0);
+  // Deadline/expiry — optional; a class-scoped exam attaches to the class that
+  // linked here (query param), so class dashboards can list its exams.
+  const [deadline, setDeadline] = useState<string>("");
+  // Captured once at mount — Date.now() is impure and can't run during render.
+  const [mountedAtIso] = useState(() => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString());
   const [dir, setDir] = useState(1);
   const genTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -224,6 +230,14 @@ export function ExamGenerator() {
   // form the user is already editing.
   const [voice] = useState(() => readVoiceParams(searchParams));
   const [sourceMode, setSourceMode] = useState<SourceMode>(voice.mode);
+  // Optional class hand-off from class dashboards — attaches the generated
+  // exam to that class (server re-validates the actor manages it).
+  const [classIdParam] = useState(() => searchParams.get("classId") ?? "");
+  const [classNameParam] = useState(() => searchParams.get("className") ?? "");
+  // Arriving from a class dashboard pins level/sub-level/class: they seed the
+  // form AND stay locked — the server rejects any mismatch anyway, so letting
+  // them be edited would only set the user up to fail at generate time.
+  const lockedScope = Boolean(classIdParam);
 
   const form = useForm<FormValues, unknown, ExamParamsInput>({
     resolver: zodResolver(examParamsSchema),
@@ -537,6 +551,9 @@ export function ExamGenerator() {
           documentIds: sourceMode === "pure_ai"
             ? []
             : docs.filter((d) => !d.uploading && d.parseStatus === "parsed").map((d) => d.documentId),
+          classId: classIdParam || undefined,
+          // Deadline after which students can no longer start the exam.
+          expiresAt: deadline ? new Date(deadline).toISOString() : null,
         }),
         signal: AbortSignal.timeout(GENERATION_TIMEOUT_MS),
       });
@@ -760,6 +777,19 @@ export function ExamGenerator() {
                   <motion.div key={STEPS[step].id} custom={dir} initial={slide.initial} animate={slide.animate} exit={slide.exit} transition={slide.transition} className="will-change-transform">
                     {step === 0 && (
                       <FieldGroup>
+                        {lockedScope && (
+                          <div className="bg-brand-soft/60 flex items-center gap-2.5 rounded-xl border border-primary/25 px-4 py-2.5 text-sm">
+                            <LockIcon className="text-primary size-4 shrink-0" />
+                            <p className="min-w-0">
+                              Generating for{" "}
+                              <strong className="text-foreground">
+                                {classNameParam || "your class"}
+                              </strong>{" "}
+                              — level, sub-level and class are fixed. Pick the
+                              subject and remaining fields.
+                            </p>
+                          </div>
+                        )}
                         <div className="grid gap-3 sm:grid-cols-2">
                           <Field>
                             <FieldLabel className="flex items-center gap-1.5"><LayersIcon className="size-3.5 text-primary" /> Level</FieldLabel>
@@ -768,6 +798,7 @@ export function ExamGenerator() {
                               name="level"
                               render={({ field }) => (
                                 <Select
+                                  disabled={lockedScope}
                                   value={field.value}
                                   onValueChange={(v) => {
                                     const next = v as "primary" | "secondary";
@@ -808,7 +839,7 @@ export function ExamGenerator() {
                               control={form.control}
                               name="classLevel"
                               render={({ field }) => (
-                                <Select value={String(field.value)} onValueChange={(v) => field.onChange(Number(v))}>
+                                <Select disabled={lockedScope} value={String(field.value)} onValueChange={(v) => field.onChange(Number(v))}>
                                   <SelectTrigger id="classLevel" className={premiumTrigger}>
                                     <span className="flex items-center gap-2"><GraduationCapIcon className="size-4 text-muted-foreground group-data-[state=open]:text-primary transition-colors" /><SelectValue /></span>
                                   </SelectTrigger>
@@ -834,6 +865,7 @@ export function ExamGenerator() {
                                   <Field>
                                     <FieldLabel className="flex items-center gap-1.5"><LayersIcon className="size-3.5 text-primary" /> Secondary sub-level</FieldLabel>
                                     <Select
+                                      disabled={lockedScope}
                                       value={field.value ?? "o_level"}
                                       onValueChange={(v) => {
                                         const next = v as "o_level" | "a_level";
@@ -1000,6 +1032,22 @@ export function ExamGenerator() {
                             {form.formState.errors.durationMinutes ? <FieldError>{form.formState.errors.durationMinutes.message}</FieldError> : <FieldDescription>Countdown is enforced server-side.</FieldDescription>}
                           </Field>
                         </div>
+
+                        <Field>
+                          <FieldLabel htmlFor="deadline" className="flex items-center gap-1.5"><CalendarClockIcon className="size-3.5 text-primary" /> Deadline (optional)</FieldLabel>
+                          <Input
+                            id="deadline"
+                            type="datetime-local"
+                            value={deadline}
+                            min={mountedAtIso.slice(0, 16)}
+                            onChange={(e) => setDeadline(e.target.value)}
+                            disabled={busy}
+                            className="max-w-64"
+                          />
+                          <FieldDescription>
+                            After this date and time students can no longer start the exam — leave empty for no expiry.
+                          </FieldDescription>
+                        </Field>
 
                         <div className="grid gap-3 sm:grid-cols-3">
                           {(["includeHints", "includeExplanations", "includeWorkedExamples"] as const).map((name) => {

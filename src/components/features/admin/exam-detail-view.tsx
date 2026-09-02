@@ -102,7 +102,7 @@ interface StudentPerformanceSummary {
 
 const ITEMS_PER_PAGE = 10;
 
-export function ExamDetailView({ exam, attempts, students }: ExamDetailViewProps) {
+export function ExamDetailView({ exam, attempts, students, basePath = "/admin" }: ExamDetailViewProps & { basePath?: string }) {
   const [activeTab, setActiveTab] = useState<string>("students");
   const [studentSearch, setStudentSearch] = useState<string>("");
   const [performanceFilter, setPerformanceFilter] = useState<string>("all");
@@ -411,7 +411,7 @@ export function ExamDetailView({ exam, attempts, students }: ExamDetailViewProps
           size="sm"
           nativeButton={false}
           className="text-muted-foreground hover:text-foreground -ml-2 gap-1.5 font-medium"
-          render={<Link href="/admin/exams" />}
+          render={<Link href={`${basePath}/exams`} />}
         >
           <ArrowLeftIcon className="size-4" />
           <span>Back to Exam Library</span>
@@ -435,6 +435,7 @@ export function ExamDetailView({ exam, attempts, students }: ExamDetailViewProps
             size="sm"
             variant="default"
             label="Assign Exam"
+            basePath={basePath}
           />
         </div>
       </div>
@@ -528,7 +529,7 @@ export function ExamDetailView({ exam, attempts, students }: ExamDetailViewProps
                   size="default"
                   variant={review.complete ? "secondary" : "default"}
                   nativeButton={false}
-                  render={<Link href={`/admin/exams/${exam.id}/review`} />}
+                  render={<Link href={`${basePath}/exams/${exam.id}/review`} />}
                   className="shadow-xs gap-2"
                 >
                   <ClipboardCheckIcon className="size-4" />
@@ -541,7 +542,7 @@ export function ExamDetailView({ exam, attempts, students }: ExamDetailViewProps
                   size="default"
                   variant="outline"
                   nativeButton={false}
-                  render={<Link href={`/admin/exams/${exam.id}/review`} />}
+                  render={<Link href={`${basePath}/exams/${exam.id}/review`} />}
                   className="gap-2"
                 >
                   <FileTextIcon className="size-4" />
@@ -602,7 +603,7 @@ export function ExamDetailView({ exam, attempts, students }: ExamDetailViewProps
                 size="sm"
                 variant={review.complete ? "outline" : "default"}
                 nativeButton={false}
-                render={<Link href={`/admin/exams/${exam.id}/review`} />}
+                render={<Link href={`${basePath}/exams/${exam.id}/review`} />}
                 className="whitespace-nowrap shrink-0"
               >
                 {review.complete ? "Open Review" : "Continue Review"}

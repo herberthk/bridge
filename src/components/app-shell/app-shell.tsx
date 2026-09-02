@@ -21,11 +21,14 @@ import {
   MicIcon,
   MoonIcon,
   ScrollTextIcon,
+  SchoolIcon,
   ShieldAlertIcon,
   ShieldCheckIcon,
   SparklesIcon,
   SunIcon,
+  UserRoundIcon,
   UserRoundPlusIcon,
+  UsersRoundIcon,
   WalletIcon,
 } from "lucide-react";
 
@@ -96,9 +99,17 @@ const NAV_CONFIG: Record<Role, { groups: NavGroup[] }> = {
   admin: {
     groups: [
       {
-        label: "Management & Teaching",
+        label: "School",
         items: [
           { href: "/admin", label: "Dashboard", icon: LayoutDashboardIcon },
+          { href: "/admin/classes", label: "Classes", icon: SchoolIcon },
+          { href: "/admin/teachers", label: "Teachers", icon: UsersRoundIcon },
+          { href: "/admin/school", label: "School Profile", icon: Building2Icon },
+        ],
+      },
+      {
+        label: "Management & Teaching",
+        items: [
           { href: "/admin/students", label: "Students", icon: UserRoundPlusIcon },
           {
             href: "/admin/generate",
@@ -124,6 +135,46 @@ const NAV_CONFIG: Record<Role, { groups: NavGroup[] }> = {
             label: "Wallet & Usage",
             icon: WalletIcon,
           },
+        ],
+      },
+    ],
+  },
+  teacher: {
+    groups: [
+      {
+        label: "Teaching",
+        items: [
+          { href: "/teacher", label: "Dashboard", icon: LayoutDashboardIcon },
+          { href: "/teacher/classes", label: "My Classes", icon: SchoolIcon },
+          { href: "/teacher/students", label: "Students", icon: UserRoundPlusIcon },
+          {
+            href: "/teacher/generate",
+            label: "Generate Exam",
+            icon: SparklesIcon,
+            badge: { text: "AI", variant: "brand" },
+          },
+          { href: "/teacher/exams", label: "Exam Library", icon: BookOpenCheckIcon },
+          { href: "/teacher/requests", label: "Retake Requests", icon: FileClockIcon },
+        ],
+      },
+      {
+        label: "Billing & Account",
+        items: [
+          {
+            href: "/teacher/wallet",
+            label: "Wallet & Usage",
+            icon: WalletIcon,
+          },
+        ],
+      },
+    ],
+  },
+  member: {
+    groups: [
+      {
+        label: "Getting Started",
+        items: [
+          { href: "/onboarding", label: "Set Up Your School", icon: Building2Icon },
         ],
       },
     ],
@@ -295,9 +346,14 @@ const DynamicBreadcrumbs = memo(function DynamicBreadcrumbs({
     let accumulatedPath = "";
 
     const segmentTitles: Record<string, string> = {
-      admin: "Admin",
+      admin: "School Admin",
+      teacher: "Teacher",
       student: "Student",
       super: "Super Admin",
+      classes: "Classes",
+      teachers: "Teachers",
+      school: "School Profile",
+      leaderboard: "Leaderboard",
       students: "Students",
       generate: "Generate Exam",
       exams: "Exam Library",
@@ -342,11 +398,11 @@ const DynamicBreadcrumbs = memo(function DynamicBreadcrumbs({
   return (
     <Breadcrumb className="hidden sm:flex">
       <BreadcrumbList className="text-xs sm:text-sm">
-        <BreadcrumbItem>
-          <BreadcrumbLink
-            render={<Link href={`/${role === "super_admin" ? "super" : role}`} />}
-            className="flex items-center gap-1 text-muted-foreground hover:text-foreground"
-          >
+          <BreadcrumbItem>
+            <BreadcrumbLink
+              render={<Link href={role === "super_admin" ? "/super" : role === "member" ? "/onboarding" : `/${role}`} />}
+              className="flex items-center gap-1 text-muted-foreground hover:text-foreground"
+            >
             <HomeIcon className="size-3.5" />
             <span className="sr-only">Home</span>
           </BreadcrumbLink>
@@ -457,6 +513,18 @@ const UserAccountMenu = memo(function UserAccountMenu({
           color: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
           icon: GraduationCapIcon,
         };
+      case "teacher":
+        return {
+          label: "Teacher",
+          color: "bg-teal-500/15 text-teal-600 dark:text-teal-400 border-teal-500/20",
+          icon: UserRoundIcon,
+        };
+      case "member":
+        return {
+          label: "Member",
+          color: "bg-sky-500/15 text-sky-600 dark:text-sky-400 border-sky-500/20",
+          icon: UserRoundIcon,
+        };
       case "super_admin":
         return {
           label: "Super Admin",
@@ -465,7 +533,7 @@ const UserAccountMenu = memo(function UserAccountMenu({
         };
       default:
         return {
-          label: "Admin",
+          label: "School Admin",
           color: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 border-indigo-500/20",
           icon: ShieldCheckIcon,
         };
@@ -552,8 +620,8 @@ const UserAccountMenu = memo(function UserAccountMenu({
         <DropdownMenuSeparator className="my-1" />
 
         <DropdownMenuGroup>
-          {user.role === "admin" && (
-            <DropdownMenuItem render={<Link href="/admin/wallet" />}>
+          {(user.role === "admin" || user.role === "teacher") && (
+            <DropdownMenuItem render={<Link href={`/${user.role}/wallet`} />}>
               <WalletIcon className="size-4 text-muted-foreground" />
               <span>Wallet & Usage</span>
             </DropdownMenuItem>
@@ -683,7 +751,7 @@ export function AppShell({
             <SidebarMenuItem>
               <SidebarMenuButton
                 size="lg"
-                render={<Link href={`/${user.role === "super_admin" ? "super" : user.role}`} />}
+                render={<Link href={user.role === "super_admin" ? "/super" : user.role === "member" ? "/onboarding" : `/${user.role}`} />}
                 className="group/brand flex h-11 items-center gap-3 rounded-xl px-2 transition-colors hover:bg-sidebar-accent/60"
               >
                 <BrandMark />

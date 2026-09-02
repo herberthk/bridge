@@ -93,6 +93,12 @@ export async function startAttempt(
   const exam = await loadExam(attempt.examId);
 
   if (attempt.status === "pending") {
+    if (exam.expiresAt && exam.expiresAt.toMillis() <= Date.now()) {
+      throw new AttemptsServiceError(
+        `This exam closed on ${exam.expiresAt.toDate().toLocaleString()}.`,
+        403,
+      );
+    }
     if (attempt.scheduledFor) {
       const opensAt = attempt.scheduledFor.toMillis() - 5 * 60_000; // 5-min grace
       if (Date.now() < opensAt) {
