@@ -28,17 +28,24 @@ export function CreateClassDialog({
   schoolLevel,
   existingClassLevels,
   triggerLabel = "New class",
+  mode = "create",
 }: {
   schoolLevel: SchoolLevel;
   existingClassLevels: number[];
   triggerLabel?: string;
+  /**
+   * "claim" is for teachers viewing assigned-only lists: offered levels may
+   * already exist school-wide but unassigned, and submitting assigns them
+   * to the teacher instead of recreating them.
+   */
+  mode?: "create" | "claim";
 }) {
   const [open, setOpen] = useState(false);
   const [state, formAction, pending] = useActionState<ActionState | null, FormData>(
     createClassesAction,
     null,
   );
-  useActionToast(state, () => setOpen(false), "Classes created");
+  useActionToast(state, () => setOpen(false), mode === "claim" ? "Classes ready" : "Classes created");
 
   const existing = new Set(existingClassLevels);
   const available = standardClassLevelsForLevel(schoolLevel).filter((n) => !existing.has(n));
@@ -55,12 +62,19 @@ export function CreateClassDialog({
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Create classes</DialogTitle>
+          <DialogTitle>{mode === "claim" ? "Create or claim classes" : "Create classes"}</DialogTitle>
           <DialogDescription>
             {schoolLevel === "primary"
               ? "Standard primary classes are Primary 1 – Primary 7."
               : "Secondary classes are Senior 1 – 4 (O level) and Senior 5 – 6 (A level)."}
-            {" "}Only classes that don&apos;t exist yet are listed.
+            {mode === "claim" ? (
+              <>
+                {" "}Classes that already exist at your school are assigned to
+                you instead of being created again.
+              </>
+            ) : (
+              <>{" "}Only classes that don&apos;t exist yet are listed.</>
+            )}
           </DialogDescription>
         </DialogHeader>
         {available.length === 0 ? (
@@ -108,7 +122,9 @@ export function CreateClassDialog({
                 <Button type="submit" disabled={pending || selected.length === 0}>
                   {pending
                     ? "Creating…"
-                    : `Create ${selected.length || ""} class${selected.length === 1 ? "" : "es"}`}
+                    : mode === "claim"
+                      ? `Claim ${selected.length || ""} class${selected.length === 1 ? "" : "es"}`
+                      : `Create ${selected.length || ""} class${selected.length === 1 ? "" : "es"}`}
                 </Button>
               </DialogFooter>
             </FieldGroup>

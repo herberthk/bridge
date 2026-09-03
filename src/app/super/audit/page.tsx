@@ -17,7 +17,7 @@ import { timestampToDate } from "@/lib/serialize";
 import { Pagination } from "@/components/features/super/pagination";
 import type { WithId, AuditLogDoc } from "@/types/firestore";
 
-const PAGE_SIZE = 100;
+const PAGE_SIZE = 10;
 
 function encodeCursor(id: string): string {
   return Buffer.from(JSON.stringify({ v: 1, id })).toString("base64url");

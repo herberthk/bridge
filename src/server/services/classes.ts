@@ -173,13 +173,19 @@ export async function createClasses(
   return created;
 }
 
-/** All classes of the acting staff member's school, ordered by class year. */
+/** Classes visible to the actor, ordered by class year.
+ * Admins see every class of their school; teachers see only classes assigned
+ * to them (mirrors `getClassForActor`, so listed cards never 404 on open). */
 export async function listClasses(actor: SessionUser): Promise<WithId<ClassDoc>[]> {
   if (!actor.schoolId) return [];
   const snap = await classesBySchool(actor.schoolId).get();
-  return snap.docs
+  const all = snap.docs
     .map((d) => ({ id: d.id, ...d.data()! }))
     .sort((a, b) => a.classLevel - b.classLevel);
+  if (actor.role === "teacher") {
+    return all.filter((c) => (c.teacherIds ?? []).includes(actor.uid));
+  }
+  return all;
 }
 
 /**

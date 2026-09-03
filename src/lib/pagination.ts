@@ -3,8 +3,8 @@
  * unit-tested, shared by every super-admin directory.
  */
 
-export const DEFAULT_PAGE_SIZE = 20;
-export const MAX_PAGE_SIZE = 100;
+export const DEFAULT_PAGE_SIZE = 10;
+export const MAX_PAGE_SIZE = 50;
 
 /** Offset for a 1-based page number, clamped to ≥ 0. */
 export function offsetForPage(page: number, pageSize: number = DEFAULT_PAGE_SIZE): number {

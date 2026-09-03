@@ -5,7 +5,7 @@ import { requireRole } from "@/server/auth/session";
 import { listPlatformSchoolOptions, listPlatformUsers } from "@/server/services/platform";
 import { StudentsDirectory } from "@/components/features/super/students-directory";
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 10;
 
 export default async function SuperStudentsPage({
   searchParams,
