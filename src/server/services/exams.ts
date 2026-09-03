@@ -18,6 +18,7 @@ import {
   attemptDoc,
   attemptsCol,
   classDoc,
+  countQuery,
   examDoc,
   examsCol,
   schoolDoc,
@@ -1883,22 +1884,77 @@ export interface ExamListResult {
   ordered: boolean;
 }
 
+function examsForActor(actor: SessionUser): FirebaseFirestore.Query<ExamDoc> {
+  if ((actor.role === "admin" || actor.role === "teacher") && actor.schoolId) {
+    return examsCol().where("schoolId", "==", actor.schoolId);
+  }
+  if (actor.role === "admin" || actor.role === "teacher") {
+    return examsCol().where("createdBy", "==", actor.uid);
+  }
+  return examsCol();
+}
+
+function examFromSnapshot(
+  doc: FirebaseFirestore.QueryDocumentSnapshot<ExamDoc>,
+): WithId<ExamDoc> {
+  const data = doc.data();
+  return {
+    id: doc.id,
+    ...data,
+    createdAt: data?.createdAt ?? (doc.createTime as unknown as Timestamp),
+    updatedAt:
+      data?.updatedAt ??
+      (doc.updateTime as unknown as Timestamp) ??
+      data?.createdAt ??
+      (doc.createTime as unknown as Timestamp),
+  };
+}
+
+/** Exact exam total for dashboard KPIs, independent of display limits. */
+export async function countExams(actor: SessionUser): Promise<number> {
+  return countQuery(examsForActor(actor));
+}
+
+/**
+ * Most recent exams for the supplied classes. Pages through the actor-scoped
+ * ordered query so busy schools cannot push all matching exams past a fixed
+ * initial batch.
+ */
+export async function listRecentExamsForClasses(
+  actor: SessionUser,
+  classIds: string[],
+  limit = 5,
+): Promise<WithId<ExamDoc>[]> {
+  const wanted = new Set(classIds);
+  if (wanted.size === 0 || limit <= 0) return [];
+
+  const batchSize = 100;
+  const ordered = examsForActor(actor).orderBy("createdAt", "desc");
+  const matches: WithId<ExamDoc>[] = [];
+  let cursor: FirebaseFirestore.QueryDocumentSnapshot<ExamDoc> | undefined;
+
+  while (matches.length < limit) {
+    const query = cursor
+      ? ordered.startAfter(cursor).limit(batchSize)
+      : ordered.limit(batchSize);
+    const snap = await query.get();
+    for (const doc of snap.docs) {
+      const exam = examFromSnapshot(doc);
+      if (exam.classId && wanted.has(exam.classId)) matches.push(exam);
+      if (matches.length === limit) break;
+    }
+    if (snap.size < batchSize) break;
+    cursor = snap.docs.at(-1);
+  }
+
+  return matches;
+}
+
 export async function listExams(
   actor: SessionUser,
   limit = 200,
 ): Promise<ExamListResult> {
-  let query: FirebaseFirestore.Query<ExamDoc> = examsCol().orderBy("createdAt", "desc").limit(limit);
-  if ((actor.role === "admin" || actor.role === "teacher") && actor.schoolId) {
-    query = examsCol()
-      .where("schoolId", "==", actor.schoolId)
-      .orderBy("createdAt", "desc")
-      .limit(limit);
-  } else if (actor.role === "admin" || actor.role === "teacher") {
-    query = examsCol()
-      .where("createdBy", "==", actor.uid)
-      .orderBy("createdAt", "desc")
-      .limit(limit);
-  }
+  const query = examsForActor(actor).orderBy("createdAt", "desc").limit(limit);
   let snap: FirebaseFirestore.QuerySnapshot<ExamDoc>;
   let usedFallback = false;
   try {
@@ -1912,23 +1968,9 @@ export async function listExams(
       limit,
       error,
     });
-    let fallbackQuery: FirebaseFirestore.Query<ExamDoc> = examsCol().limit(limit);
-    if ((actor.role === "admin" || actor.role === "teacher") && actor.schoolId) {
-      fallbackQuery = examsCol().where("schoolId", "==", actor.schoolId).limit(limit);
-    } else if (actor.role === "admin" || actor.role === "teacher") {
-      fallbackQuery = examsCol().where("createdBy", "==", actor.uid).limit(limit);
-    }
-    snap = await fallbackQuery.get();
+    snap = await examsForActor(actor).limit(limit).get();
   }
-  const exams = snap.docs.map((d) => {
-    const data = d.data();
-    return {
-      id: d.id,
-      ...data,
-      createdAt: data?.createdAt ?? (d.createTime as unknown as Timestamp),
-      updatedAt: data?.updatedAt ?? (d.updateTime as unknown as Timestamp) ?? data?.createdAt ?? (d.createTime as unknown as Timestamp),
-    };
-  });
+  const exams = snap.docs.map(examFromSnapshot);
   return { exams, partial: usedFallback, ordered: !usedFallback };
 }
 

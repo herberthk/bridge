@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 import { BookOpenCheckIcon, SchoolIcon, UsersIcon } from "lucide-react";
 
 import { requireRole } from "@/server/auth/session";
-import { listClasses } from "@/server/services/classes";
+import { listAssignedClassLevels, listClasses } from "@/server/services/classes";
 import { getSchoolById } from "@/server/services/schools";
 import { ClassCardGrid, teacherNamesForClass } from "@/components/features/school/class-card-grid";
 import { CreateClassDialog } from "@/components/features/school/create-class-dialog";
@@ -15,10 +15,11 @@ import { Badge } from "@/components/ui/badge";
 export default async function TeacherClassesPage() {
   const actor = await requireRole("teacher");
 
-  const [classes, school, staff] = await Promise.all([
+  const [classes, assignedClassLevels, school, staff] = await Promise.all([
     // listClasses already scopes teachers to assigned-only, so every card
     // the teacher sees is openable (no 404 on click).
     listClasses(actor),
+    listAssignedClassLevels(actor),
     actor.schoolId
       ? getSchoolById(actor.schoolId).catch(() => null)
       : Promise.resolve(null),
@@ -78,9 +79,9 @@ export default async function TeacherClassesPage() {
             <div className="shrink-0">
               <CreateClassDialog
                 schoolLevel={school.level}
-                // Assigned-only levels: creating an existing-but-unassigned
-                // class reconciles membership and claims it for this teacher.
-                existingClassLevels={classes.map((c) => c.classLevel)}
+                // Hide every school-wide class that already has a teacher;
+                // unassigned existing classes remain available to claim.
+                existingClassLevels={assignedClassLevels}
                 triggerLabel="New class"
                 mode="claim"
               />

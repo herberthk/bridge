@@ -17,7 +17,7 @@ import {
 import { requireRole } from "@/server/auth/session";
 import { getSchoolById } from "@/server/services/schools";
 import { listClasses } from "@/server/services/classes";
-import { listExams } from "@/server/services/exams";
+import { countExams, listRecentExamsForClasses } from "@/server/services/exams";
 import { VerifiedBadge } from "@/components/features/school/verified-badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -91,12 +91,12 @@ function StatCard({
 export default async function TeacherDashboardPage() {
   const actor = await requireRole("teacher");
 
-  const [classes, exams, school] = await Promise.all([
+  const [classes, examCount, school] = await Promise.all([
     // Assigned-only for teachers, so every card below is openable.
-    listClasses(actor).catch(() => []),
-    listExams(actor, 100).catch(() => ({ exams: [], partial: false, ordered: true })),
+    listClasses(actor),
+    countExams(actor),
     actor.schoolId
-      ? getSchoolById(actor.schoolId).catch(() => null)
+      ? getSchoolById(actor.schoolId)
       : Promise.resolve(null),
   ]);
 
@@ -105,10 +105,11 @@ export default async function TeacherDashboardPage() {
 
   // Single-pass join: index classes once instead of scanning per exam.
   const classById = new Map(classes.map((c) => [c.id, c]));
-  const classExams = exams.exams
-    .filter((e) => e.classId && classById.has(e.classId))
-    .slice(0, 5)
-    .map((exam) => ({ exam, class: classById.get(exam.classId!) ?? null }));
+  const recentExams = await listRecentExamsForClasses(actor, [...classById.keys()]);
+  const classExams = recentExams.map((exam) => ({
+    exam,
+    class: classById.get(exam.classId!) ?? null,
+  }));
 
   return (
     <div className="flex flex-col gap-6">
@@ -171,7 +172,7 @@ export default async function TeacherDashboardPage() {
         <StatCard
           icon={<FilePlus2Icon className="size-4.5" aria-hidden />}
           title="Exams"
-          value={exams.exams.length}
+          value={examCount}
           hint="In your school"
         />
         <StatCard

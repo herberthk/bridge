@@ -567,9 +567,21 @@ Ports: Auth `9099`, Firestore `8080`, Storage `9199`, UI `4000`
 3. Invite teachers (email link), add students to classes, and generate your
    first exam from a class dashboard.
 
-It backfills school `level`/verification fields, creates the standard class
-set per school, assigns existing students to matching classes, and seeds
-`expiresAt` on old exams. It is idempotent.
+`/setup` only creates the first Super Admin and marks initial setup complete;
+it does not migrate existing data.
+
+### Existing-environment migration
+
+Before deploying queries that depend on the directory and retake fields, run
+the idempotent backfill once in each existing environment:
+
+```bash
+bun --env-file=.env.local scripts/backfill-directory-retake-fields.ts
+```
+
+The command backfills school `level`/verification fields, creates the standard
+class set per school, assigns existing students to matching classes, and seeds
+`expiresAt` on old exams.
 
 Scripts in `scripts/`: `backfill-directory-retake-fields.ts`,
 `repair-onboarded-admin.ts`, `fix-env-key.ts`, `integration-test.ts`

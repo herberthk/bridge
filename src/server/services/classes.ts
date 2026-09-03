@@ -68,11 +68,17 @@ async function createClassesAtomic(input: {
     for (const classLevel of classLevels) {
       const current = existingByLevel.get(classLevel);
       if (current) {
-        managedIds.push(current.id);
         if (
           input.assignTeacherId &&
-          !(current.data().teacherIds ?? []).includes(input.assignTeacherId)
+          (current.data().teacherIds ?? []).length > 0
         ) {
+          throw new ClassesServiceError(
+            `${current.data().name} is already assigned to a teacher.`,
+            409,
+          );
+        }
+        managedIds.push(current.id);
+        if (input.assignTeacherId) {
           tx.update(current.ref, {
             teacherIds: FieldValue.arrayUnion(input.assignTeacherId),
             updatedAt: now,
@@ -186,6 +192,18 @@ export async function listClasses(actor: SessionUser): Promise<WithId<ClassDoc>[
     return all.filter((c) => (c.teacherIds ?? []).includes(actor.uid));
   }
   return all;
+}
+
+/** School-wide class levels that already have an owner and cannot be claimed. */
+export async function listAssignedClassLevels(actor: SessionUser): Promise<number[]> {
+  if (actor.role !== "admin" && actor.role !== "teacher") {
+    throw new ClassesServiceError("Only school staff can list class assignments.", 403);
+  }
+  if (!actor.schoolId) return [];
+  const snap = await classesBySchool(actor.schoolId).get();
+  return snap.docs
+    .filter((d) => (d.data().teacherIds ?? []).length > 0)
+    .map((d) => d.data().classLevel);
 }
 
 /**
