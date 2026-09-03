@@ -30,7 +30,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 10;
 
 const TYPE_META: Record<NotificationType, { icon: typeof BellIcon; tone: string; label: string }> = {
   exam_assigned: { icon: BookOpenCheckIcon, tone: "text-indigo-500 bg-indigo-500/10", label: "Exam assigned" },

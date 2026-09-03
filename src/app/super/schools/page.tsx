@@ -11,7 +11,7 @@ import { SchoolsDirectory, SchoolsToolbar } from "@/components/features/super/sc
 import { Pagination } from "@/components/features/super/pagination";
 import { serializeDocs } from "@/lib/serialize";
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 10;
 
 export default async function SuperSchoolsPage({
   searchParams,

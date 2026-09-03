@@ -5,7 +5,7 @@ import { listPlatformSchoolOptions, listPlatformUsers } from "@/server/services/
 import { TeachersDirectory } from "@/components/features/super/teachers-directory";
 import { serializeDocs } from "@/lib/serialize";
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 10;
 
 export default async function SuperTeachersPage({
   searchParams,
