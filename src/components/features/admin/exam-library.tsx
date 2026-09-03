@@ -478,7 +478,7 @@ export function ExamLibrary({
             <Button
               className="shadow-glow transition-all hover:scale-[1.02] active:scale-[0.98]"
               nativeButton={false}
-              render={<Link href={`${basePath}/generate`} />}
+              render={<Link href={`${basePath}/classes`} />}
             >
               <SparklesIcon data-icon="inline-start" className="size-4 text-amber-300" />
               Generate Exam
@@ -832,7 +832,7 @@ export function ExamLibrary({
             </div>
             <Button
               className="shadow-glow mt-2"
-              onClick={() => router.push(`${basePath}/generate`)}
+              onClick={() => router.push(`${basePath}/classes`)}
             >
               <SparklesIcon data-icon="inline-start" className="size-4 text-amber-300" />
               Generate your first exam

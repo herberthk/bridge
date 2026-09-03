@@ -44,8 +44,8 @@ import { vertex } from "@/lib/vertext";
 /**
  * The write and revise half of the exam review screen.
  *
- * Separate from `exams.ts` — which is already ~1,800 lines of generation pipeline —
- * but deliberately built from its exported parts (`thinkingOptions`, `repairProse`,
+ * Separate from the exam domain (`services/exams/`) but deliberately built
+ * from its exported parts (`thinkingOptions`, `repairProse`,
  * `sanitizeVisual`, `readUsage`) rather than its own copies. A revision that
  * repaired maths differently from generation would show the reviewer a diff whose
  * only content was the two functions disagreeing.

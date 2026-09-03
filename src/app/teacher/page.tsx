@@ -23,20 +23,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { ClassDoc, WithId } from "@/types/firestore";
-
-/** Two-letter monogram for a class avatar (e.g. "Senior 1" → "S1"). */
-function monogram(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "CL";
-  if (parts.length === 1) return (parts[0]?.slice(0, 2) ?? "CL").toUpperCase();
-  return `${parts[0]?.[0] ?? ""}${parts[parts.length - 1]?.[0] ?? ""}`.toUpperCase() || "CL";
-}
-
-function levelLabel(cls: WithId<ClassDoc>): string {
-  if (cls.level === "primary") return "Primary";
-  return cls.secondarySubLevel === "a_level" ? "A level" : "O level";
-}
+import { classLevelLabel, classMonogram } from "@/lib/class-display";
 
 /**
  * Server-rendered KPI card — no client JS, no animation runtime.
@@ -143,11 +130,7 @@ export default async function TeacherDashboardPage() {
             </div>
           </div>
           <div className="flex shrink-0 flex-wrap gap-2">
-            <Button variant="outline" render={<Link href="/teacher/classes" />}>
-              My classes
-              <ArrowRightIcon data-icon="inline-end" aria-hidden />
-            </Button>
-            <Button render={<Link href="/teacher/generate" />} className="shadow-glow">
+            <Button render={<Link href="/teacher/classes" />} className="shadow-glow">
               <SparklesIcon data-icon="inline-start" aria-hidden />
               Generate exam
             </Button>
@@ -235,13 +218,13 @@ export default async function TeacherDashboardPage() {
                           aria-hidden
                           className="bg-brand-soft text-primary flex size-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold tracking-tight"
                         >
-                          {monogram(cls.name)}
+                          {classMonogram(cls.name)}
                         </span>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-start justify-between gap-2">
                             <CardTitle className="truncate text-[1.02rem]">{cls.name}</CardTitle>
                             <Badge variant="secondary" className="shrink-0">
-                              {levelLabel(cls)}
+                              {classLevelLabel(cls)}
                             </Badge>
                           </div>
                           <CardDescription className="mt-1 tabular-nums">

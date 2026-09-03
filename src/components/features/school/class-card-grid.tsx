@@ -8,6 +8,7 @@ import {
 
 import type { ClassDoc, UserDoc } from "@/types/firestore";
 import type { SerializedWithId } from "@/lib/serialize";
+import { classLevelLabel, classMonogram } from "@/lib/class-display";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,19 +19,6 @@ import { cn } from "@/lib/utils";
 export interface ClassWithMeta {
   cls: SerializedWithId<ClassDoc>;
   teacherNames: string[];
-}
-
-function levelLabel(cls: SerializedWithId<ClassDoc>): string {
-  if (cls.level === "primary") return "Primary";
-  return cls.secondarySubLevel === "a_level" ? "A level" : "O level";
-}
-
-/** Two-letter monogram for the class avatar (e.g. "Primary 1" → "P1"). */
-function monogram(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "CL";
-  if (parts.length === 1) return (parts[0]?.slice(0, 2) ?? "CL").toUpperCase();
-  return `${parts[0]?.[0] ?? ""}${parts[parts.length - 1]?.[0] ?? ""}`.toUpperCase() || "CL";
 }
 
 /**
@@ -113,13 +101,13 @@ export function ClassCardGrid({
                       aria-hidden
                       className="bg-brand-soft text-primary flex size-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold tracking-tight"
                     >
-                      {monogram(cls.name)}
+                      {classMonogram(cls.name)}
                     </span>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-start justify-between gap-2">
                         <CardTitle className="truncate text-[1.05rem]">{cls.name}</CardTitle>
                         <Badge variant="secondary" className="shrink-0">
-                          {levelLabel(cls)}
+                          {classLevelLabel(cls)}
                         </Badge>
                       </div>
                       <CardDescription className="mt-1 flex items-center gap-1.5 tabular-nums">

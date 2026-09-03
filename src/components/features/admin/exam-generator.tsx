@@ -230,8 +230,9 @@ export function ExamGenerator() {
   // form the user is already editing.
   const [voice] = useState(() => readVoiceParams(searchParams));
   const [sourceMode, setSourceMode] = useState<SourceMode>(voice.mode);
-  // Optional class hand-off from class dashboards — attaches the generated
-  // exam to that class (server re-validates the actor manages it).
+  // Class context is required for school staff: the generate routes only
+  // render this wizard with a validated `classId` (attaching the exam to that
+  // class — the server re-validates the actor manages it).
   const [classIdParam] = useState(() => searchParams.get("classId") ?? "");
   const [classNameParam] = useState(() => searchParams.get("className") ?? "");
   // Arriving from a class dashboard pins level/sub-level/class: they seed the
