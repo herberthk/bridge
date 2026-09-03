@@ -64,9 +64,9 @@ import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
+  SelectDisplay,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
 import {
   Table,
@@ -109,6 +109,23 @@ type SortField =
 type SortDir = "asc" | "desc";
 type ScoreFilter = "all" | "high" | "medium" | "low" | "retakes";
 type ViewMode = "table" | "grid";
+
+const SCORE_FILTER_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "all", label: "All Performance Levels" },
+  { value: "high", label: "High Scoring (≥ 70%)" },
+  { value: "medium", label: "Average (50% – 69%)" },
+  { value: "low", label: "Needs Attention (< 50%)" },
+  { value: "retakes", label: "Has Retakes" },
+];
+
+const SORT_FIELD_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "totalAttempts", label: "Sort by Total Attempts" },
+  { value: "avgScore", label: "Sort by Average Score" },
+  { value: "retakeCount", label: "Sort by Retakes Count" },
+  { value: "maxFailRate", label: "Sort by Question Fail Rate" },
+  { value: "title", label: "Sort by Exam Title" },
+  { value: "gradedCount", label: "Sort by Graded Count" },
+];
 
 const SUBJECT_COLORS: Record<string, { bg: string; text: string; border: string }> = {
   mathematics: { bg: "bg-blue-500/10 dark:bg-blue-500/20", text: "text-blue-600 dark:text-blue-400", border: "border-blue-500/20" },
@@ -846,7 +863,14 @@ export function AdminDashboardView({
                 }}
               >
                 <SelectTrigger size="sm" className="h-8 text-xs">
-                  <SelectValue placeholder="All Subjects" />
+                  <SelectDisplay
+                    value={subjectFilter}
+                    placeholder="All Subjects"
+                    options={[
+                      { value: "all", label: "All Subjects" },
+                      ...uniqueSubjects.map((sub) => ({ value: sub, label: sub })),
+                    ]}
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Subjects</SelectItem>
@@ -869,7 +893,11 @@ export function AdminDashboardView({
                 }}
               >
                 <SelectTrigger size="sm" className="h-8 text-xs">
-                  <SelectValue placeholder="All Performance" />
+                  <SelectDisplay
+                    value={scoreFilter}
+                    placeholder="All Performance"
+                    options={SCORE_FILTER_OPTIONS}
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Performance Levels</SelectItem>
@@ -891,7 +919,7 @@ export function AdminDashboardView({
                 }}
               >
                 <SelectTrigger size="sm" className="h-8 text-xs">
-                  <SelectValue placeholder="Sort By" />
+                  <SelectDisplay value={sortField} placeholder="Sort By" options={SORT_FIELD_OPTIONS} />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="totalAttempts">Sort by Total Attempts</SelectItem>
@@ -1367,7 +1395,10 @@ export function AdminDashboardView({
                   }}
                 >
                   <SelectTrigger size="sm" className="h-7 w-16 text-xs">
-                    <SelectValue />
+                    <SelectDisplay
+                      value={String(pageSize)}
+                      options={[5, 10, 20, 50].map((n) => ({ value: String(n), label: String(n) }))}
+                    />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="5">5</SelectItem>

@@ -81,9 +81,9 @@ import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
+  SelectDisplay,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
@@ -835,7 +835,13 @@ export function ExamGenerator({ classScope }: { classScope: ExamGeneratorClassSc
                                   }}
                                 >
                                   <SelectTrigger className={premiumTrigger}>
-                                    <span className="flex items-center gap-2"><LayersIcon className="size-4 text-muted-foreground group-data-[state=open]:text-primary transition-colors" /><SelectValue /></span>
+                                    <span className="flex items-center gap-2"><LayersIcon className="size-4 text-muted-foreground group-data-[state=open]:text-primary transition-colors" /><SelectDisplay
+                                      value={level}
+                                      options={[
+                                        { value: "primary", label: "Primary (P1–P7)" },
+                                        { value: "secondary", label: "Secondary (S1–S6)" },
+                                      ]}
+                                    /></span>
                                   </SelectTrigger>
                                   <SelectContent className={premiumContent}>
                                     <SelectItem value="primary"><span className="flex items-center gap-2"><span className="size-2 rounded-full bg-emerald-500" />Primary (P1–P7)</span></SelectItem>
@@ -855,7 +861,13 @@ export function ExamGenerator({ classScope }: { classScope: ExamGeneratorClassSc
                               render={({ field }) => (
                                 <Select disabled={lockedScope} value={String(field.value)} onValueChange={(v) => field.onChange(Number(v))}>
                                   <SelectTrigger id="classLevel" className={premiumTrigger}>
-                                    <span className="flex items-center gap-2"><GraduationCapIcon className="size-4 text-muted-foreground group-data-[state=open]:text-primary transition-colors" /><SelectValue /></span>
+                                    <span className="flex items-center gap-2"><GraduationCapIcon className="size-4 text-muted-foreground group-data-[state=open]:text-primary transition-colors" /><SelectDisplay
+                                      value={String(classLevel)}
+                                      options={classLevelOptions(level, subLevel).map((opt) => ({
+                                        value: String(opt.value),
+                                        label: opt.label,
+                                      }))}
+                                    /></span>
                                   </SelectTrigger>
                                   <SelectContent className={premiumContent}>
                                     {classLevelOptions(level, subLevel).map((opt) => (
@@ -891,7 +903,13 @@ export function ExamGenerator({ classScope }: { classScope: ExamGeneratorClassSc
                                       }}
                                     >
                                       <SelectTrigger className={premiumTrigger}>
-                                        <span className="flex items-center gap-2"><LayersIcon className="size-4 text-muted-foreground group-data-[state=open]:text-primary transition-colors" /><SelectValue /></span>
+                                        <span className="flex items-center gap-2"><LayersIcon className="size-4 text-muted-foreground group-data-[state=open]:text-primary transition-colors" /><SelectDisplay
+                                          value={subLevel}
+                                          options={[
+                                            { value: "o_level", label: SUB_LEVEL_LABELS.o_level },
+                                            { value: "a_level", label: SUB_LEVEL_LABELS.a_level },
+                                          ]}
+                                        /></span>
                                       </SelectTrigger>
                                       <SelectContent className={premiumContent}>
                                         <SelectItem value="o_level">{SUB_LEVEL_LABELS.o_level}</SelectItem>
@@ -921,7 +939,10 @@ export function ExamGenerator({ classScope }: { classScope: ExamGeneratorClassSc
                                   }}
                                 >
                                   <SelectTrigger id="subject" className={premiumTrigger}>
-                                    <span className="flex items-center gap-2"><BookOpenIcon className="size-4 text-muted-foreground group-data-[state=open]:text-primary transition-colors" /><SelectValue /></span>
+                                    <span className="flex items-center gap-2"><BookOpenIcon className="size-4 text-muted-foreground group-data-[state=open]:text-primary transition-colors" /><SelectDisplay
+                                      value={subject}
+                                      options={subjects.map((s) => ({ value: s, label: SUBJECT_LABELS[s] }))}
+                                    /></span>
                                   </SelectTrigger>
                                   <SelectContent className={premiumContent}>
                                     {subjects.map((s) => (
@@ -952,7 +973,13 @@ export function ExamGenerator({ classScope }: { classScope: ExamGeneratorClassSc
                                   render={({ field }) => (
                                     <Select value={field.value ?? ""} onValueChange={field.onChange}>
                                       <SelectTrigger id="subsidiary" className={premiumTrigger}>
-                                        <span className="flex items-center gap-2"><TagIcon className="size-4 text-muted-foreground group-data-[state=open]:text-primary transition-colors" /><SelectValue placeholder="Choose the branch" /></span>
+                                        <span className="flex items-center gap-2"><TagIcon className="size-4 text-muted-foreground group-data-[state=open]:text-primary transition-colors" /><SelectDisplay
+                                          value={subsidiary ?? ""}
+                                          placeholder="Choose the branch"
+                                          options={(
+                                            SUBJECT_SUBSIDIARIES[subject as keyof typeof SUBJECT_SUBSIDIARIES]?.options ?? []
+                                          ).map((opt) => ({ value: opt, label: SUBSIDIARY_LABELS[opt] ?? opt }))}
+                                        /></span>
                                       </SelectTrigger>
                                       <SelectContent className={premiumContent}>
                                         {SUBJECT_SUBSIDIARIES[subject as keyof typeof SUBJECT_SUBSIDIARIES]!.options.map((opt) => (
@@ -1020,7 +1047,10 @@ export function ExamGenerator({ classScope }: { classScope: ExamGeneratorClassSc
                             render={({ field }) => (
                               <Select value={field.value} onValueChange={field.onChange}>
                                 <SelectTrigger className={premiumTrigger}>
-                                  <span className="flex items-center gap-2"><TargetIcon className="size-4 text-muted-foreground group-data-[state=open]:text-primary transition-colors" /><SelectValue /></span>
+                                  <span className="flex items-center gap-2"><TargetIcon className="size-4 text-muted-foreground group-data-[state=open]:text-primary transition-colors" /><SelectDisplay
+                                    value={difficulty}
+                                    options={DIFFICULTIES.map((d) => ({ value: d, label: DIFFICULTY_LABELS[d] }))}
+                                  /></span>
                                 </SelectTrigger>
                                 <SelectContent className={premiumContent}>
                                   {DIFFICULTIES.map((d) => (

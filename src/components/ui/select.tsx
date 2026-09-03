@@ -28,6 +28,41 @@ function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
   )
 }
 
+/**
+ * Friendly label for the current value, resolved from `options` at render
+ * time instead of from mounted dropdown items.
+ *
+ * `SelectValue` derives its text from items registered in the store, and the
+ * popup (a portal) unmounts with its items when the select closes — so a
+ * closed trigger falls back to the raw option value (a Firestore id, an enum
+ * key). Prefer this wherever the value isn't human-readable on its own.
+ */
+function SelectDisplay({
+  value,
+  options,
+  placeholder,
+  className,
+}: {
+  value: string;
+  options: ReadonlyArray<{ value: string; label: React.ReactNode }>;
+  placeholder?: React.ReactNode;
+  className?: string;
+}) {
+  const selected = options.find((o) => o.value === value);
+  return (
+    <span
+      data-slot="select-display"
+      className={cn("flex flex-1 items-center gap-1.5 text-left", className)}
+    >
+      {selected ? (
+        <span className="line-clamp-1">{selected.label}</span>
+      ) : (
+        <span className="text-muted-foreground">{placeholder}</span>
+      )}
+    </span>
+  );
+}
+
 function SelectTrigger({
   className,
   size = "default",
@@ -190,6 +225,7 @@ function SelectScrollDownButton({
 export {
   Select,
   SelectContent,
+  SelectDisplay,
   SelectGroup,
   SelectItem,
   SelectLabel,

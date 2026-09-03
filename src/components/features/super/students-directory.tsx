@@ -16,17 +16,25 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import {
   Select,
   SelectContent,
+  SelectDisplay,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
 import { Pagination } from "@/components/features/super/pagination";
 import { parseDate } from "@/lib/serialize";
+import { normalizeDirectorySchool, normalizeDirectoryStatus } from "@/lib/directory-filters";
 
 export interface DirectorySchoolOption {
   id: string;
   name: string;
 }
+
+const STATUS_FILTER_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "all", label: "Any status" },
+  { value: "active", label: "Active" },
+  { value: "suspended", label: "Suspended" },
+  { value: "banned", label: "Banned" },
+];
 
 function useDirectoryNav() {
   const router = useRouter();
@@ -56,8 +64,8 @@ export function DirectoryToolbar({
 }) {
   const { params, setParam } = useDirectoryNav();
   const search = params.get("q") ?? "";
-  const schoolFilter = params.get("school");
-  const statusFilter = params.get("status");
+  const schoolFilter = normalizeDirectorySchool(params.get("school"), schools) ?? "all";
+  const statusFilter = normalizeDirectoryStatus(params.get("status")) ?? "all";
   const [value, setValue] = useState(search);
 
   return (
@@ -92,11 +100,18 @@ export function DirectoryToolbar({
       </form>
       <div className="flex gap-2">
         <Select
-          value={schoolFilter ?? "all"}
+          value={schoolFilter}
           onValueChange={(v) => setParam({ school: v === "all" ? null : v })}
         >
           <SelectTrigger className="w-44">
-            <SelectValue placeholder="All schools" />
+            <SelectDisplay
+              value={schoolFilter}
+              placeholder="All schools"
+              options={[
+                { value: "all", label: "All schools" },
+                ...schools.map((s) => ({ value: s.id, label: s.name })),
+              ]}
+            />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All schools</SelectItem>
@@ -109,11 +124,15 @@ export function DirectoryToolbar({
         </Select>
         {showStatus && (
           <Select
-            value={statusFilter ?? "all"}
+            value={statusFilter}
             onValueChange={(v) => setParam({ status: v === "all" ? null : v })}
           >
             <SelectTrigger className="w-36">
-              <SelectValue placeholder="Any status" />
+              <SelectDisplay
+                value={statusFilter}
+                placeholder="Any status"
+                options={STATUS_FILTER_OPTIONS}
+              />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Any status</SelectItem>

@@ -115,6 +115,7 @@ export function ClassDashboardView({
             viewerRole={basePath === "/admin" ? "admin" : "teacher"}
             total={students.length}
             fixedClassId={cls.id}
+            fixedClassName={cls.name}
           />
         </TabsContent>
 

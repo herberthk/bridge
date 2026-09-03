@@ -63,9 +63,9 @@ import { Progress, ProgressTrack, ProgressIndicator } from "@/components/ui/prog
 import {
   Select,
   SelectContent,
+  SelectDisplay,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
 import {
   Table,
@@ -101,6 +101,15 @@ interface StudentPerformanceSummary {
 }
 
 const ITEMS_PER_PAGE = 10;
+
+const PERFORMANCE_FILTER_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "all", label: "All Students" },
+  { value: "improved", label: "Improved on Retake (+Δ)" },
+  { value: "dropped", label: "Dropped on Retake (-Δ)" },
+  { value: "passed", label: "Passed (≥50%)" },
+  { value: "at_risk", label: "At Risk (<50%)" },
+  { value: "retakes", label: "Has Retakes Only" },
+];
 
 export function ExamDetailView({ exam, attempts, students, basePath = "/admin" }: ExamDetailViewProps & { basePath?: string }) {
   const [activeTab, setActiveTab] = useState<string>("students");
@@ -803,7 +812,11 @@ export function ExamDetailView({ exam, attempts, students, basePath = "/admin" }
                 }}
               >
                 <SelectTrigger className="h-9 w-44 text-xs sm:text-sm">
-                  <SelectValue placeholder="Filter performance" />
+                  <SelectDisplay
+                    value={performanceFilter}
+                    placeholder="Filter performance"
+                    options={PERFORMANCE_FILTER_OPTIONS}
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Students</SelectItem>
@@ -1066,7 +1079,16 @@ export function ExamDetailView({ exam, attempts, students, basePath = "/admin" }
               }}
             >
               <SelectTrigger className="h-9 w-48 text-xs sm:text-sm">
-                <SelectValue placeholder="Filter questions" />
+                <SelectDisplay
+                  value={questionFilter}
+                  placeholder="Filter questions"
+                  options={[
+                    { value: "all", label: `All ${exam.questions.length} Questions` },
+                    { value: "high_fail", label: "High Fail Rate (>35%)" },
+                    { value: "high_skip", label: "High Skip Rate (>20%)" },
+                    { value: "mastered", label: "High Mastery (>75%)" },
+                  ]}
+                />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All {exam.questions.length} Questions</SelectItem>

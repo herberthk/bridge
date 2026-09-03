@@ -57,9 +57,9 @@ import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
+  SelectDisplay,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
 import {
   Table,
@@ -97,6 +97,34 @@ type SortDirection = "asc" | "desc";
 type ViewMode = "table" | "grid";
 type StatusFilter = "all" | "draft" | "needs_review" | "active" | "scheduled" | "archived";
 type LevelFilter = "all" | "primary" | "secondary" | "o_level" | "a_level";
+
+/** Closed-trigger labels (see `SelectDisplay`): values alone aren't readable. */
+const STATUS_FILTER_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "all", label: "All Statuses" },
+  { value: "needs_review", label: "Needs Review" },
+  { value: "draft", label: "Draft" },
+  { value: "active", label: "Active" },
+  { value: "scheduled", label: "Scheduled" },
+  { value: "archived", label: "Archived" },
+];
+
+const LEVEL_FILTER_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "all", label: "All Levels" },
+  { value: "primary", label: "Primary (P1–P7)" },
+  { value: "secondary", label: "Secondary (All)" },
+  { value: "o_level", label: "O-Level (S1–S4)" },
+  { value: "a_level", label: "A-Level (S5–S6)" },
+];
+
+const SORT_FIELD_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "createdAt", label: "Created Date" },
+  { value: "updatedAt", label: "Updated Date" },
+  { value: "title", label: "Exam Title" },
+  { value: "questions", label: "Questions Count" },
+  { value: "duration", label: "Duration" },
+  { value: "retakes", label: "Retakes" },
+  { value: "status", label: "Status" },
+];
 
 const STATUS_CONFIG: Record<
   ExamStatus,
@@ -284,6 +312,20 @@ export function ExamLibrary({
     }
     return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1]));
   }, [processedExams]);
+
+  const availableSubjectKey = JSON.stringify(availableSubjects.map(([subject]) => subject));
+  const [previousAvailableSubjectKey, setPreviousAvailableSubjectKey] =
+    useState(availableSubjectKey);
+  if (availableSubjectKey !== previousAvailableSubjectKey) {
+    setPreviousAvailableSubjectKey(availableSubjectKey);
+    if (
+      subjectFilter !== "all" &&
+      !availableSubjects.some(([subject]) => subject === subjectFilter)
+    ) {
+      setSubjectFilter("all");
+      setCurrentPage(1);
+    }
+  }
 
   // Overall KPI statistics
   const stats = useMemo(() => {
@@ -601,7 +643,7 @@ export function ExamLibrary({
                   }}
                 >
                   <SelectTrigger size="sm" className="w-full">
-                    <SelectValue placeholder="Status" />
+                    <SelectDisplay value={statusFilter} placeholder="Status" options={STATUS_FILTER_OPTIONS} />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Statuses</SelectItem>
@@ -625,7 +667,14 @@ export function ExamLibrary({
                   }}
                 >
                   <SelectTrigger size="sm" className="w-full">
-                    <SelectValue placeholder="Subject" />
+                    <SelectDisplay
+                      value={subjectFilter}
+                      placeholder="Subject"
+                      options={[
+                        { value: "all", label: "All Subjects" },
+                        ...availableSubjects.map(([value, label]) => ({ value, label })),
+                      ]}
+                    />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Subjects</SelectItem>
@@ -648,7 +697,7 @@ export function ExamLibrary({
                   }}
                 >
                   <SelectTrigger size="sm" className="w-full">
-                    <SelectValue placeholder="Level" />
+                    <SelectDisplay value={levelFilter} placeholder="Level" options={LEVEL_FILTER_OPTIONS} />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Levels</SelectItem>
@@ -669,7 +718,7 @@ export function ExamLibrary({
                   }}
                 >
                   <SelectTrigger size="sm" className="w-full">
-                    <SelectValue placeholder="Sort By" />
+                    <SelectDisplay value={sortField} placeholder="Sort By" options={SORT_FIELD_OPTIONS} />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="createdAt">Created Date</SelectItem>
@@ -1263,7 +1312,10 @@ export function ExamLibrary({
                   }}
                 >
                   <SelectTrigger size="sm" className="h-7 w-17.5 text-xs">
-                    <SelectValue />
+                    <SelectDisplay
+                      value={String(pageSize)}
+                      options={["10", "20", "50"].map((n) => ({ value: n, label: n }))}
+                    />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="10">10</SelectItem>

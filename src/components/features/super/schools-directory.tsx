@@ -75,10 +75,23 @@ import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
+  SelectDisplay,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
+
+const LEVEL_FILTER_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "all", label: "Any level" },
+  { value: "primary", label: "Primary" },
+  { value: "secondary", label: "Secondary" },
+];
+
+const VERIFICATION_FILTER_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "all", label: "Any verification" },
+  { value: "verified", label: "Verified" },
+  { value: "pending", label: "Pending" },
+  { value: "unverified", label: "Unverified" },
+];
 
 function useSchoolsNav() {
   const router = useRouter();
@@ -137,7 +150,11 @@ export function SchoolsToolbar() {
       <div className="flex gap-2">
         <Select value={level ?? "all"} onValueChange={(v) => setParam({ level: v === "all" ? null : v })}>
           <SelectTrigger className="w-40">
-            <SelectValue placeholder="Any level" />
+            <SelectDisplay
+              value={level ?? "all"}
+              placeholder="Any level"
+              options={LEVEL_FILTER_OPTIONS}
+            />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Any level</SelectItem>
@@ -150,7 +167,11 @@ export function SchoolsToolbar() {
           onValueChange={(v) => setParam({ verification: v === "all" ? null : v })}
         >
           <SelectTrigger className="w-44">
-            <SelectValue placeholder="Any verification" />
+            <SelectDisplay
+              value={verification ?? "all"}
+              placeholder="Any verification"
+              options={VERIFICATION_FILTER_OPTIONS}
+            />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Any verification</SelectItem>
