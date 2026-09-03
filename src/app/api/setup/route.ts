@@ -69,6 +69,7 @@ export async function POST(request: NextRequest) {
   await userDoc(created.uid).set({
     email: parsed.data.email,
     displayName: parsed.data.displayName,
+    displayNameLower: parsed.data.displayName.toLowerCase(),
     photoURL: null,
     role: "super_admin",
     schoolId: null,

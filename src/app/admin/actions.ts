@@ -110,11 +110,15 @@ export async function setUserStatusAction(
   const actor = await apiUser("admin", "super_admin");
   if (!actor) return { ok: false, error: "Not authorized." };
 
+  const status = formData.get("status");
   const parsed = setUserStatusSchema.safeParse({
     userId: formData.get("userId"),
-    status: formData.get("status"),
+    status,
     reason: formData.get("reason") || undefined,
-    suspendedUntil: formData.get("suspendedUntil") || undefined,
+    suspendedUntil:
+      status === "suspended"
+        ? new Date(Date.now() + 7 * 86_400_000).toISOString()
+        : undefined,
   });
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };

@@ -103,11 +103,6 @@ export function SuperTeacherDetailView({
           <form action={statusAction}>
             <input type="hidden" name="userId" value={teacher.id} />
             <input type="hidden" name="status" value="suspended" />
-            <input
-              type="hidden"
-              name="suspendedUntil"
-              value={new Date(Date.now() + 7 * 86400_000).toISOString()}
-            />
             <Button type="submit" variant="outline" size="sm" disabled={statusPending}>
               <PauseIcon data-icon="inline-start" />
               Suspend 7 days

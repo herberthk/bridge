@@ -20,7 +20,8 @@ export function totalPages(total: number, pageSize: number = DEFAULT_PAGE_SIZE):
 
 /** Clamp a requested page into the valid range for a total. */
 export function clampPage(page: number, total: number, pageSize: number = DEFAULT_PAGE_SIZE): number {
-  return Math.min(Math.max(1, page), totalPages(total, pageSize));
+  const finitePage = Number.isFinite(page) ? Math.floor(page) : 1;
+  return Math.min(Math.max(1, finitePage), totalPages(total, pageSize));
 }
 
 /**

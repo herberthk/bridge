@@ -1,4 +1,4 @@
-import { FieldPath, type Query } from "firebase-admin/firestore";
+import { type Query } from "firebase-admin/firestore";
 
 import {
   attemptsCol,
@@ -75,36 +75,29 @@ async function queryDirectory(
   const page = filters.page ?? 1;
   const pageSize = filters.pageSize ?? DEFAULT_PAGE_SIZE;
   const range = namePrefixRange(filters.search);
-  let itemsQuery: Query<UserDoc>;
-  let countQ: Query<UserDoc>;
+  let q: Query<UserDoc>;
 
   if (range) {
     // Search mode — ordered by name so the prefix range can serve the query.
-    let q = extra(
+    q = extra(
       usersCol()
         .where("role", "==", filters.role)
-        .where("displayName", ">=", range.start)
-        .where("displayName", "<=", range.end),
+        .where("displayNameLower", ">=", range.start)
+        .where("displayNameLower", "<=", range.end),
     ) as Query<UserDoc>;
     if (filters.schoolId) q = q.where("schoolId", "==", filters.schoolId) as Query<UserDoc>;
     if (filters.status) q = q.where("status", "==", filters.status) as Query<UserDoc>;
-    itemsQuery = q.orderBy("displayName", "asc").offset(offsetForPage(page, pageSize)).limit(pageSize);
-    countQ = q;
+    q = q.orderBy("displayNameLower", "asc");
   } else {
-    let q = extra(usersCol().where("role", "==", filters.role)) as Query<UserDoc>;
+    q = extra(usersCol().where("role", "==", filters.role)) as Query<UserDoc>;
     if (filters.schoolId) q = q.where("schoolId", "==", filters.schoolId) as Query<UserDoc>;
     if (filters.status) q = q.where("status", "==", filters.status) as Query<UserDoc>;
-    itemsQuery = q
-      .orderBy("createdAt", "desc")
-      .offset(offsetForPage(page, pageSize))
-      .limit(pageSize);
-    countQ = q;
+    q = q.orderBy("createdAt", "desc");
   }
 
-  const [snap, total] = await Promise.all([
-    itemsQuery.get(),
-    countQuery(countQ),
-  ]);
+  const total = await countQuery(q);
+  const safePage = clampPage(page, total, pageSize);
+  const snap = await q.offset(offsetForPage(safePage, pageSize)).limit(pageSize).get();
   return { items: snap.docs.map((d) => ({ id: d.id, ...d.data()! })), total };
 }
 
@@ -144,23 +137,34 @@ export async function listPlatformSchools(
 
   let q: Query<SchoolDoc> = schoolsCol();
   if (range) {
-    q = q.where("name", ">=", range.start).where("name", "<=", range.end).orderBy("name", "asc");
+    q = q
+      .where("nameLower", ">=", range.start)
+      .where("nameLower", "<=", range.end)
+      .orderBy("nameLower", "asc");
   } else {
     q = q.orderBy("createdAt", "desc");
   }
   if (filters.level) q = q.where("level", "==", filters.level);
   if (filters.verification) q = q.where("verification", "==", filters.verification);
 
-  const [snap, total] = await Promise.all([
-    q.offset(offsetForPage(filters.page, pageSize)).limit(pageSize).get(),
-    countQuery(q),
-  ]);
+  const total = await countQuery(q);
+  const safePage = clampPage(page, total, pageSize);
+  const snap = await q.offset(offsetForPage(safePage, pageSize)).limit(pageSize).get();
   return pageResult(
     snap.docs.map((d) => ({ id: d.id, ...d.data()! })),
     page,
     pageSize,
     total,
   );
+}
+
+/** Complete school option list used by platform-wide user filters. */
+export async function listPlatformSchoolOptions(
+  actor: SessionUser,
+): Promise<{ id: string; name: string }[]> {
+  assertSuper(actor);
+  const snap = await schoolsCol().orderBy("nameLower", "asc").select("name").get();
+  return snap.docs.map((d) => ({ id: d.id, name: d.data().name }));
 }
 
 /** Super-admin detail for one school: profile, staff, wallet, counts. */

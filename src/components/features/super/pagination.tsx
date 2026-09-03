@@ -7,22 +7,68 @@ import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import { pageWindow } from "@/lib/pagination";
 import { cn } from "@/lib/utils";
 
-/**
- * Numbered, cursor-free pagination for the platform directories. Page numbers
- * travel as `?page=N` query params so every page is a shareable URL; all other
- * query params (search/filters) are preserved.
- */
-export function Pagination({
-  page,
-  totalPages,
-  className,
-}: {
-  page: number;
-  totalPages: number;
-  className?: string;
-}) {
+type PaginationProps =
+  | { page: number; totalPages: number; className?: string }
+  | {
+      cursor: string | null;
+      previousCursor: string | null;
+      nextCursor: string | null;
+      className?: string;
+    };
+
+/** Numbered directory pagination or opaque-cursor previous/next navigation. */
+export function Pagination(props: PaginationProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const { className } = props;
+
+  const btn = (active: boolean, disabled = false) =>
+    cn(
+      "flex h-8 min-w-8 items-center justify-center rounded-lg border px-2 text-sm font-medium tabular-nums transition-colors",
+      active
+        ? "border-primary bg-primary/10 text-primary"
+        : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+      disabled && "pointer-events-none opacity-40",
+    );
+
+  if ("cursor" in props) {
+    if (!props.cursor && !props.nextCursor) return null;
+
+    const hrefForCursor = (cursor: string | null) => {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("page");
+      if (cursor) params.set("cursor", cursor);
+      else params.delete("cursor");
+      const query = params.toString();
+      return query ? `${pathname}?${query}` : pathname;
+    };
+
+    return (
+      <nav
+        aria-label="Pagination"
+        className={cn("flex items-center justify-center gap-1.5", className)}
+      >
+        <Link
+          href={hrefForCursor(props.previousCursor)}
+          className={btn(false, !props.cursor)}
+          aria-label="Previous page"
+        >
+          <ChevronLeftIcon className="size-4" />
+          Previous
+        </Link>
+        <Link
+          href={hrefForCursor(props.nextCursor)}
+          className={btn(false, !props.nextCursor)}
+          aria-label="Next page"
+        >
+          Next
+          <ChevronRightIcon className="size-4" />
+        </Link>
+      </nav>
+    );
+  }
+
+  const { page, totalPages } = props;
   if (totalPages <= 1) return null;
 
   const hrefFor = (p: number) => {
@@ -32,14 +78,6 @@ export function Pagination({
   };
 
   const window = pageWindow(page, totalPages, 1);
-  const btn = (active: boolean, disabled = false) =>
-    cn(
-      "flex h-8 min-w-8 items-center justify-center rounded-lg border px-2 text-sm font-medium tabular-nums transition-colors",
-      active
-        ? "border-primary bg-primary/10 text-primary"
-        : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
-      disabled && "pointer-events-none opacity-40",
-    );
 
   return (
     <nav aria-label="Pagination" className={cn("flex items-center justify-center gap-1.5", className)}>

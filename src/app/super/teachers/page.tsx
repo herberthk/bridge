@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import { requireRole } from "@/server/auth/session";
-import { listPlatformSchools, listPlatformUsers } from "@/server/services/platform";
+import { listPlatformSchoolOptions, listPlatformUsers } from "@/server/services/platform";
 import { TeachersDirectory } from "@/components/features/super/teachers-directory";
 import { serializeDocs } from "@/lib/serialize";
 
@@ -16,7 +16,7 @@ export default async function SuperTeachersPage({
   const params = await searchParams;
   const page = Math.max(1, Number(params.page) || 1);
 
-  const [result, schoolsResult] = await Promise.all([
+  const [result, schools] = await Promise.all([
     listPlatformUsers(actor, {
       role: "teacher",
       search: params.q ?? null,
@@ -25,11 +25,11 @@ export default async function SuperTeachersPage({
       page,
       pageSize: PAGE_SIZE,
     }),
-    listPlatformSchools(actor, { page: 1, pageSize: 100 }),
+    listPlatformSchoolOptions(actor),
   ]);
 
   const schoolNames: Record<string, string> = {};
-  schoolsResult.items.forEach((s) => {
+  schools.forEach((s) => {
     schoolNames[s.id] = s.name;
   });
 
@@ -38,7 +38,7 @@ export default async function SuperTeachersPage({
   return (
     <TeachersDirectory
       result={paged}
-      schools={schoolsResult.items.map((s) => ({ id: s.id, name: s.name }))}
+      schools={schools}
       schoolNames={schoolNames}
     />
   );

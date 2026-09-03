@@ -1,4 +1,9 @@
-import { FieldPath, FieldValue, type Query } from "firebase-admin/firestore";
+import {
+  FieldPath,
+  FieldValue,
+  type Query,
+  type QueryDocumentSnapshot,
+} from "firebase-admin/firestore";
 
 import { adminDb } from "@/server/firebase/admin";
 import {
@@ -206,6 +211,8 @@ export async function decideRetake(
         feedback: null,
         retakeOf: request.attemptId,
         retakeAuthorizedBy: actor.uid,
+        retakeSource: "request",
+        retakeRequestId: requestId,
         createdAt: now,
         updatedAt: now,
       };
@@ -281,30 +288,33 @@ export async function listRetakeDecisionHistory(
   actor: SessionUser,
   limit = 50,
 ): Promise<RetakeDecisionEntry[]> {
+  const maxResults = Math.max(1, Math.floor(limit));
   const entries: RetakeDecisionEntry[] = [];
+  const allowedStudentIds = await decisionStudentScope(actor);
 
   // ── 1. Decided requests ──
-  let requestQuery = retakeRequestsCol()
+  let requestQuery: Query<RetakeRequestDoc> = retakeRequestsCol()
     .where("status", "in", ["approved", "rejected"])
-    .orderBy("createdAt", "desc")
-    .limit(limit);
+    .orderBy("createdAt", "desc");
   if (actor.role !== "super_admin") {
     if (actor.schoolId) {
       requestQuery = retakeRequestsCol()
         .where("schoolId", "==", actor.schoolId)
         .where("status", "in", ["approved", "rejected"])
-        .orderBy("createdAt", "desc")
-        .limit(limit);
+        .orderBy("createdAt", "desc");
     } else if (actor.role === "admin") {
       requestQuery = retakeRequestsCol()
         .where("schoolId", "==", null)
         .where("status", "in", ["approved", "rejected"])
-        .orderBy("createdAt", "desc")
-        .limit(limit);
+        .orderBy("createdAt", "desc");
     }
   }
-  const requestSnap = await requestQuery.get();
-  requestSnap.docs.forEach((d) => {
+  const requestDocs = await collectVisibleDocs(
+    requestQuery,
+    maxResults,
+    allowedStudentIds,
+  );
+  requestDocs.forEach((d) => {
     const r = d.data();
     entries.push({
       id: `request-${d.id}`,
@@ -318,28 +328,26 @@ export async function listRetakeDecisionHistory(
   });
 
   // ── 2. Direct grants (no request doc — the chained attempt is the record). ──
-  let attemptQuery = attemptsCol()
-    .where("retakeOf", "!=", null)
-    .orderBy("retakeOf", "asc")
-    .orderBy("createdAt", "desc")
-    .limit(limit);
+  let attemptQuery: Query<AttemptDoc> = attemptsCol()
+    .where("retakeSource", "==", "direct")
+    .orderBy("createdAt", "desc");
   if (actor.role !== "super_admin" && actor.schoolId) {
     attemptQuery = attemptsCol()
       .where("schoolId", "==", actor.schoolId)
-      .where("retakeOf", "!=", null)
-      .orderBy("retakeOf", "asc")
-      .orderBy("createdAt", "desc")
-      .limit(limit);
+      .where("retakeSource", "==", "direct")
+      .orderBy("createdAt", "desc");
   } else if (actor.role === "admin") {
     attemptQuery = attemptsCol()
       .where("schoolId", "==", null)
-      .where("retakeOf", "!=", null)
-      .orderBy("retakeOf", "asc")
-      .orderBy("createdAt", "desc")
-      .limit(limit);
+      .where("retakeSource", "==", "direct")
+      .orderBy("createdAt", "desc");
   }
-  const attemptSnap = await attemptQuery.get();
-  attemptSnap.docs.forEach((d) => {
+  const attemptDocs = await collectVisibleDocs(
+    attemptQuery,
+    maxResults,
+    allowedStudentIds,
+  );
+  attemptDocs.forEach((d) => {
     const a = d.data();
     entries.push({
       id: `grant-${d.id}`,
@@ -352,19 +360,7 @@ export async function listRetakeDecisionHistory(
     });
   });
 
-  // ── 3. Scope filtering for teacher / standalone admin. ──
-  if (actor.role === "teacher") {
-    const allowed = await teacherClassStudentIds(actor.uid);
-    return entries
-      .filter((e) => allowed.has(e.studentId))
-      .sort(byDecidedAtDesc)
-      .slice(0, limit);
-  }
-  if (actor.role === "admin" && !actor.schoolId) {
-    const filtered = await filterEntriesByCreator(entries, actor.uid);
-    return filtered.sort(byDecidedAtDesc).slice(0, limit);
-  }
-  return entries.sort(byDecidedAtDesc).slice(0, limit);
+  return entries.sort(byDecidedAtDesc).slice(0, maxResults);
 }
 
 function byDecidedAtDesc(
@@ -374,25 +370,6 @@ function byDecidedAtDesc(
   const at = a.decidedAt?.toMillis?.() ?? 0;
   const bt = b.decidedAt?.toMillis?.() ?? 0;
   return bt - at;
-}
-
-/** Keep only entries whose student was created by the acting standalone admin. */
-async function filterEntriesByCreator(
-  entries: RetakeDecisionEntry[],
-  creatorUid: string,
-): Promise<RetakeDecisionEntry[]> {
-  const studentIds = [...new Set(entries.map((e) => e.studentId))];
-  const createdBy = new Map<string, string>();
-  const CHUNK = 10;
-  for (let i = 0; i < studentIds.length; i += CHUNK) {
-    const chunk = studentIds.slice(i, i + CHUNK);
-    const snap = await usersCol()
-      .where(FieldPath.documentId(), "in", chunk)
-      .select("createdBy")
-      .get();
-    snap.docs.forEach((d) => createdBy.set(d.id, d.data().createdBy ?? ""));
-  }
-  return entries.filter((e) => createdBy.get(e.studentId) === creatorUid);
 }
 
 /** Student ids belonging to any of a teacher's assigned classes. */
@@ -409,20 +386,45 @@ async function teacherClassStudentIds(teacherUid: string): Promise<Set<string>> 
   return ids;
 }
 
-/** Keep only requests whose student was created by the acting standalone admin. */
-async function filterRequestsByCreator(
-  requests: WithId<RetakeRequestDoc>[],
-  creatorUid: string,
-): Promise<WithId<RetakeRequestDoc>[]> {
-  const studentIds = [...new Set(requests.map((r) => r.studentId))];
-  const createdBy = new Map<string, string>();
-  const CHUNK = 10;
-  for (let i = 0; i < studentIds.length; i += CHUNK) {
-    const chunk = studentIds.slice(i, i + CHUNK);
-    const snap = await usersCol().where(FieldPath.documentId(), "in", chunk).select("createdBy").get();
-    snap.docs.forEach((d) => createdBy.set(d.id, d.data().createdBy ?? ""));
+async function decisionStudentScope(actor: SessionUser): Promise<Set<string> | null> {
+  if (actor.role === "teacher") return teacherClassStudentIds(actor.uid);
+  if (actor.role === "admin" && !actor.schoolId) {
+    const snap = await usersCol()
+      .where("role", "==", "student")
+      .where("createdBy", "==", actor.uid)
+      .select()
+      .get();
+    return new Set(snap.docs.map((d) => d.id));
   }
-  return requests.filter((r) => createdBy.get(r.studentId) === creatorUid);
+  return null;
+}
+
+async function collectVisibleDocs<T extends { studentId: string }>(
+  baseQuery: Query<T>,
+  maxResults: number,
+  allowedStudentIds: ReadonlySet<string> | null,
+): Promise<QueryDocumentSnapshot<T>[]> {
+  if (!allowedStudentIds) {
+    return (await baseQuery.limit(maxResults).get()).docs;
+  }
+  if (allowedStudentIds.size === 0) return [];
+
+  const results: QueryDocumentSnapshot<T>[] = [];
+  const pageSize = Math.max(100, Math.min(maxResults, 500));
+  let cursor: QueryDocumentSnapshot<T> | null = null;
+  while (results.length < maxResults) {
+    let pageQuery = baseQuery.limit(pageSize);
+    if (cursor) pageQuery = pageQuery.startAfter(cursor);
+    const page = await pageQuery.get();
+    for (const doc of page.docs) {
+      if (allowedStudentIds.has(doc.data().studentId)) results.push(doc);
+      if (results.length === maxResults) break;
+    }
+    if (page.size < pageSize) break;
+    cursor = page.docs.at(-1) ?? null;
+    if (!cursor) break;
+  }
+  return results;
 }
 
 /**
@@ -435,36 +437,24 @@ async function filterRequestsByCreator(
 export async function listPendingRetakeRequests(
   actor: SessionUser,
 ): Promise<WithId<RetakeRequestDoc>[]> {
-  let query = retakeRequestsCol()
+  let query: Query<RetakeRequestDoc> = retakeRequestsCol()
     .where("status", "==", "pending")
-    .orderBy("createdAt", "desc")
-    .limit(100);
-  let scope: "teacher" | "standalone" | null = null;
+    .orderBy("createdAt", "desc");
   if ((actor.role === "admin" || actor.role === "teacher") && actor.schoolId) {
     query = retakeRequestsCol()
       .where("status", "==", "pending")
       .where("schoolId", "==", actor.schoolId)
-      .orderBy("createdAt", "desc")
-      .limit(100);
-    if (actor.role === "teacher") scope = "teacher";
+      .orderBy("createdAt", "desc");
   } else if (actor.role === "admin") {
     // Standalone (parent/tutor) admin: requests live under schoolId null.
     query = retakeRequestsCol()
       .where("status", "==", "pending")
       .where("schoolId", "==", null)
-      .orderBy("createdAt", "desc")
-      .limit(100);
-    scope = "standalone";
+      .orderBy("createdAt", "desc");
   }
-  const snap = await query.get();
-  let requests = snap.docs.map((d) => ({ id: d.id, ...d.data()! }));
-  if (scope === "teacher") {
-    const allowed = await teacherClassStudentIds(actor.uid);
-    requests = requests.filter((r) => allowed.has(r.studentId));
-  } else if (scope === "standalone") {
-    requests = await filterRequestsByCreator(requests, actor.uid);
-  }
-  return requests;
+  const allowedStudentIds = await decisionStudentScope(actor);
+  const docs = await collectVisibleDocs(query, 100, allowedStudentIds);
+  return docs.map((d) => ({ id: d.id, ...d.data()! }));
 }
 
 /**
@@ -556,6 +546,8 @@ export async function authorizeRetake(
       feedback: null,
       retakeOf: attemptId,
       retakeAuthorizedBy: actor.uid,
+      retakeSource: "direct",
+      retakeRequestId: null,
       createdAt: now,
       updatedAt: now,
     };

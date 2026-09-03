@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { format } from "date-fns";
 
-import { auditLogsCol, countQuery } from "@/server/firebase/collections";
+import { auditLogsCol } from "@/server/firebase/collections";
 import { requireRole } from "@/server/auth/session";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -19,6 +19,32 @@ import type { WithId, AuditLogDoc } from "@/types/firestore";
 
 const PAGE_SIZE = 100;
 
+function encodeCursor(id: string): string {
+  return Buffer.from(JSON.stringify({ v: 1, id })).toString("base64url");
+}
+
+function decodeCursor(cursor: string): string | null {
+  if (cursor.length > 2_000) return null;
+  try {
+    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as unknown;
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      "v" in value &&
+      value.v === 1 &&
+      "id" in value &&
+      typeof value.id === "string" &&
+      value.id.length > 0 &&
+      value.id.length <= 1_500
+    ) {
+      return value.id;
+    }
+  } catch {
+    // Invalid or tampered cursors fail closed in the page loader below.
+  }
+  return null;
+}
+
 /** Human-friendly label for audit actions (auth.login → Auth · Login). */
 function actionLabel(action: string): string {
   return action
@@ -30,26 +56,39 @@ function actionLabel(action: string): string {
 export default async function SuperAuditPage({
   searchParams,
 }: {
-  searchParams: Promise<{ page?: string }>;
+  searchParams: Promise<{ cursor?: string }>;
 }) {
   await requireRole("super_admin");
   const params = await searchParams;
-  const page = Math.max(1, Number(params.page) || 1);
+  const cursor = params.cursor?.trim() || null;
 
   let entries: WithId<AuditLogDoc>[] = [];
-  let total = 0;
+  let previousCursor: string | null = null;
+  let nextCursor: string | null = null;
   let loadError = false;
   try {
-    const [snap, totalSnap] = await Promise.all([
-      auditLogsCol()
-        .orderBy("createdAt", "desc")
-        .offset((page - 1) * PAGE_SIZE)
-        .limit(PAGE_SIZE)
-        .get(),
-      countQuery(auditLogsCol()),
-    ]);
-    entries = snap.docs.map((d) => ({ id: d.id, ...d.data()! }));
-    total = totalSnap;
+    const ordered = auditLogsCol().orderBy("createdAt", "desc");
+    let pageQuery = ordered;
+
+    if (cursor) {
+      const cursorId = decodeCursor(cursor);
+      if (!cursorId) throw new Error("Invalid audit log cursor.");
+      const cursorSnap = await auditLogsCol().doc(cursorId).get();
+      if (!cursorSnap.exists) throw new Error("Audit log cursor no longer exists.");
+
+      pageQuery = ordered.startAfter(cursorSnap);
+      const previousPage = await ordered.endBefore(cursorSnap).limitToLast(PAGE_SIZE).get();
+      if (previousPage.size === PAGE_SIZE) {
+        previousCursor = encodeCursor(previousPage.docs[0]!.id);
+      }
+    }
+
+    const snap = await pageQuery.limit(PAGE_SIZE + 1).get();
+    const visibleDocs = snap.docs.slice(0, PAGE_SIZE);
+    entries = visibleDocs.map((d) => ({ id: d.id, ...d.data()! }));
+    if (snap.size > PAGE_SIZE && visibleDocs.length > 0) {
+      nextCursor = encodeCursor(visibleDocs.at(-1)!.id);
+    }
   } catch (err) {
     console.error("[super/audit] load failed", err);
     loadError = true;
@@ -115,7 +154,13 @@ export default async function SuperAuditPage({
         )}
       </div>
 
-      <Pagination page={page} totalPages={Math.max(1, Math.ceil(total / PAGE_SIZE))} />
+      {!loadError && (
+        <Pagination
+          cursor={cursor}
+          previousCursor={previousCursor}
+          nextCursor={nextCursor}
+        />
+      )}
     </div>
   );
 }

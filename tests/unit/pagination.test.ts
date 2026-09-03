@@ -36,6 +36,17 @@ describe("totalPages / clampPage", () => {
     expect(clampPage(3, 45, 20)).toBe(3);
     expect(clampPage(99, 45, 20)).toBe(3);
   });
+
+  it("floors fractional pages before clamping", () => {
+    expect(clampPage(2.9, 45, 20)).toBe(2);
+    expect(clampPage(0.9, 45, 20)).toBe(1);
+  });
+
+  it("treats non-finite pages as page one", () => {
+    expect(clampPage(Number.NaN, 45, 20)).toBe(1);
+    expect(clampPage(Number.POSITIVE_INFINITY, 45, 20)).toBe(1);
+    expect(clampPage(Number.NEGATIVE_INFINITY, 45, 20)).toBe(1);
+  });
 });
 
 describe("pageWindow", () => {

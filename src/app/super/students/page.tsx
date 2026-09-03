@@ -1,8 +1,8 @@
 export const dynamic = "force-dynamic";
 
-import { serializeDoc, serializeDocs } from "@/lib/serialize";
+import { serializeDocs } from "@/lib/serialize";
 import { requireRole } from "@/server/auth/session";
-import { listPlatformSchools, listPlatformUsers } from "@/server/services/platform";
+import { listPlatformSchoolOptions, listPlatformUsers } from "@/server/services/platform";
 import { StudentsDirectory } from "@/components/features/super/students-directory";
 
 const PAGE_SIZE = 20;
@@ -16,7 +16,7 @@ export default async function SuperStudentsPage({
   const params = await searchParams;
   const page = Math.max(1, Number(params.page) || 1);
 
-  const [result, schoolsResult] = await Promise.all([
+  const [result, schools] = await Promise.all([
     listPlatformUsers(actor, {
       role: "student",
       search: params.q ?? null,
@@ -25,11 +25,11 @@ export default async function SuperStudentsPage({
       page,
       pageSize: PAGE_SIZE,
     }),
-    listPlatformSchools(actor, { page: 1, pageSize: 100 }),
+    listPlatformSchoolOptions(actor),
   ]);
 
   const schoolNames: Record<string, string> = {};
-  schoolsResult.items.forEach((s) => {
+  schools.forEach((s) => {
     schoolNames[s.id] = s.name;
   });
 
@@ -38,7 +38,7 @@ export default async function SuperStudentsPage({
   return (
     <StudentsDirectory
       result={paged}
-      schools={schoolsResult.items.map((s) => ({ id: s.id, name: s.name }))}
+      schools={schools}
       schoolNames={schoolNames}
     />
   );

@@ -1,8 +1,9 @@
 "use client";
 
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { onAuthStateChanged } from "firebase/auth";
 import {
   BellIcon,
   BellRingIcon,
@@ -10,7 +11,6 @@ import {
   CheckCheckIcon,
   ClipboardCheckIcon,
   FileClockIcon,
-  RotateCcwIcon,
   TrophyIcon,
   XCircleIcon,
 } from "lucide-react";
@@ -21,10 +21,10 @@ import {
   markNotificationRead,
   subscribeRecentNotifications,
   subscribeUnreadCount,
+  type NotificationItem,
   type UnreadBadge,
 } from "@/lib/firebase/notifications";
-import type { NotificationDoc, NotificationType } from "@/types/firestore";
-import type { WithId } from "@/types/firestore";
+import type { NotificationType } from "@/types/firestore";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -48,9 +48,9 @@ const TYPE_META: Record<NotificationType, { icon: typeof BellIcon; tone: string 
   retake_requested: { icon: FileClockIcon, tone: "text-violet-500 bg-violet-500/10" },
 };
 
-function timeAgo(iso: string | null): string {
-  if (!iso) return "";
-  const ms = Date.now() - new Date(iso).getTime();
+function timeAgo(date: Date | null): string {
+  if (!date) return "";
+  const ms = Date.now() - date.getTime();
   const mins = Math.floor(ms / 60_000);
   if (mins < 1) return "just now";
   if (mins < 60) return `${mins}m ago`;
@@ -58,37 +58,55 @@ function timeAgo(iso: string | null): string {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  return date.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
 
 export const NotificationsBell = memo(function NotificationsBell() {
   const router = useRouter();
   const [uid, setUid] = useState<string | null>(null);
   const [badge, setBadge] = useState<UnreadBadge>({ count: 0, capped: false });
-  const [items, setItems] = useState<WithId<NotificationDoc>[]>([]);
+  const [items, setItems] = useState<NotificationItem[]>([]);
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
-    const user = authClient().currentUser;
-    if (!user) return;
-    setUid(user.uid);
-    const unsubBadge = subscribeUnreadCount(user.uid, setBadge);
-    const unsubList = subscribeRecentNotifications(user.uid, 12, setItems);
+    let unsubBadge: (() => void) | null = null;
+    let unsubList: (() => void) | null = null;
+    const unsubAuth = onAuthStateChanged(authClient(), (user) => {
+      unsubBadge?.();
+      unsubList?.();
+      unsubBadge = null;
+      unsubList = null;
+      setUid(user?.uid ?? null);
+      if (!user) {
+        setBadge({ count: 0, capped: false });
+        setItems([]);
+        return;
+      }
+      unsubBadge = subscribeUnreadCount(user.uid, setBadge);
+      unsubList = subscribeRecentNotifications(user.uid, 12, setItems);
+    });
     return () => {
-      unsubBadge();
-      unsubList();
+      unsubAuth();
+      unsubBadge?.();
+      unsubList?.();
     };
   }, []);
 
-  const openItem = async (item: WithId<NotificationDoc>) => {
+  const openItem = async (item: NotificationItem) => {
     setOpen(false);
-    if (!item.read) void markNotificationRead(item.id);
+    if (!item.read) {
+      void markNotificationRead(item.id).catch((err) => {
+        console.error("[notifications] could not mark notification read", err);
+      });
+    }
     router.push(item.link);
   };
 
   const markAll = async () => {
     if (!uid) return;
-    await markAllNotificationsRead(uid);
+    await markAllNotificationsRead(uid).catch((err) => {
+      console.error("[notifications] could not mark all notifications read", err);
+    });
   };
 
   const hasUnread = badge.count > 0;
@@ -161,7 +179,7 @@ export const NotificationsBell = memo(function NotificationsBell() {
                         </span>
                         <span className="text-muted-foreground line-clamp-2 block text-xs">{item.body}</span>
                         <span className="text-muted-foreground/70 mt-0.5 block text-[10px]">
-                          {timeAgo(item.createdAt as unknown as string)}
+                          {timeAgo(item.createdAt.toDate())}
                         </span>
                       </span>
                     </button>

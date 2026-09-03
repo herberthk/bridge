@@ -62,6 +62,8 @@ export interface LoginMeta {
 export interface UserDoc {
   email: string;
   displayName: string;
+  /** Lowercased display name used for case-insensitive directory prefix search. */
+  displayNameLower?: string;
   photoURL: string | null;
   role: Role;
   /** Owning school; null for super admins, standalone (parent/tutor) admins and members. */
@@ -92,6 +94,8 @@ export interface UserDoc {
  */
 export interface SchoolDoc {
   name: string;
+  /** Lowercased name used for case-insensitive directory prefix search. */
+  nameLower?: string;
   ownerUid: string;
   country: string;
   /** Primary or secondary — mutually exclusive by design. */
@@ -446,6 +450,10 @@ export interface AttemptDoc {
   /** Set when this attempt is an approved retake of an earlier one. */
   retakeOf: string | null;
   retakeAuthorizedBy: string | null;
+  /** Distinguishes request approvals from direct staff grants in audit history. */
+  retakeSource?: "request" | "direct" | null;
+  /** Originating request for request-approved retakes. */
+  retakeRequestId?: string | null;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }

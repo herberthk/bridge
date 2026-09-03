@@ -389,9 +389,7 @@ const DAY_MS = 86_400_000;
 
 export async function superDashboard(): Promise<SuperDashboardData> {
   const weekAgo = Timestamp.fromMillis(Date.now() - 7 * DAY_MS);
-  const yearAgoCutoff = new Date(Date.now() - 365 * DAY_MS).toISOString().slice(0, 10);
   const thirtyAgoCutoff = new Date(Date.now() - 30 * DAY_MS).toISOString().slice(0, 10);
-  const weekAgoCutoff = new Date(Date.now() - 7 * DAY_MS).toISOString().slice(0, 10);
 
   const [
     totalStudents,
@@ -423,7 +421,7 @@ export async function superDashboard(): Promise<SuperDashboardData> {
     // Daily aggregates are the single source of truth for revenue and
     // consumption — no need to deserialize transaction docs. Ordered by the
     // `date` field (Firestore rejects `__name__` ordering after a range filter).
-    metricsCol().where("date", ">=", yearAgoCutoff).orderBy("date", "desc").limit(366).get(),
+    metricsCol().orderBy("date", "desc").get(),
     // Wallets carry per-school lifetime consumption — the ranking source.
     walletsCol().where("ownerType", "==", "school").orderBy("totalConsumedTokens", "desc").limit(6).get(),
     schoolsCol().where("verification", "==", "pending").orderBy("updatedAt", "desc").limit(5).get(),

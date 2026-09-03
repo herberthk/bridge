@@ -67,6 +67,7 @@ export async function createSchoolWithOwner(
   const now = FieldValue.serverTimestamp();
   const schoolRef = await schoolsCol().add({
     name: input.schoolName,
+    nameLower: input.schoolName.toLowerCase(),
     ownerUid: "pending",
     country: "UG",
     level: input.level,
@@ -165,6 +166,7 @@ export async function createSchoolForSelf(
   const now = FieldValue.serverTimestamp();
   const schoolRef = await schoolsCol().add({
     name: input.name,
+    nameLower: input.name.toLowerCase(),
     ownerUid: actor.uid,
     country: "UG",
     level,
@@ -255,6 +257,7 @@ export async function updateSchoolProfile(
 
   await ref.update({
     name: input.name,
+    nameLower: input.name.toLowerCase(),
     motto: input.motto,
     address: input.address,
     phone: input.phone,

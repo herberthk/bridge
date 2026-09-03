@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 import { notFound } from "next/navigation";
 
 import { requireRole } from "@/server/auth/session";
-import { getSuperTeacherDetail } from "@/server/services/platform";
+import { getSuperTeacherDetail, PlatformServiceError } from "@/server/services/platform";
 import { SuperTeacherDetailView } from "@/components/features/super/teacher-detail-view";
 import { serializeDoc, serializeDocs } from "@/lib/serialize";
 
@@ -18,8 +18,9 @@ export default async function SuperTeacherDetailPage({
   let detail: Awaited<ReturnType<typeof getSuperTeacherDetail>> | null = null;
   try {
     detail = await getSuperTeacherDetail(actor, teacherId);
-  } catch {
-    notFound();
+  } catch (err) {
+    if (err instanceof PlatformServiceError && err.status === 404) notFound();
+    throw err;
   }
   if (!detail) notFound();
 

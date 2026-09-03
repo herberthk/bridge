@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { formatDistanceToNow } from "date-fns";
+import { onAuthStateChanged } from "firebase/auth";
 import {
   BellIcon,
   BookOpenCheckIcon,
@@ -11,7 +12,6 @@ import {
   ClipboardCheckIcon,
   FileClockIcon,
   Loader2Icon,
-  RotateCcwIcon,
   TrophyIcon,
   XCircleIcon,
 } from "lucide-react";
@@ -23,9 +23,9 @@ import {
   markAllNotificationsRead,
   markNotificationRead,
   subscribeRecentNotifications,
+  type NotificationItem,
 } from "@/lib/firebase/notifications";
-import type { NotificationDoc, NotificationType } from "@/types/firestore";
-import type { WithId } from "@/types/firestore";
+import type { NotificationType } from "@/types/firestore";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -45,19 +45,32 @@ const TYPE_META: Record<NotificationType, { icon: typeof BellIcon; tone: string;
 export function NotificationsView() {
   const router = useRouter();
   const [uid, setUid] = useState<string | null>(null);
-  const [recent, setRecent] = useState<WithId<NotificationDoc>[]>([]);
-  const [older, setOlder] = useState<WithId<NotificationDoc>[]>([]);
+  const [recent, setRecent] = useState<NotificationItem[]>([]);
+  const [older, setOlder] = useState<NotificationItem[]>([]);
   const [loadingMore, setLoadingMore] = useState(false);
   const [exhausted, setExhausted] = useState(false);
 
   useEffect(() => {
-    const user = authClient().currentUser;
-    if (!user) return;
-    setUid(user.uid);
-    return subscribeRecentNotifications(user.uid, PAGE_SIZE, setRecent);
+    let unsubList: (() => void) | null = null;
+    const unsubAuth = onAuthStateChanged(authClient(), (user) => {
+      unsubList?.();
+      unsubList = null;
+      setUid(user?.uid ?? null);
+      setOlder([]);
+      setExhausted(false);
+      if (!user) {
+        setRecent([]);
+        return;
+      }
+      unsubList = subscribeRecentNotifications(user.uid, PAGE_SIZE, setRecent);
+    });
+    return () => {
+      unsubAuth();
+      unsubList?.();
+    };
   }, []);
 
-  const items = useMemo<WithId<NotificationDoc>[]>(() => {
+  const items = useMemo<NotificationItem[]>(() => {
     const seen = new Set(recent.map((r) => r.id));
     return [...recent, ...older.filter((o) => !seen.has(o.id))];
   }, [recent, older]);
@@ -69,30 +82,41 @@ export function NotificationsView() {
     setLoadingMore(true);
     try {
       const last = items.at(-1);
-      const cursor = last?.createdAt as unknown as string | undefined;
+      const cursor = last?.snapshot;
       if (!cursor) {
         setExhausted(true);
         return;
       }
       const page = await fetchOlderNotifications(uid, cursor, PAGE_SIZE);
-      setOlder((prev) => [...prev, ...page]);
+      // Retain the first live page once history is loaded. If a new live item
+      // pushes its oldest row out of `recent`, that row must not disappear
+      // between the recent and older pages.
+      setOlder((prev) => (prev.length === 0 ? [...recent, ...page] : [...prev, ...page]));
       if (page.length < PAGE_SIZE) setExhausted(true);
     } catch {
       toast.error("Could not load older notifications.");
     } finally {
       setLoadingMore(false);
     }
-  }, [uid, items, loadingMore]);
+  }, [uid, items, loadingMore, recent]);
 
-  const open = (item: WithId<NotificationDoc>) => {
-    if (!item.read) void markNotificationRead(item.id);
+  const open = (item: NotificationItem) => {
+    if (!item.read) {
+      void markNotificationRead(item.id).catch(() => {
+        toast.error("Could not mark this notification as read.");
+      });
+    }
     router.push(item.link);
   };
 
   const markAll = async () => {
     if (!uid) return;
-    await markAllNotificationsRead(uid);
-    toast.success("All notifications marked as read.");
+    try {
+      await markAllNotificationsRead(uid);
+      toast.success("All notifications marked as read.");
+    } catch {
+      toast.error("Could not mark all notifications as read.");
+    }
   };
 
   const hasUnread = unreadCount > 0;
@@ -137,7 +161,7 @@ export function NotificationsView() {
               {items.map((item) => {
                 const meta = TYPE_META[item.type as NotificationType] ?? TYPE_META.exam_assigned;
                 const Icon = meta.icon;
-                const created = item.createdAt as unknown as string | null;
+                const created = item.createdAt.toDate();
                 return (
                   <li key={item.id}>
                     <button
@@ -157,7 +181,7 @@ export function NotificationsView() {
                             {item.title}
                           </span>
                           <span className="text-muted-foreground/70 shrink-0 text-[10px]">
-                            {created ? formatDistanceToNow(new Date(created), { addSuffix: true }) : ""}
+                            {formatDistanceToNow(created, { addSuffix: true })}
                           </span>
                           {!item.read && <span className="bg-primary size-1.5 shrink-0 rounded-full" />}
                         </span>
