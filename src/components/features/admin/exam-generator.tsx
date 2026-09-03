@@ -94,7 +94,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Markdown } from "@/components/markdown";
 import { QuestionVisualView } from "@/components/features/exam/question-visual";
-import type { QuestionVisual } from "@/types/firestore";
+import type { ClassDoc, QuestionVisual } from "@/types/firestore";
 
 interface UploadedDoc {
   documentId: string;
@@ -195,7 +195,12 @@ const premiumContent = "rounded-2xl shadow-lifted border bg-popover/95 backdrop-
 /** `null` = show mode picker; otherwise the wizard runs in the chosen mode. */
 type SourceMode = "pure_ai" | "document_grounded" | null;
 
-export function ExamGenerator() {
+export type ExamGeneratorClassScope = Pick<
+  ClassDoc,
+  "level" | "secondarySubLevel" | "classLevel" | "name"
+> & { id: string };
+
+export function ExamGenerator({ classScope }: { classScope: ExamGeneratorClassScope }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const prefersReducedMotion = useReducedMotion();
@@ -230,24 +235,33 @@ export function ExamGenerator() {
   // form the user is already editing.
   const [voice] = useState(() => readVoiceParams(searchParams));
   const [sourceMode, setSourceMode] = useState<SourceMode>(voice.mode);
-  // Optional class hand-off from class dashboards — attaches the generated
-  // exam to that class (server re-validates the actor manages it).
-  const [classIdParam] = useState(() => searchParams.get("classId") ?? "");
-  const [classNameParam] = useState(() => searchParams.get("className") ?? "");
+  // Class context is required for school staff. The server component passes
+  // the class it already authorized instead of trusting duplicate URL scope.
+  const classIdParam = classScope.id;
+  const classNameParam = classScope.name;
   // Arriving from a class dashboard pins level/sub-level/class: they seed the
   // form AND stay locked — the server rejects any mismatch anyway, so letting
   // them be edited would only set the user up to fail at generate time.
-  const lockedScope = Boolean(classIdParam);
+  const lockedScope = true;
+
+  const scopedSubjects = (
+    classScope.level === "primary"
+      ? COUNTRY_CURRICULA.UG.primary
+      : SECONDARY_SUBJECTS_BY_SUB_LEVEL[classScope.secondarySubLevel ?? "o_level"]
+  ) as readonly Subject[];
+  const scopedSubject = scopedSubjects.includes(voice.subject as Subject)
+    ? (voice.subject as Subject)
+    : (scopedSubjects.includes("mathematics") ? "mathematics" : scopedSubjects[0]!);
 
   const form = useForm<FormValues, unknown, ExamParamsInput>({
     resolver: zodResolver(examParamsSchema),
     defaultValues: {
-      subject: voice.subject,
-      level: voice.level,
-      secondarySubLevel: voice.level === "secondary" ? voice.subLevel : null,
-      classLevel: voice.classLevel,
+      subject: scopedSubject,
+      level: classScope.level,
+      secondarySubLevel: classScope.secondarySubLevel,
+      classLevel: classScope.classLevel,
       topic: voice.topic,
-      subsidiary: voice.subsidiary,
+      subsidiary: scopedSubject === voice.subject ? voice.subsidiary : null,
       difficulty: voice.difficulty,
       durationMinutes: voice.durationMinutes,
       questionCount: voice.questionCount,

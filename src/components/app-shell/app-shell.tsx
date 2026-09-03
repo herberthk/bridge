@@ -24,7 +24,6 @@ import {
   SchoolIcon,
   ShieldAlertIcon,
   ShieldCheckIcon,
-  SparklesIcon,
   SunIcon,
   UserRoundIcon,
   UserRoundPlusIcon,
@@ -112,12 +111,6 @@ const NAV_CONFIG: Record<Role, { groups: NavGroup[] }> = {
         label: "Management & Teaching",
         items: [
           { href: "/admin/students", label: "Students", icon: UserRoundPlusIcon },
-          {
-            href: "/admin/generate",
-            label: "Generate Exam",
-            icon: SparklesIcon,
-            badge: { text: "AI", variant: "brand" },
-          },
           { href: "/admin/exams", label: "Exam Library", icon: BookOpenCheckIcon },
           { href: "/admin/requests", label: "Retake Requests", icon: FileClockIcon },
           {
@@ -148,12 +141,6 @@ const NAV_CONFIG: Record<Role, { groups: NavGroup[] }> = {
           { href: "/teacher", label: "Dashboard", icon: LayoutDashboardIcon },
           { href: "/teacher/classes", label: "My Classes", icon: SchoolIcon },
           { href: "/teacher/students", label: "Students", icon: UserRoundPlusIcon },
-          {
-            href: "/teacher/generate",
-            label: "Generate Exam",
-            icon: SparklesIcon,
-            badge: { text: "AI", variant: "brand" },
-          },
           { href: "/teacher/exams", label: "Exam Library", icon: BookOpenCheckIcon },
           { href: "/teacher/requests", label: "Retake Requests", icon: FileClockIcon },
         ],

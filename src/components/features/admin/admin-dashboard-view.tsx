@@ -428,7 +428,7 @@ export function AdminDashboardView({
               <Button
                 className="shadow-glow h-9 gap-2 text-xs font-semibold"
                 nativeButton={false}
-                render={<Link href="/admin/generate" />}
+                render={<Link href="/admin/classes" />}
               >
                 <SparklesIcon className="size-4" />
                 <span>New AI Exam</span>
