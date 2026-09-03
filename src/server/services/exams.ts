@@ -31,6 +31,7 @@ import {
   InsufficientTokensError,
 } from "@/server/services/billing";
 import { loadDocumentExcerpts } from "@/server/services/documents";
+import { notifyUsers } from "@/server/services/notifications";
 import type { SessionUser } from "@/server/auth/session";
 import type {
   AttemptDoc,
@@ -1790,7 +1791,7 @@ export async function assignExam(
     }
 
     const studentIds = input.studentIds.filter((id) => !hasOpenAttempt.has(id));
-    if (studentIds.length === 0) return { created: 0, gated };
+    if (studentIds.length === 0) return { created: 0, gated, assignedIds: [] as string[] };
 
     const now = FieldValue.serverTimestamp();
     const base: WriteModel<AttemptDoc> = {
@@ -1843,9 +1844,22 @@ export async function assignExam(
       tx.update(lockedExamRef, { status: nextStatus, updatedAt: now });
     }
 
-    return { created: studentIds.length, gated };
+    return { created: studentIds.length, gated, assignedIds: studentIds };
   });
-  const { created, gated } = assignment;
+  const { created, gated, assignedIds } = assignment;
+
+  // Notify the invited students (best-effort — never blocks the assignment).
+  if (created > 0 && assignedIds.length > 0) {
+    void notifyUsers(assignedIds, {
+      type: "exam_assigned",
+      title: `New exam: ${exam.title}`,
+      body: exam.expiresAt
+        ? `You have been assigned “${exam.title}”. It closes on ${formatExpiry({ expiresAt: exam.expiresAt ?? null }) ?? "its deadline"}.`
+        : `You have been assigned “${exam.title}”. Good luck!`,
+      link: `/student/exams/${input.examId}`,
+      actorId: actor.uid,
+    });
+  }
 
   await writeAudit({
     actorId: actor.uid,

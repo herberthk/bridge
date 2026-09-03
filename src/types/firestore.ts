@@ -483,6 +483,35 @@ export interface ProctoringEventDoc {
   occurredAt: Timestamp;
 }
 
+/* ─────────────────────────── Notifications ─────────────────────────────── */
+
+/**
+ * In-app notification. Written server-side at the moment an event happens
+ * (exam assigned, retake decided, results ready, exam submitted, retake
+ * requested); read + marked read by the recipient through the client SDK.
+ */
+export type NotificationType =
+  | "exam_assigned"
+  | "retake_approved"
+  | "retake_rejected"
+  | "results_ready"
+  | "exam_submitted"
+  | "retake_requested";
+
+export interface NotificationDoc {
+  userId: string;
+  type: NotificationType;
+  title: string;
+  body: string;
+  /** In-app deep link the notification opens. */
+  link: string;
+  actorId: string | null;
+  read: boolean;
+  readAt: Timestamp | null;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
 /* ─────────────────────────── Requests / logs / metrics ─────────────────── */
 
 export interface RetakeRequestDoc {

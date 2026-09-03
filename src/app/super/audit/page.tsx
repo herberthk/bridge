@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { format } from "date-fns";
 
-import { auditLogsCol } from "@/server/firebase/collections";
+import { auditLogsCol, countQuery } from "@/server/firebase/collections";
 import { requireRole } from "@/server/auth/session";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -14,6 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { timestampToDate } from "@/lib/serialize";
+import { Pagination } from "@/components/features/super/pagination";
 import type { WithId, AuditLogDoc } from "@/types/firestore";
 
 const PAGE_SIZE = 100;
@@ -26,17 +27,29 @@ function actionLabel(action: string): string {
     .join(" · ");
 }
 
-export default async function SuperAuditPage() {
+export default async function SuperAuditPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ page?: string }>;
+}) {
   await requireRole("super_admin");
+  const params = await searchParams;
+  const page = Math.max(1, Number(params.page) || 1);
 
   let entries: WithId<AuditLogDoc>[] = [];
+  let total = 0;
   let loadError = false;
   try {
-    const snap = await auditLogsCol()
-      .orderBy("createdAt", "desc")
-      .limit(PAGE_SIZE)
-      .get();
+    const [snap, totalSnap] = await Promise.all([
+      auditLogsCol()
+        .orderBy("createdAt", "desc")
+        .offset((page - 1) * PAGE_SIZE)
+        .limit(PAGE_SIZE)
+        .get(),
+      countQuery(auditLogsCol()),
+    ]);
     entries = snap.docs.map((d) => ({ id: d.id, ...d.data()! }));
+    total = totalSnap;
   } catch (err) {
     console.error("[super/audit] load failed", err);
     loadError = true;
@@ -48,7 +61,7 @@ export default async function SuperAuditPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Audit log</h1>
         <p className="text-muted-foreground mt-1 text-sm">
           Sign-ins, account changes, school provisioning, and wallet top-ups —
-          newest first ({PAGE_SIZE} most recent).
+          newest first.
         </p>
       </div>
 
@@ -101,6 +114,8 @@ export default async function SuperAuditPage() {
           </Table>
         )}
       </div>
+
+      <Pagination page={page} totalPages={Math.max(1, Math.ceil(total / PAGE_SIZE))} />
     </div>
   );
 }

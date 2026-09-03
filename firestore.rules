@@ -151,6 +151,16 @@ service cloud.firestore {
       allow update, delete: if false; // Decided by admins server-side
     }
 
+    /* ── notifications (server-written; recipient-managed) ────── */
+    match /notifications/{notificationId} {
+      allow get, list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      // Recipients may only mark their own notifications as read.
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['read', 'readAt', 'updatedAt']);
+      allow create, delete: if false; // Written by server services only
+    }
+
     /* ── audit logs & metrics (server-written) ────────────────── */
     match /audit_logs/{logId} {
       allow get, list: if isSuper();

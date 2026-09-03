@@ -17,6 +17,7 @@ import type {
   ExamDoc,
 } from "@/types/firestore";
 import { vertex } from "@/lib/vertext";
+import { notifyUsers } from "@/server/services/notifications";
 
 const essayGradeSchema = z.object({
   grades: z.array(
@@ -152,6 +153,19 @@ async function notifyStudentOfResults(attemptId: string): Promise<void> {
 
   const examSnap = await examDoc(attempt.examId).get().catch(() => null);
   const title = examSnap?.exists ? examSnap.data()!.title : "Your exam";
+
+  // In-app notification rides along with the email (best-effort).
+  try {
+    await notifyUsers([attempt.studentId], {
+      type: "results_ready",
+      title: `Results ready: ${title}`,
+      body: `You scored ${attempt.score.percentage}% on “${title}”. Open your results for the full breakdown.`,
+      link: `/student/results/${attemptId}`,
+      actorId: null,
+    });
+  } catch (err) {
+    console.error("[grading] results notification failed", err);
+  }
 
   await sendTemplateEmail({
     to: user.email,

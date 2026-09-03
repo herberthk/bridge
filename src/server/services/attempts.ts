@@ -28,6 +28,7 @@ import type {
 } from "@/lib/schemas/attempt";
 import { normalizeAnswer } from "@/lib/schemas/attempt";
 import { PROCTORING } from "@/lib/constants";
+import { notifyUsers, staffRecipientsForStudent } from "@/server/services/notifications";
 
 export class AttemptsServiceError extends Error {
   constructor(
@@ -244,6 +245,26 @@ export async function submitAttempt(
     targetId: attemptId,
     meta: { late, questions: answers.length },
   });
+
+  // Notify the student's teacher(s) + school admin (best-effort).
+  void (async () => {
+    try {
+      const staff = await staffRecipientsForStudent(actor.uid);
+      if (!staff) return;
+      const examSnap = await examDoc(attempt.examId).get().catch(() => null);
+      const examTitle = examSnap?.exists ? examSnap.data()!.title : "an exam";
+      const body = `${actor.displayName} submitted “${examTitle}"${
+        input.autoSubmitted ? " (auto-submitted when time expired)" : ""
+      }.`;
+      const base = { type: "exam_submitted" as const, body, actorId: actor.uid };
+      await Promise.all([
+        notifyUsers(staff.adminIds, { ...base, title: `Exam submitted: ${examTitle}`, link: `/admin/exams/${attempt.examId}` }),
+        notifyUsers(staff.teacherIds, { ...base, title: `Exam submitted: ${examTitle}`, link: `/teacher/exams/${attempt.examId}` }),
+      ]);
+    } catch (err) {
+      console.error("[attempts] submit notification failed", err);
+    }
+  })();
 
   return { status: "submitted", needsAiGrading };
 }

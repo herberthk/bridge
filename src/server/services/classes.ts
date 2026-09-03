@@ -104,6 +104,25 @@ export async function createClasses(
     throw new ClassesServiceError("Those classes already exist.", 409);
   }
 
+  // A teacher who creates a class manages it from the moment it exists —
+  // otherwise they'd be locked out of their own creation (all class
+  // management checks require the teacher to be in `teacherIds`).
+  if (actor.role === "teacher") {
+    const createdIds = created.map((c) => c.id);
+    await Promise.all([
+      ...createdIds.map((id) =>
+        classDoc(id).update({
+          teacherIds: FieldValue.arrayUnion(actor.uid),
+          updatedAt: FieldValue.serverTimestamp(),
+        }),
+      ),
+      userDoc(actor.uid).update({
+        assignedClassIds: FieldValue.arrayUnion(...createdIds),
+        updatedAt: FieldValue.serverTimestamp(),
+      }),
+    ]);
+  }
+
   await writeAudit({
     actorId: actor.uid,
     actorRole: actor.role,

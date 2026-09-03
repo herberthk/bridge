@@ -72,6 +72,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ROLE_LABELS, type Role } from "@/lib/constants";
+import { NotificationsBell } from "@/components/features/notifications/notifications-bell";
 import { cn } from "@/lib/utils";
 
 export interface ShellUser {
@@ -197,7 +198,9 @@ const NAV_CONFIG: Record<Role, { groups: NavGroup[] }> = {
         label: "Platform Administration",
         items: [
           { href: "/super", label: "Overview", icon: LayoutDashboardIcon },
-          { href: "/super/schools", label: "Schools & Admins", icon: Building2Icon },
+          { href: "/super/schools", label: "Schools", icon: Building2Icon },
+          { href: "/super/students", label: "Students", icon: UserRoundPlusIcon },
+          { href: "/super/teachers", label: "Teachers", icon: UsersRoundIcon },
           {
             href: "/super/wallets",
             label: "Wallets & Billing",
@@ -814,6 +817,9 @@ export function AppShell({
           </div>
 
           <div className="flex items-center gap-2">
+            {(user.role === "student" || user.role === "admin" || user.role === "teacher") && (
+              <NotificationsBell />
+            )}
             <Badge
               variant="outline"
               className="hidden md:inline-flex bg-accent/40 text-muted-foreground border-border/60 text-xs px-2 py-0.5 font-medium"

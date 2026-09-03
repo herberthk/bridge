@@ -4,8 +4,10 @@ import {
   attemptsCol,
   countQuery,
   dailyMetricDoc,
+  examDoc,
   examsCol,
   metricsCol,
+  schoolDoc,
   schoolsCol,
   usersCol,
   walletsCol,
@@ -350,40 +352,82 @@ function subjectOfExamSync(
 /* ─────────────────────────── Super admin ─────────────────────────── */
 
 export interface SuperDashboardData {
-  totalStudents: number;
-  totalAdmins: number;
-  totalSchools: number;
-  totalExams: number;
-  totalAttempts: number;
+  totals: {
+    schools: number;
+    verifiedSchools: number;
+    pendingVerifications: number;
+    students: number;
+    teachers: number;
+    admins: number;
+    standaloneAdmins: number;
+  };
+  newThisWeek: { students: number; teachers: number; schools: number };
   activeUsers7d: number;
-  revenueUsd: number;
+  /** All-time platform revenue + consumption from daily aggregates. */
+  revenue: { usd: number; ugx: number };
   tokensConsumed: number;
+  /** 30-day series for the charts. */
   revenueByDay: { date: string; usd: number }[];
-  attemptsBySubject: { subject: string; attempts: number }[];
-  byBrowser: { browser: string; count: number }[];
-  byDevice: { device: string; count: number }[];
+  tokensByDay: { date: string; tokens: number }[];
+  browsers: { name: string; count: number }[];
+  devices: { name: string; count: number }[];
+  /** Schools ranked by lifetime token consumption (wallets are the ledger). */
+  topSchools: {
+    id: string;
+    name: string;
+    level: string;
+    verification: string;
+    students: number;
+    staff: number;
+    tokensConsumed: number;
+    balanceTokens: number;
+  }[];
+  verificationQueue: { id: string; name: string; level: string; updatedAt: string | null }[];
 }
 
+const DAY_MS = 86_400_000;
+
 export async function superDashboard(): Promise<SuperDashboardData> {
-  const weekAgo = Timestamp.fromMillis(Date.now() - 7 * 86400_000);
-  const oneYearAgo = new Date();
-  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
-  const oneYearAgoCutoff = oneYearAgo.toISOString().slice(0, 10);
-  const [totalStudents, totalAdmins, totalSchools, totalExams, totalAttempts, activeUsers7d, metricsSnap] =
-    await Promise.all([
-      countQuery(usersCol().where("role", "==", "student")),
-      countQuery(usersCol().where("role", "==", "admin")),
-      countQuery(schoolsCol()),
-      countQuery(examsCol()),
-      countQuery(attemptsCol()),
-      countQuery(usersCol().where("lastLoginAt", ">", weekAgo)),
-      // Daily aggregates are the single source of truth for revenue and
-      // consumption — no need to deserialize thousands of transaction docs.
-      // Order by the `date` field (identical to the doc id, yyyy-mm-dd sorts
-      // chronologically): Firestore rejects `__name__` ordering after a range
-      // filter on another field.
-      metricsCol().where("date", ">=", oneYearAgoCutoff).orderBy("date", "desc").limit(366).get(),
-    ]);
+  const weekAgo = Timestamp.fromMillis(Date.now() - 7 * DAY_MS);
+  const yearAgoCutoff = new Date(Date.now() - 365 * DAY_MS).toISOString().slice(0, 10);
+  const thirtyAgoCutoff = new Date(Date.now() - 30 * DAY_MS).toISOString().slice(0, 10);
+  const weekAgoCutoff = new Date(Date.now() - 7 * DAY_MS).toISOString().slice(0, 10);
+
+  const [
+    totalStudents,
+    totalTeachers,
+    totalAdmins,
+    totalStandaloneAdmins,
+    totalSchools,
+    verifiedSchools,
+    pendingVerifications,
+    newStudents7d,
+    newTeachers7d,
+    newSchools7d,
+    activeUsers7d,
+    metricsSnap,
+    schoolWalletsSnap,
+    pendingSchoolsSnap,
+  ] = await Promise.all([
+    countQuery(usersCol().where("role", "==", "student")),
+    countQuery(usersCol().where("role", "==", "teacher")),
+    countQuery(usersCol().where("role", "==", "admin").where("schoolId", "!=", null)),
+    countQuery(usersCol().where("role", "==", "admin").where("schoolId", "==", null)),
+    countQuery(schoolsCol()),
+    countQuery(schoolsCol().where("verification", "==", "verified")),
+    countQuery(schoolsCol().where("verification", "==", "pending")),
+    countQuery(usersCol().where("role", "==", "student").where("createdAt", ">", weekAgo)),
+    countQuery(usersCol().where("role", "==", "teacher").where("createdAt", ">", weekAgo)),
+    countQuery(schoolsCol().where("createdAt", ">", weekAgo)),
+    countQuery(usersCol().where("lastLoginAt", ">", weekAgo)),
+    // Daily aggregates are the single source of truth for revenue and
+    // consumption — no need to deserialize transaction docs. Ordered by the
+    // `date` field (Firestore rejects `__name__` ordering after a range filter).
+    metricsCol().where("date", ">=", yearAgoCutoff).orderBy("date", "desc").limit(366).get(),
+    // Wallets carry per-school lifetime consumption — the ranking source.
+    walletsCol().where("ownerType", "==", "school").orderBy("totalConsumedTokens", "desc").limit(6).get(),
+    schoolsCol().where("verification", "==", "pending").orderBy("updatedAt", "desc").limit(5).get(),
+  ]);
 
   const metrics: WithId<DailyMetricDoc>[] = metricsSnap.docs.map((d) => ({
     id: d.id,
@@ -393,54 +437,85 @@ export async function superDashboard(): Promise<SuperDashboardData> {
   const revenueMicros = metrics.reduce((n, m) => n + (m.usdRevenueMicros ?? 0), 0);
   const tokensConsumed = metrics.reduce((n, m) => n + (m.tokensConsumed ?? 0), 0);
 
-  const revenueByDay = metrics
-    .slice()
-    .sort((a, b) => a.date.localeCompare(b.date))
+  const sorted = metrics.slice().sort((a, b) => a.date.localeCompare(b.date));
+  const revenueByDay = sorted
+    .filter((m) => m.date >= thirtyAgoCutoff)
     .map((m) => ({
       date: m.date.slice(5),
       usd: Math.round(((m.usdRevenueMicros ?? 0) / 1_000_000) * 1000) / 1000,
     }));
+  const tokensByDay = sorted
+    .filter((m) => m.date >= thirtyAgoCutoff)
+    .map((m) => ({ date: m.date.slice(5), tokens: m.tokensConsumed ?? 0 }));
 
-  const browserMap = new Map<string, number>();
-  const deviceMap = new Map<string, number>();
-  for (const m of metrics) {
-    for (const [k, v] of Object.entries(m.byBrowser ?? {})) {
-      browserMap.set(k, (browserMap.get(k) ?? 0) + (v as number));
+  const aggregateMaps = (metrics: WithId<DailyMetricDoc>[], key: "byBrowser" | "byDevice") => {
+    const map = new Map<string, number>();
+    for (const m of metrics) {
+      for (const [k, v] of Object.entries(m[key] ?? {})) {
+        map.set(k, (map.get(k) ?? 0) + (v as number));
+      }
     }
-    for (const [k, v] of Object.entries(m.byDevice ?? {})) {
-      deviceMap.set(k, (deviceMap.get(k) ?? 0) + (v as number));
-    }
-  }
+    return [...map.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+  };
 
-  // Exact per-subject exam counts via cheap count() aggregations instead of
-  // deserializing every exam document.
-  const subjects = Object.keys(SUBJECT_LABELS) as Subject[];
-  const subjectCounts = await Promise.all(
-    subjects.map(async (subject) => ({
-      subject: SUBJECT_LABELS[subject],
-      attempts: await countQuery(examsCol().where("params.subject", "==", subject)),
-    })),
+  // Top schools by consumption: join the ranked wallets to their school docs.
+  const walletDocs = schoolWalletsSnap.docs.map((d) => ({ id: d.id, ...d.data()! }));
+  const schoolSnaps = await Promise.all(
+    walletDocs.map((w) => schoolDoc(w.id).get().catch(() => null)),
   );
+  const topSchools = walletDocs
+    .map((w, i) => {
+      const snap = schoolSnaps[i];
+      const school = snap?.exists ? snap.data()! : null;
+      return {
+        id: w.id,
+        name: school?.name ?? "Unknown school",
+        level: school?.level ?? "—",
+        verification: school?.verification ?? "unverified",
+        students: school?.studentCount ?? 0,
+        staff: (school?.adminCount ?? 0) + (school?.teacherCount ?? 0),
+        tokensConsumed: w.totalConsumedTokens,
+        balanceTokens: w.balanceTokens,
+      };
+    })
+    .filter((s) => s.tokensConsumed > 0 || s.students > 0)
+    .slice(0, 5);
+
+  const verificationQueue = pendingSchoolsSnap.docs.map((d) => ({
+    id: d.id,
+    name: d.data().name,
+    level: d.data().level ?? "—",
+    updatedAt:
+      d.data().updatedAt && typeof d.data().updatedAt.toDate === "function"
+        ? d.data().updatedAt.toDate().toISOString()
+        : null,
+  }));
 
   return {
-    totalStudents,
-    totalAdmins,
-    totalSchools,
-    totalExams,
-    totalAttempts,
+    totals: {
+      schools: totalSchools,
+      verifiedSchools,
+      pendingVerifications,
+      students: totalStudents,
+      teachers: totalTeachers,
+      admins: totalAdmins,
+      standaloneAdmins: totalStandaloneAdmins,
+    },
+    newThisWeek: { students: newStudents7d, teachers: newTeachers7d, schools: newSchools7d },
     activeUsers7d,
-    revenueUsd: Math.round((revenueMicros / 1_000_000) * 100) / 100,
+    revenue: {
+      usd: Math.round((revenueMicros / 1_000_000) * 100) / 100,
+      ugx: Math.round((revenueMicros / 1_000_000) * 3800),
+    },
     tokensConsumed,
     revenueByDay,
-    attemptsBySubject: subjectCounts
-      .filter((s) => s.attempts > 0)
-      .sort((a, b) => b.attempts - a.attempts),
-    byBrowser: [...browserMap.entries()]
-      .map(([browser, count]) => ({ browser, count }))
-      .sort((a, b) => b.count - a.count),
-    byDevice: [...deviceMap.entries()]
-      .map(([device, count]) => ({ device, count }))
-      .sort((a, b) => b.count - a.count),
+    tokensByDay,
+    browsers: aggregateMaps(metrics.filter((m) => m.date >= thirtyAgoCutoff), "byBrowser"),
+    devices: aggregateMaps(metrics.filter((m) => m.date >= thirtyAgoCutoff), "byDevice"),
+    topSchools,
+    verificationQueue,
   };
 }
 

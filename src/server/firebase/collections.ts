@@ -7,6 +7,7 @@ import type {
   ClassDoc,
   DailyMetricDoc,
   ExamDoc,
+  NotificationDoc,
   InviteDoc,
   PlatformFlagsDoc,
   ProctoringEventDoc,
@@ -108,6 +109,7 @@ export const COLLECTIONS = {
   retakeRequests: "retake_requests",
   auditLogs: "audit_logs",
   metrics: "metrics",
+  notifications: "notifications",
   platform: "platform",
 } as const;
 
@@ -186,6 +188,14 @@ export const proctoringEventsCol = () =>
     .withConverter(createConverter<ProctoringEventDoc>());
 export const proctoringEventsByAttempt = (attemptId: string): Query<ProctoringEventDoc> =>
   proctoringEventsCol().where("attemptId", "==", attemptId);
+
+// Notifications (in-app)
+export const notificationsCol = () =>
+  adminDb()
+    .collection(COLLECTIONS.notifications)
+    .withConverter(createConverter<NotificationDoc>());
+export const notificationsByUser = (userId: string): Query<NotificationDoc> =>
+  notificationsCol().where("userId", "==", userId);
 
 // Retakes
 export const retakeRequestsCol = () =>
