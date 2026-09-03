@@ -48,6 +48,7 @@ export async function POST(request: NextRequest) {
   const doc: WriteModel<UserDoc> = {
     email: decoded.email ?? "",
     displayName: parsed.data.displayName,
+    displayNameLower: parsed.data.displayName.toLowerCase(),
     photoURL: null,
     role: "member",
     schoolId: null,

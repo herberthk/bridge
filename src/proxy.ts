@@ -14,6 +14,7 @@ const PROTECTED_PREFIXES = [
   "/dashboard",
   "/exam",
   "/onboarding",
+  "/notifications",
 ];
 
 export function proxy(request: NextRequest) {

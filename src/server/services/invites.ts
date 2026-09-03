@@ -247,6 +247,7 @@ export async function acceptTeacherInvite(input: {
     await userDoc(created.uid).set({
       email: invite.email,
       displayName: input.displayName,
+      displayNameLower: input.displayName.toLowerCase(),
       photoURL: null,
       role: "teacher",
       schoolId: invite.schoolId,

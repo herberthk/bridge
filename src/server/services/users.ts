@@ -67,6 +67,7 @@ export async function provisionUser(
   const doc: WriteModel<UserDoc> = {
     email: input.email,
     displayName: input.displayName,
+    displayNameLower: input.displayName.toLowerCase(),
     photoURL: null,
     role: input.role,
     schoolId: input.schoolId,

@@ -62,6 +62,8 @@ export interface LoginMeta {
 export interface UserDoc {
   email: string;
   displayName: string;
+  /** Lowercased display name used for case-insensitive directory prefix search. */
+  displayNameLower?: string;
   photoURL: string | null;
   role: Role;
   /** Owning school; null for super admins, standalone (parent/tutor) admins and members. */
@@ -92,6 +94,8 @@ export interface UserDoc {
  */
 export interface SchoolDoc {
   name: string;
+  /** Lowercased name used for case-insensitive directory prefix search. */
+  nameLower?: string;
   ownerUid: string;
   country: string;
   /** Primary or secondary — mutually exclusive by design. */
@@ -446,6 +450,10 @@ export interface AttemptDoc {
   /** Set when this attempt is an approved retake of an earlier one. */
   retakeOf: string | null;
   retakeAuthorizedBy: string | null;
+  /** Distinguishes request approvals from direct staff grants in audit history. */
+  retakeSource?: "request" | "direct" | null;
+  /** Originating request for request-approved retakes. */
+  retakeRequestId?: string | null;
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -481,6 +489,35 @@ export interface ProctoringEventDoc {
   /** AI snapshot verdict, when the event came from image analysis. */
   aiVerdict: string | null;
   occurredAt: Timestamp;
+}
+
+/* ─────────────────────────── Notifications ─────────────────────────────── */
+
+/**
+ * In-app notification. Written server-side at the moment an event happens
+ * (exam assigned, retake decided, results ready, exam submitted, retake
+ * requested); read + marked read by the recipient through the client SDK.
+ */
+export type NotificationType =
+  | "exam_assigned"
+  | "retake_approved"
+  | "retake_rejected"
+  | "results_ready"
+  | "exam_submitted"
+  | "retake_requested";
+
+export interface NotificationDoc {
+  userId: string;
+  type: NotificationType;
+  title: string;
+  body: string;
+  /** In-app deep link the notification opens. */
+  link: string;
+  actorId: string | null;
+  read: boolean;
+  readAt: Timestamp | null;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
 }
 
 /* ─────────────────────────── Requests / logs / metrics ─────────────────── */

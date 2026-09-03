@@ -108,7 +108,7 @@ export function TempPasswordField({ id, name }: { id: string; name: string }) {
   );
 }
 
-function CreateSchoolDialog() {
+export function CreateSchoolDialog() {
   const [open, setOpen] = useState(false);
   const [state, formAction, pending] = useActionState<ActionState | null, FormData>(
     createSchoolAction,
@@ -180,7 +180,7 @@ function CreateSchoolDialog() {
   );
 }
 
-function CreateStandaloneAdminDialog() {
+export function CreateStandaloneAdminDialog() {
   const [open, setOpen] = useState(false);
   const [state, formAction, pending] = useActionState<ActionState | null, FormData>(
     createStandaloneAdminAction,

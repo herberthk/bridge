@@ -14,9 +14,36 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { timestampToDate } from "@/lib/serialize";
+import { Pagination } from "@/components/features/super/pagination";
 import type { WithId, AuditLogDoc } from "@/types/firestore";
 
 const PAGE_SIZE = 100;
+
+function encodeCursor(id: string): string {
+  return Buffer.from(JSON.stringify({ v: 1, id })).toString("base64url");
+}
+
+function decodeCursor(cursor: string): string | null {
+  if (cursor.length > 2_000) return null;
+  try {
+    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as unknown;
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      "v" in value &&
+      value.v === 1 &&
+      "id" in value &&
+      typeof value.id === "string" &&
+      value.id.length > 0 &&
+      value.id.length <= 1_500
+    ) {
+      return value.id;
+    }
+  } catch {
+    // Invalid or tampered cursors fail closed in the page loader below.
+  }
+  return null;
+}
 
 /** Human-friendly label for audit actions (auth.login → Auth · Login). */
 function actionLabel(action: string): string {
@@ -26,17 +53,42 @@ function actionLabel(action: string): string {
     .join(" · ");
 }
 
-export default async function SuperAuditPage() {
+export default async function SuperAuditPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ cursor?: string }>;
+}) {
   await requireRole("super_admin");
+  const params = await searchParams;
+  const cursor = params.cursor?.trim() || null;
 
   let entries: WithId<AuditLogDoc>[] = [];
+  let previousCursor: string | null = null;
+  let nextCursor: string | null = null;
   let loadError = false;
   try {
-    const snap = await auditLogsCol()
-      .orderBy("createdAt", "desc")
-      .limit(PAGE_SIZE)
-      .get();
-    entries = snap.docs.map((d) => ({ id: d.id, ...d.data()! }));
+    const ordered = auditLogsCol().orderBy("createdAt", "desc");
+    let pageQuery = ordered;
+
+    if (cursor) {
+      const cursorId = decodeCursor(cursor);
+      if (!cursorId) throw new Error("Invalid audit log cursor.");
+      const cursorSnap = await auditLogsCol().doc(cursorId).get();
+      if (!cursorSnap.exists) throw new Error("Audit log cursor no longer exists.");
+
+      pageQuery = ordered.startAfter(cursorSnap);
+      const previousPage = await ordered.endBefore(cursorSnap).limitToLast(PAGE_SIZE).get();
+      if (previousPage.size === PAGE_SIZE) {
+        previousCursor = encodeCursor(previousPage.docs[0]!.id);
+      }
+    }
+
+    const snap = await pageQuery.limit(PAGE_SIZE + 1).get();
+    const visibleDocs = snap.docs.slice(0, PAGE_SIZE);
+    entries = visibleDocs.map((d) => ({ id: d.id, ...d.data()! }));
+    if (snap.size > PAGE_SIZE && visibleDocs.length > 0) {
+      nextCursor = encodeCursor(visibleDocs.at(-1)!.id);
+    }
   } catch (err) {
     console.error("[super/audit] load failed", err);
     loadError = true;
@@ -48,7 +100,7 @@ export default async function SuperAuditPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Audit log</h1>
         <p className="text-muted-foreground mt-1 text-sm">
           Sign-ins, account changes, school provisioning, and wallet top-ups —
-          newest first ({PAGE_SIZE} most recent).
+          newest first.
         </p>
       </div>
 
@@ -101,6 +153,14 @@ export default async function SuperAuditPage() {
           </Table>
         )}
       </div>
+
+      {!loadError && (
+        <Pagination
+          cursor={cursor}
+          previousCursor={previousCursor}
+          nextCursor={nextCursor}
+        />
+      )}
     </div>
   );
 }

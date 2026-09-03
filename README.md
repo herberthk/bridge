@@ -88,6 +88,13 @@ npx -y firebase-tools@latest emulators:start
 
 ### Migrating pre-existing data
 
+Before deploying the optimized super-admin directory and retake-history queries,
+backfill their normalized names and provenance fields:
+
+```bash
+bun --env-file=.env.local scripts/backfill-directory-retake-fields.ts
+```
+
 After pulling this architecture, run once against an existing dev project:
 
 ```bash

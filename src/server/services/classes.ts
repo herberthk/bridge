@@ -35,6 +35,86 @@ export class ClassesServiceError extends Error {
   }
 }
 
+interface CreateClassesResult {
+  created: WithId<ClassDoc>[];
+  membershipReconciled: boolean;
+}
+
+async function createClassesAtomic(input: {
+  schoolId: string;
+  schoolLevel: SchoolLevel;
+  createdBy: string;
+  classLevels: number[];
+  assignTeacherId?: string;
+}): Promise<CreateClassesResult> {
+  const classLevels = [...new Set(input.classLevels)];
+  const newRefs = new Map(classLevels.map((level) => [level, classesCol().doc()]));
+
+  return adminDb().runTransaction(async (tx) => {
+    const existing = await tx.get(classesBySchool(input.schoolId));
+    const teacherSnap = input.assignTeacherId
+      ? await tx.get(userDoc(input.assignTeacherId))
+      : null;
+    if (teacherSnap && !teacherSnap.exists) {
+      throw new ClassesServiceError("Teacher not found.", 404);
+    }
+
+    const existingByLevel = new Map(existing.docs.map((d) => [d.data().classLevel, d]));
+    const now = FieldValue.serverTimestamp();
+    const created: WithId<ClassDoc>[] = [];
+    const managedIds: string[] = [];
+    let membershipReconciled = false;
+
+    for (const classLevel of classLevels) {
+      const current = existingByLevel.get(classLevel);
+      if (current) {
+        managedIds.push(current.id);
+        if (
+          input.assignTeacherId &&
+          !(current.data().teacherIds ?? []).includes(input.assignTeacherId)
+        ) {
+          tx.update(current.ref, {
+            teacherIds: FieldValue.arrayUnion(input.assignTeacherId),
+            updatedAt: now,
+          });
+          membershipReconciled = true;
+        }
+        continue;
+      }
+
+      const ref = newRefs.get(classLevel)!;
+      const doc: WriteModel<ClassDoc> = {
+        schoolId: input.schoolId,
+        level: input.schoolLevel,
+        classLevel,
+        secondarySubLevel:
+          input.schoolLevel === "secondary" ? subLevelForClass(classLevel) : null,
+        name: classLabel(input.schoolLevel, classLevel),
+        teacherIds: input.assignTeacherId ? [input.assignTeacherId] : [],
+        studentCount: 0,
+        createdBy: input.createdBy,
+        createdAt: now,
+        updatedAt: now,
+      };
+      tx.create(ref, doc);
+      managedIds.push(ref.id);
+      created.push({ id: ref.id, ...(doc as ClassDoc) });
+    }
+
+    if (teacherSnap && input.assignTeacherId) {
+      const previous = teacherSnap.data()!.assignedClassIds ?? [];
+      const assignedClassIds = [...new Set([...previous, ...managedIds])];
+      if (assignedClassIds.length !== previous.length) membershipReconciled = true;
+      tx.update(teacherSnap.ref, {
+        assignedClassIds,
+        updatedAt: now,
+      });
+    }
+
+    return { created, membershipReconciled };
+  });
+}
+
 /** Internal: create classes without actor checks (used at school creation). */
 export async function createClassesForSchool(input: {
   schoolId: string;
@@ -42,30 +122,7 @@ export async function createClassesForSchool(input: {
   createdBy: string;
   classLevels: number[];
 }): Promise<WithId<ClassDoc>[]> {
-  const now = FieldValue.serverTimestamp();
-  const existing = await classesBySchool(input.schoolId).get();
-  const taken = new Set(existing.docs.map((d) => d.data().classLevel));
-
-  const created: WithId<ClassDoc>[] = [];
-  for (const classLevel of input.classLevels) {
-    if (taken.has(classLevel)) continue;
-    taken.add(classLevel);
-    const doc: WriteModel<ClassDoc> = {
-      schoolId: input.schoolId,
-      level: input.schoolLevel,
-      classLevel,
-      secondarySubLevel: input.schoolLevel === "secondary" ? subLevelForClass(classLevel) : null,
-      name: classLabel(input.schoolLevel, classLevel),
-      teacherIds: [],
-      studentCount: 0,
-      createdBy: input.createdBy,
-      createdAt: now,
-      updatedAt: now,
-    };
-    const ref = await classesCol().add(doc as WriteModel<ClassDoc>);
-    created.push({ id: ref.id, ...(doc as ClassDoc) });
-  }
-  return created;
+  return (await createClassesAtomic(input)).created;
 }
 
 /** Staff (admin or teacher) create missing classes for their school. */
@@ -94,13 +151,14 @@ export async function createClasses(
     );
   }
 
-  const created = await createClassesForSchool({
+  const { created, membershipReconciled } = await createClassesAtomic({
     schoolId: actor.schoolId,
     schoolLevel: school.level,
     createdBy: actor.uid,
     classLevels: input.classLevels,
+    assignTeacherId: actor.role === "teacher" ? actor.uid : undefined,
   });
-  if (created.length === 0) {
+  if (created.length === 0 && !membershipReconciled) {
     throw new ClassesServiceError("Those classes already exist.", 409);
   }
 
@@ -110,7 +168,7 @@ export async function createClasses(
     action: "class.created",
     targetType: "school",
     targetId: actor.schoolId,
-    meta: { classes: created.map((c) => c.name) },
+    meta: { classes: created.map((c) => c.name), membershipReconciled },
   });
   return created;
 }

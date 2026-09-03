@@ -9,6 +9,7 @@ import {
   ChevronDownIcon,
   ChevronUpIcon,
   ClockIcon,
+  HistoryIcon,
   InboxIcon,
   MessageSquareQuoteIcon,
   RotateCcwIcon,
@@ -19,10 +20,18 @@ import {
 
 import { decideRetakeAction } from "@/app/admin/actions";
 import type { ActionState } from "@/app/admin/actions";
+import type { RetakeDecisionEntry } from "@/server/services/retakes";
 import type { RetakeRequestDoc } from "@/types/firestore";
-import type { SerializedWithId } from "@/lib/serialize";
+import type { Serialized, SerializedWithId } from "@/lib/serialize";
 import { parseDate } from "@/lib/serialize";
 import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -153,10 +162,20 @@ export function RetakeRequests({
   requests,
   studentNames,
   examTitles,
+  history = [],
+  deciderNames = {},
+  historyExamTitles = {},
+  viewerUid,
 }: {
   requests: SerializedWithId<RetakeRequestDoc>[];
   studentNames: Record<string, string>;
   examTitles: Record<string, string>;
+  /** Decided requests + direct grants — who decided what, and when. */
+  history?: Serialized<RetakeDecisionEntry>[];
+  deciderNames?: Record<string, string>;
+  historyExamTitles?: Record<string, string>;
+  /** Marks the viewer's own decisions with "(you)" in the history. */
+  viewerUid?: string;
 }) {
   const [state, formAction, pending] = useActionState<ActionState | null, FormData>(
     decideRetakeAction,
@@ -359,6 +378,93 @@ export function RetakeRequests({
           ))}
         </div>
       )}
+
+      <RetakeHistoryCard
+        history={history}
+        studentNames={studentNames}
+        examTitles={historyExamTitles}
+        deciderNames={deciderNames}
+        viewerUid={viewerUid}
+      />
     </div>
+  );
+}
+
+const DECISION_STYLES: Record<string, string> = {
+  approved: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+  granted: "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-400",
+  rejected: "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-400",
+};
+
+/** Who approved/rejected/granted which retake, and when — including the viewer. */
+function RetakeHistoryCard({
+  history,
+  studentNames,
+  examTitles,
+  deciderNames,
+  viewerUid,
+}: {
+  history: Serialized<RetakeDecisionEntry>[];
+  studentNames: Record<string, string>;
+  examTitles: Record<string, string>;
+  deciderNames: Record<string, string>;
+  viewerUid?: string;
+}) {
+  if (history.length === 0) return null;
+
+  return (
+    <Card className="shadow-card">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <HistoryIcon className="size-4 text-muted-foreground" />
+          Decision history
+        </CardTitle>
+        <CardDescription>
+          Every retake decision in your scope — who made it and when, your own
+          included.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <div className="divide-y">
+          {history.map((entry) => {
+            const when = entry.decidedAt ? parseDate(entry.decidedAt) : null;
+            const decider =
+              deciderNames[entry.decidedBy ?? ""] ??
+              (entry.decidedBy ? "Unknown staff" : "—");
+            const isSelf = viewerUid && entry.decidedBy === viewerUid;
+            return (
+              <div
+                key={entry.id}
+                className="hover:bg-accent/40 flex flex-wrap items-center justify-between gap-3 px-6 py-3.5"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">
+                    {studentNames[entry.studentId] ?? "Unknown student"}
+                    <span className="text-muted-foreground font-normal">
+                      {" "}· {examTitles[entry.examId] ?? "Unknown exam"}
+                    </span>
+                  </p>
+                  <p className="text-muted-foreground mt-0.5 text-xs">
+                    {when ? format(when, "d MMM yyyy, HH:mm") : "—"}
+                    {" · by "}
+                    <span className="font-medium text-foreground">{decider}</span>
+                    {isSelf ? " (you)" : ""}
+                    {entry.via === "direct" ? " · granted directly" : ""}
+                  </p>
+                </div>
+                <span
+                  className={
+                    "rounded-full border px-2.5 py-0.5 text-xs font-semibold capitalize " +
+                    (DECISION_STYLES[entry.decision] ?? "")
+                  }
+                >
+                  {entry.decision}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
