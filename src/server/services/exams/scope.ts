@@ -19,6 +19,9 @@ export async function resolveExamClassId(
   input: Pick<GenerateExamInput, "classId" | "params">,
 ): Promise<string | null> {
   if (input.classId) {
+    if (actor.role !== "super_admin" && !actor.schoolId) {
+      throw new ExamsServiceError("You are not part of a school.", 403);
+    }
     const classSnap = await classDoc(input.classId).get();
     if (!classSnap.exists) throw new ExamsServiceError("Class not found.", 404);
     const cls = classSnap.data()!;

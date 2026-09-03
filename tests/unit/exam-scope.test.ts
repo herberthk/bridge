@@ -100,6 +100,17 @@ describe("resolveExamClassId", () => {
     ).resolves.toBe("class-1");
   });
 
+  it("rejects a class-scoped school admin without a school", async () => {
+    const err = await errorOf(
+      resolveExamClassId(
+        actor({ uid: "admin-1", role: "admin", schoolId: null }),
+        input({ classId: "class-1" }),
+      ),
+    );
+    expect(err.status).toBe(403);
+    expect(classDoc).not.toHaveBeenCalled();
+  });
+
   it("requires a class for class-less school admins", async () => {
     const err = await errorOf(
       resolveExamClassId(actor({ uid: "admin-1", role: "admin" }), input()),

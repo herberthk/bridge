@@ -2,6 +2,8 @@ import { Timestamp } from "firebase-admin/firestore";
 
 import {
   attemptDoc,
+  classDoc,
+  classesBySchool,
   countQuery,
   examDoc,
   examsCol,
@@ -26,6 +28,49 @@ function examsForActor(actor: SessionUser): FirebaseFirestore.Query<ExamDoc> {
   return examsCol();
 }
 
+async function assignedClassIdsForTeacher(actor: SessionUser): Promise<Set<string>> {
+  if (actor.role !== "teacher" || !actor.schoolId) return new Set();
+  const snap = await classesBySchool(actor.schoolId).get();
+  return new Set(
+    snap.docs
+      .filter((doc) => (doc.data().teacherIds ?? []).includes(actor.uid))
+      .map((doc) => doc.id),
+  );
+}
+
+async function teacherCanAccessExam(actor: SessionUser, exam: ExamDoc): Promise<boolean> {
+  if (actor.role !== "teacher" || !actor.schoolId || !exam.classId) return false;
+  const snap = await classDoc(exam.classId).get();
+  if (!snap.exists) return false;
+  const cls = snap.data()!;
+  return cls.schoolId === actor.schoolId && (cls.teacherIds ?? []).includes(actor.uid);
+}
+
+async function teacherCanAccessAttempt(
+  actor: SessionUser,
+  attempt: AttemptDoc,
+): Promise<boolean> {
+  if (!actor.schoolId || attempt.schoolId !== actor.schoolId) return false;
+  const snap = await examDoc(attempt.examId).get();
+  return snap.exists && teacherCanAccessExam(actor, snap.data()!);
+}
+
+function teacherExamQueries(
+  actor: SessionUser,
+  classIds: string[],
+): FirebaseFirestore.Query<ExamDoc>[] {
+  if (!actor.schoolId) return [];
+  const queries: FirebaseFirestore.Query<ExamDoc>[] = [];
+  for (let i = 0; i < classIds.length; i += 10) {
+    queries.push(
+      examsCol()
+        .where("schoolId", "==", actor.schoolId)
+        .where("classId", "in", classIds.slice(i, i + 10)),
+    );
+  }
+  return queries;
+}
+
 function examFromSnapshot(
   doc: FirebaseFirestore.QueryDocumentSnapshot<ExamDoc>,
 ): WithId<ExamDoc> {
@@ -44,6 +89,13 @@ function examFromSnapshot(
 
 /** Exact exam total for dashboard KPIs, independent of display limits. */
 export async function countExams(actor: SessionUser): Promise<number> {
+  if (actor.role === "teacher") {
+    const classIds = [...(await assignedClassIdsForTeacher(actor))];
+    const counts = await Promise.all(
+      teacherExamQueries(actor, classIds).map((query) => countQuery(query)),
+    );
+    return counts.reduce((sum, count) => sum + count, 0);
+  }
   return countQuery(examsForActor(actor));
 }
 
@@ -58,6 +110,12 @@ export async function listRecentExamsForClasses(
   limit = 5,
 ): Promise<WithId<ExamDoc>[]> {
   const wanted = new Set(classIds);
+  if (actor.role === "teacher") {
+    const assigned = await assignedClassIdsForTeacher(actor);
+    for (const classId of wanted) {
+      if (!assigned.has(classId)) wanted.delete(classId);
+    }
+  }
   if (wanted.size === 0 || limit <= 0) return [];
 
   const batchSize = 100;
@@ -86,11 +144,21 @@ export async function listExams(
   actor: SessionUser,
   limit = 200,
 ): Promise<ExamListResult> {
-  const query = examsForActor(actor).orderBy("createdAt", "desc").limit(limit);
-  let snap: FirebaseFirestore.QuerySnapshot<ExamDoc>;
+  const assignedClassIds =
+    actor.role === "teacher" ? await assignedClassIdsForTeacher(actor) : null;
+  const baseQueries =
+    assignedClassIds === null
+      ? [examsForActor(actor)]
+      : teacherExamQueries(actor, [...assignedClassIds]);
+  if (baseQueries.length === 0 || limit <= 0) {
+    return { exams: [], partial: false, ordered: true };
+  }
+  let snaps: FirebaseFirestore.QuerySnapshot<ExamDoc>[];
   let usedFallback = false;
   try {
-    snap = await query.get();
+    snaps = await Promise.all(
+      baseQueries.map((query) => query.orderBy("createdAt", "desc").limit(limit).get()),
+    );
   } catch (error) {
     usedFallback = true;
     console.error("[exams] ordered exam query failed; using a partial, unordered fallback", {
@@ -100,9 +168,18 @@ export async function listExams(
       limit,
       error,
     });
-    snap = await examsForActor(actor).limit(limit).get();
+    snaps = await Promise.all(baseQueries.map((query) => query.limit(limit).get()));
   }
-  const exams = snap.docs.map(examFromSnapshot);
+  const exams = snaps
+    .flatMap((snap) => snap.docs)
+    .map(examFromSnapshot)
+    .filter(
+      (exam) =>
+        assignedClassIds === null ||
+        (exam.classId !== null && exam.classId !== undefined && assignedClassIds.has(exam.classId)),
+    )
+    .sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis())
+    .slice(0, limit);
   return { exams, partial: usedFallback, ordered: !usedFallback };
 }
 
@@ -115,9 +192,10 @@ export async function getExamForActor(
   const exam = { id: snap.id, ...snap.data()! } as WithId<ExamDoc>;
   const allowed =
     actor.role === "super_admin" ||
-    ((actor.role === "admin" || actor.role === "teacher") &&
+    (actor.role === "admin" &&
       (exam.createdBy === actor.uid || (exam.schoolId && exam.schoolId === actor.schoolId))) ||
-    (actor.role === "student" && exam.schoolId && exam.schoolId === actor.schoolId);
+    (actor.role === "student" && exam.schoolId && exam.schoolId === actor.schoolId) ||
+    (actor.role === "teacher" && (await teacherCanAccessExam(actor, exam)));
   if (!allowed) throw new ExamsServiceError("Not allowed.", 403);
   return exam;
 }
@@ -131,10 +209,11 @@ export async function getAttemptForActor(
   const attempt = { id: snap.id, ...snap.data()! } as WithId<AttemptDoc>;
   const allowed =
     actor.role === "super_admin" ||
-    attempt.studentId === actor.uid ||
-    ((actor.role === "admin" || actor.role === "teacher") &&
+    (actor.role === "student" && attempt.studentId === actor.uid) ||
+    (actor.role === "admin" &&
       attempt.schoolId !== null &&
-      attempt.schoolId === actor.schoolId);
+      attempt.schoolId === actor.schoolId) ||
+    (actor.role === "teacher" && (await teacherCanAccessAttempt(actor, attempt)));
   if (!allowed) throw new ExamsServiceError("Not allowed.", 403);
   return attempt;
 }

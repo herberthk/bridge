@@ -21,10 +21,22 @@ export default async function TeacherGeneratePage({
   const { classId } = await searchParams;
   const id = Array.isArray(classId) ? classId[0] : classId;
   if (!id) redirect("/teacher/classes");
+  let classScope: Awaited<ReturnType<typeof getClassForActor>>;
   try {
-    await getClassForActor(actor, id);
+    classScope = await getClassForActor(actor, id);
   } catch {
     redirect("/teacher/classes");
   }
-  return <ExamGenerator />;
+  return (
+    <ExamGenerator
+      key={classScope.id}
+      classScope={{
+        id: classScope.id,
+        name: classScope.name,
+        level: classScope.level,
+        secondarySubLevel: classScope.secondarySubLevel,
+        classLevel: classScope.classLevel,
+      }}
+    />
+  );
 }

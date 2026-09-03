@@ -106,12 +106,13 @@ export function sanitizeVisual(v: unknown): Question["visual"] {
   if (obj.kind === "chart") {
     const chartType = obj.chartType as string;
     if (!["bar", "line", "pie", "area"].includes(chartType)) return null;
-    const data = Array.isArray(obj.data) ? obj.data as Array<Record<string, unknown>> : [];
+    const data = Array.isArray(obj.data) ? obj.data as unknown[] : [];
     const cleanData = data
       .slice(0, 12)
       .map((row) => {
         const out: Record<string, string | number> = {};
-        for (const [k, val] of Object.entries(row as Record<string, unknown>)) {
+        if (!row || typeof row !== "object" || Array.isArray(row)) return out;
+        for (const [k, val] of Object.entries(row)) {
           if (!isValidKey(k)) continue;
           if (typeof val === "string" && val.trim() !== "") out[k] = val.trim().slice(0, 80);
           else if (typeof val === "number" && Number.isFinite(val)) out[k] = val;

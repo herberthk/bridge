@@ -239,6 +239,15 @@ describe("sanitizeVisual: charts", () => {
     expect(sanitizeVisual({ kind: "chart", chartType: "pie", data: [data[0]] })).toBeNull();
     expect(sanitizeVisual({ kind: "chart", chartType: "pie", data: [] })).toBeNull();
   });
+
+  it("ignores malformed rows without dropping valid chart points", () => {
+    const out = sanitizeVisual({
+      kind: "chart",
+      chartType: "bar",
+      data: [null, undefined, "bad", 7, ["bad"], ...data],
+    }) as Chart;
+    expect(out.data).toEqual(data);
+  });
 });
 
 describe("sanitizeVisual: unusable input", () => {

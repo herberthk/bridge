@@ -54,8 +54,9 @@ export default async function AdminGeneratePage({
     redirect("/admin/classes");
   }
 
+  let classScope: Awaited<ReturnType<typeof getClassForActor>>;
   try {
-    await getClassForActor(actor, classId);
+    classScope = await getClassForActor(actor, classId);
   } catch {
     redirect("/admin/classes");
   }
@@ -75,7 +76,16 @@ export default async function AdminGeneratePage({
         prerenders; `force-dynamic` would have opted the whole route out.
       */}
       <Suspense fallback={<Skeleton className="h-128 w-full rounded-xl" />}>
-        <ExamGenerator />
+        <ExamGenerator
+          key={classScope.id}
+          classScope={{
+            id: classScope.id,
+            name: classScope.name,
+            level: classScope.level,
+            secondarySubLevel: classScope.secondarySubLevel,
+            classLevel: classScope.classLevel,
+          }}
+        />
       </Suspense>
     </div>
   );

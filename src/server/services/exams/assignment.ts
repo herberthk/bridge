@@ -15,6 +15,7 @@ import type { SessionUser } from "@/server/auth/session";
 import type { AttemptDoc, ExamDoc, WriteModel } from "@/types/firestore";
 import type { AssignExamInput } from "@/lib/schemas/exam";
 import { ExamsServiceError } from "./errors";
+import { getExamForActor } from "./library";
 
 /** Returns student IDs who already have an attempt for this exam */
 export async function getAssignedStudentIdsForExam(
@@ -24,6 +25,7 @@ export async function getAssignedStudentIdsForExam(
   if (actor.role !== "admin" && actor.role !== "super_admin" && actor.role !== "teacher") {
     throw new ExamsServiceError("Not allowed.", 403);
   }
+  if (actor.role === "teacher") await getExamForActor(actor, examId);
   let query = attemptsCol().where("examId", "==", examId);
   if ((actor.role === "admin" || actor.role === "teacher") && actor.schoolId) {
     query = query.where("schoolId", "==", actor.schoolId);
@@ -145,6 +147,9 @@ export async function assignExam(
       throw new ExamsServiceError("Invalid scheduledFor date.", 400);
     }
     scheduledAt = Timestamp.fromMillis(parsedMs);
+    if (exam.expiresAt && scheduledAt.toMillis() > exam.expiresAt.toMillis()) {
+      throw new ExamsServiceError("The scheduled start must be on or before the exam deadline.", 400);
+    }
   }
   // The exam status is the question-edit lock. Reading it, creating attempts and
   // leaving draft in one transaction means `saveQuestions` cannot commit between
@@ -167,24 +172,46 @@ export async function assignExam(
     // These reads share the transaction with the writes, preventing two concurrent
     // assignments from creating duplicate open attempts. All reads complete
     // before any write below, so they fan out concurrently.
-    const openStatuses = ["pending", "in_progress", "submitted"] as const;
+    const openStatuses: readonly AttemptDoc["status"][] = [
+      "pending",
+      "in_progress",
+      "submitted",
+    ];
     const existingSnaps = await Promise.all(
       chunks.map((chunk) =>
         tx.get(
           attemptsCol()
             .where("examId", "==", input.examId)
-            .where("studentId", "in", chunk)
-            .where("status", "in", [...openStatuses]),
+            .where("studentId", "in", chunk),
         ),
       ),
     );
     const hasOpenAttempt = new Set<string>();
     existingSnaps.forEach((existing) =>
-      existing.docs.forEach((d) => hasOpenAttempt.add(d.data().studentId as string)),
+      existing.docs.forEach((d) => {
+        const attempt = d.data();
+        if (openStatuses.includes(attempt.status)) hasOpenAttempt.add(attempt.studentId);
+      }),
     );
 
     const studentIds = input.studentIds.filter((id) => !hasOpenAttempt.has(id));
     if (studentIds.length === 0) return { created: 0, gated, assignedIds: [] as string[] };
+
+    // The preflight expiry check can race the transaction. Re-check the locked
+    // document after every read and immediately before creating attempts.
+    if (isExamExpired({ expiresAt: lockedExam.expiresAt ?? null })) {
+      throw new ExamsServiceError(
+        `This exam closed on ${formatExpiry({ expiresAt: lockedExam.expiresAt ?? null }) ?? "its deadline"}.`,
+        409,
+      );
+    }
+    if (
+      scheduledAt &&
+      lockedExam.expiresAt &&
+      scheduledAt.toMillis() > lockedExam.expiresAt.toMillis()
+    ) {
+      throw new ExamsServiceError("The scheduled start must be on or before the exam deadline.", 400);
+    }
 
     const now = FieldValue.serverTimestamp();
     const base: WriteModel<AttemptDoc> = {
