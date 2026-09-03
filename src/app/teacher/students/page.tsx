@@ -2,17 +2,24 @@ export const dynamic = "force-dynamic";
 
 import { requireRole } from "@/server/auth/session";
 import { listStudents } from "@/server/services/users";
+import { listClasses } from "@/server/services/classes";
 import { StudentsTable } from "@/components/features/admin/students-table";
 import { serializeDocs } from "@/lib/serialize";
-import type { WithId, UserDoc } from "@/types/firestore";
+import type { WithId, UserDoc, ClassDoc } from "@/types/firestore";
 
 export default async function TeacherStudentsPage() {
   const actor = await requireRole("teacher");
 
   let students: WithId<UserDoc>[] = [];
+  let classes: WithId<ClassDoc>[] = [];
   let loadFailed = false;
   try {
-    students = await listStudents(actor);
+    // listClasses is assigned-only for teachers — the dialog can only offer
+    // those classes, matching the server-side creation rule.
+    [students, classes] = await Promise.all([
+      listStudents(actor),
+      listClasses(actor).catch(() => []),
+    ]);
   } catch (err) {
     console.error("[teacher/students] load failed", err);
     loadFailed = true;
@@ -29,6 +36,7 @@ export default async function TeacherStudentsPage() {
         students={serializeDocs(students)}
         viewerRole="teacher"
         total={students.length}
+        classes={serializeDocs(classes)}
       />
     </div>
   );

@@ -16,7 +16,6 @@ import {
   CircleCheckIcon,
   MoreHorizontalIcon,
   PauseIcon,
-  PlusIcon,
   SearchIcon,
   ShieldCheckIcon,
   ShieldOffIcon,
@@ -26,15 +25,10 @@ import {
 } from "lucide-react";
 
 import {
-  createStudentAction,
   setUserStatusAction,
   type ActionState,
 } from "@/app/admin/actions";
-import {
-  TempPasswordField,
-  useActionToast,
-} from "@/components/features/super/schools-manager";
-import { classLevelOptions } from "@/lib/schemas/users";
+import { CreateStudentDialog, type CreatableClass } from "@/components/features/admin/create-student-dialog";
 import type { Role, UserStatus } from "@/lib/constants";
 import type { UserDoc } from "@/types/firestore";
 import { parseDate, type SerializedWithId } from "@/lib/serialize";
@@ -50,15 +44,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -66,19 +51,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Field,
-  FieldDescription,
-  FieldGroup,
-  FieldLabel,
-} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
+  SelectDisplay,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
 import {
   Table,
@@ -88,7 +67,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -98,6 +76,19 @@ type SortDir = "asc" | "desc";
 // ─── Constants ──────────────────────────────────────────────────────────────────
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
+
+const STATUS_FILTER_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "all", label: "All statuses" },
+  { value: "active", label: "Active" },
+  { value: "suspended", label: "Suspended" },
+  { value: "banned", label: "Banned" },
+];
+
+const LEVEL_FILTER_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "all", label: "All levels" },
+  { value: "primary", label: "Primary" },
+  { value: "secondary", label: "Secondary" },
+];
 
 const STATUS_CONFIG: Record<
   UserStatus,
@@ -247,134 +238,6 @@ function SortableHead({
   );
 }
 
-// ─── Create Student Dialog ────────────────────────────────────────────────────────
-
-function CreateStudentDialog({ classId }: { classId?: string }) {
-  const [open, setOpen] = useState(false);
-  const [level, setLevel] = useState<"primary" | "secondary">("secondary");
-  const [subLevel, setSubLevel] = useState<"o_level" | "a_level">("o_level");
-  const [state, formAction, pending] = useActionState<ActionState | null, FormData>(
-    createStudentAction,
-    null,
-  );
-  useActionToast(state, () => setOpen(false), "Student created");
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button className="shadow-glow" />}>
-        <PlusIcon data-icon="inline-start" />
-        Add student
-      </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Add a student</DialogTitle>
-          <DialogDescription>
-            Creates the account instantly. Share the temporary password — the
-            student should change it after first sign-in.
-          </DialogDescription>
-        </DialogHeader>
-        <form action={formAction} key={state?.ok ? "reset" : "form"}>
-          <FieldGroup>
-            {classId && <input type="hidden" name="classId" value={classId} />}
-            <Field>
-              <FieldLabel htmlFor="displayName">Full name</FieldLabel>
-              <Input
-                id="displayName"
-                name="displayName"
-                required
-                placeholder="e.g. Aisha Nakato"
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="email">Email</FieldLabel>
-              <Input
-                id="email"
-                name="email"
-                type="email"
-                required
-                placeholder="student@email.com"
-              />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="password">Temporary password</FieldLabel>
-              <TempPasswordField id="password" name="password" />
-              <FieldDescription>
-                At least 10 characters with upper/lowercase and a number.
-              </FieldDescription>
-            </Field>
-            <div className={classId ? "hidden" : "grid grid-cols-2 gap-3"}>
-              <Field>
-                <FieldLabel htmlFor="level">Level</FieldLabel>
-                <Select
-                  name="level"
-                  value={level}
-                  onValueChange={(v) => setLevel(v as "primary" | "secondary")}
-                >
-                  <SelectTrigger id="level">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="primary">Primary</SelectItem>
-                    <SelectItem value="secondary">Secondary</SelectItem>
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="classLevel">Class</FieldLabel>
-                <Select
-                  name="classLevel"
-                  defaultValue={subLevel === "a_level" ? "5" : "2"}
-                  key={`${level}-${subLevel}`}
-                >
-                  <SelectTrigger id="classLevel">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {classLevelOptions(level, subLevel).map((opt) => (
-                      <SelectItem key={opt.value} value={String(opt.value)}>
-                        {opt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-            </div>
-            {!classId && level === "secondary" && (
-              <Field>
-                <FieldLabel>Secondary sub-level</FieldLabel>
-                <input type="hidden" name="secondarySubLevel" value={subLevel} />
-                <ToggleGroup
-                  value={[subLevel]}
-                  onValueChange={(v: readonly string[]) => {
-                    const next = v[0] as "o_level" | "a_level" | undefined;
-                    if (next) setSubLevel(next);
-                  }}
-                  className="flex"
-                >
-                  <ToggleGroupItem value="o_level" className="flex-1">
-                    O Level (S1–S4)
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value="a_level" className="flex-1">
-                    A Level (S5–S6)
-                  </ToggleGroupItem>
-                </ToggleGroup>
-              </Field>
-            )}
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setOpen(false)}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={pending}>
-                {pending ? "Creating…" : "Create student"}
-              </Button>
-            </DialogFooter>
-          </FieldGroup>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 // ─── Row Actions ──────────────────────────────────────────────────────────────────
 
 function StudentRowActions({
@@ -478,6 +341,8 @@ export function StudentsTable({
   viewerRole,
   total = null,
   fixedClassId,
+  fixedClassName,
+  classes = [],
 }: {
   students: SerializedWithId<UserDoc>[];
   viewerRole: Role;
@@ -485,6 +350,13 @@ export function StudentsTable({
   total: number | null;
   /** When set (class dashboards), new students are created straight into this class. */
   fixedClassId?: string;
+  /** Display name for the pinned class (class dashboards). */
+  fixedClassName?: string;
+  /**
+   * Classes offered in the standalone "Add student" dialog — already scoped
+   * by the caller (assigned-only for teachers, whole school for admins).
+   */
+  classes?: CreatableClass[];
 }) {
   // ── Filter / search ──────────────────────────────────────────────────────────
   const [query, setQuery] = useState("");
@@ -581,7 +453,11 @@ export function StudentsTable({
                 : "managed by you"}
           </p>
         </div>
-        <CreateStudentDialog classId={fixedClassId} />
+        <CreateStudentDialog
+          classes={classes}
+          fixedClassId={fixedClassId}
+          fixedClassName={fixedClassName}
+        />
       </div>
 
       {/* ── Stat Pills ────────────────────────────────────────────────────────────── */}
@@ -631,8 +507,12 @@ export function StudentsTable({
           {/* Status filter */}
           <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as UserStatus | "all")}>
             <SelectTrigger className="w-[160px]">
-              <ActivityIcon className="size-4 text-muted-foreground" />
-              <SelectValue placeholder="All statuses" />
+              <ActivityIcon className="size-4 shrink-0 text-muted-foreground" />
+              <SelectDisplay
+                value={statusFilter}
+                placeholder="All statuses"
+                options={STATUS_FILTER_OPTIONS}
+              />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All statuses</SelectItem>
@@ -645,7 +525,11 @@ export function StudentsTable({
           {/* Level filter */}
           <Select value={levelFilter} onValueChange={(v) => setLevelFilter(v as "all" | "primary" | "secondary")}>
             <SelectTrigger className="w-[160px]">
-              <SelectValue placeholder="All levels" />
+              <SelectDisplay
+                value={levelFilter}
+                placeholder="All levels"
+                options={LEVEL_FILTER_OPTIONS}
+              />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All levels</SelectItem>
@@ -657,7 +541,10 @@ export function StudentsTable({
           {/* Page size */}
           <Select value={String(pageSize)} onValueChange={(v) => setPageSize(Number(v))}>
             <SelectTrigger className="w-[110px]">
-              <SelectValue />
+              <SelectDisplay
+                value={String(pageSize)}
+                options={PAGE_SIZE_OPTIONS.map((n) => ({ value: String(n), label: `${n} / page` }))}
+              />
             </SelectTrigger>
             <SelectContent>
               {PAGE_SIZE_OPTIONS.map((n) => (

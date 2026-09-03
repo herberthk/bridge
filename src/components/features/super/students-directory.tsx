@@ -16,9 +16,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import {
   Select,
   SelectContent,
+  SelectDisplay,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
 import { Pagination } from "@/components/features/super/pagination";
 import { parseDate } from "@/lib/serialize";
@@ -27,6 +27,13 @@ export interface DirectorySchoolOption {
   id: string;
   name: string;
 }
+
+const STATUS_FILTER_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "all", label: "Any status" },
+  { value: "active", label: "Active" },
+  { value: "suspended", label: "Suspended" },
+  { value: "banned", label: "Banned" },
+];
 
 function useDirectoryNav() {
   const router = useRouter();
@@ -96,7 +103,14 @@ export function DirectoryToolbar({
           onValueChange={(v) => setParam({ school: v === "all" ? null : v })}
         >
           <SelectTrigger className="w-44">
-            <SelectValue placeholder="All schools" />
+            <SelectDisplay
+              value={schoolFilter ?? "all"}
+              placeholder="All schools"
+              options={[
+                { value: "all", label: "All schools" },
+                ...schools.map((s) => ({ value: s.id, label: s.name })),
+              ]}
+            />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All schools</SelectItem>
@@ -113,7 +127,11 @@ export function DirectoryToolbar({
             onValueChange={(v) => setParam({ status: v === "all" ? null : v })}
           >
             <SelectTrigger className="w-36">
-              <SelectValue placeholder="Any status" />
+              <SelectDisplay
+                value={statusFilter ?? "all"}
+                placeholder="Any status"
+                options={STATUS_FILTER_OPTIONS}
+              />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">Any status</SelectItem>

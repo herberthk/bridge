@@ -74,9 +74,9 @@ import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
+  SelectDisplay,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
 import {
   Table,
@@ -101,6 +101,28 @@ type DateFilter = "all" | "today" | "7days" | "30days";
 type DirectionFilter = "all" | "consumption" | "topup";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
+
+const CATEGORY_FILTER_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "all", label: "All Categories" },
+  { value: "text_generation", label: "Exam Generation" },
+  { value: "grading", label: "AI Grading" },
+  { value: "voice", label: "Voice Builder" },
+  { value: "topup", label: "Top-ups" },
+  { value: "adjustment", label: "Adjustments" },
+];
+
+const DIRECTION_FILTER_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "all", label: "All Flows (In & Out)" },
+  { value: "consumption", label: "Deductions only" },
+  { value: "topup", label: "Credits only" },
+];
+
+const DATE_FILTER_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "all", label: "All Time" },
+  { value: "today", label: "Today" },
+  { value: "7days", label: "Last 7 Days" },
+  { value: "30days", label: "Last 30 Days" },
+];
 
 const CATEGORY_CONFIG: Record<
   TransactionCategory,
@@ -859,7 +881,11 @@ export function WalletView({
                 }}
               >
                 <SelectTrigger size="sm" className="h-8 text-xs">
-                  <SelectValue placeholder="All Categories" />
+                  <SelectDisplay
+                    value={categoryFilter}
+                    placeholder="All Categories"
+                    options={CATEGORY_FILTER_OPTIONS}
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Categories</SelectItem>
@@ -882,7 +908,11 @@ export function WalletView({
                 }}
               >
                 <SelectTrigger size="sm" className="h-8 text-xs">
-                  <SelectValue placeholder="All Flows" />
+                  <SelectDisplay
+                    value={directionFilter}
+                    placeholder="All Flows"
+                    options={DIRECTION_FILTER_OPTIONS}
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Flows (In &amp; Out)</SelectItem>
@@ -902,7 +932,11 @@ export function WalletView({
                 }}
               >
                 <SelectTrigger size="sm" className="h-8 text-xs">
-                  <SelectValue placeholder="Timeframe" />
+                  <SelectDisplay
+                    value={dateFilter}
+                    placeholder="Timeframe"
+                    options={DATE_FILTER_OPTIONS}
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Time</SelectItem>
@@ -1178,7 +1212,10 @@ export function WalletView({
                   }}
                 >
                   <SelectTrigger size="sm" className="h-7 w-16 text-xs">
-                    <SelectValue />
+                    <SelectDisplay
+                      value={String(pageSize)}
+                      options={PAGE_SIZE_OPTIONS.map((opt) => ({ value: String(opt), label: String(opt) }))}
+                    />
                   </SelectTrigger>
                   <SelectContent>
                     {PAGE_SIZE_OPTIONS.map((opt) => (

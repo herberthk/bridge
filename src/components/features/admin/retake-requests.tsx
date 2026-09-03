@@ -36,15 +36,21 @@ import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
+  SelectDisplay,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from "@/components/ui/select";
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
 type SortField = "createdAt" | "student" | "exam";
 type SortDir = "asc" | "desc";
+
+const SORT_FIELD_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
+  { value: "createdAt", label: "Sort by date" },
+  { value: "student", label: "Sort by student" },
+  { value: "exam", label: "Sort by exam" },
+];
 
 // ─── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -297,7 +303,10 @@ export function RetakeRequests({
           {/* Sort */}
           <Select value={sortField} onValueChange={(v) => { setSortField(v as SortField); setSortDir("desc"); }}>
             <SelectTrigger className="w-42.5">
-              <SelectValue />
+              <SelectDisplay
+                value={sortField}
+                options={SORT_FIELD_OPTIONS}
+              />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="createdAt">Sort by date</SelectItem>

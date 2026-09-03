@@ -166,6 +166,22 @@ export async function createStudent(
     level = cls.level;
     classLevel = cls.classLevel;
     secondarySubLevel = cls.secondarySubLevel;
+  } else if (actor.role === "teacher") {
+    // A class-less student belongs to no class the teacher manages — and the
+    // standalone dialog always offers one of their assigned classes — so a
+    // class-less teacher request is a stale form or a forged call.
+    throw new UsersServiceError(
+      "Choose one of your assigned classes for the new student.",
+      403,
+    );
+  } else if (actor.role === "admin" && actor.schoolId) {
+    // Same class-first rule for school admins: every entry point offers a
+    // class of their school. (Super admins and school-less admins keep the
+    // class-less path.)
+    throw new UsersServiceError(
+      "Choose a class of your school for the new student.",
+      403,
+    );
   }
 
   const student = await provisionUser(actor, {
