@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useRef, useState } from "react";
 import {
   CheckIcon,
   CircleCheckIcon,
@@ -92,11 +92,13 @@ export function CreateStudentDialog({
   fixedClassId,
   fixedClassName,
   triggerLabel = "Add student",
+  disabled = false,
 }: {
   classes: CreatableClass[];
   fixedClassId?: string;
   fixedClassName?: string;
   triggerLabel?: string;
+  disabled?: boolean;
 }) {
   const pinned = Boolean(fixedClassId);
   const [open, setOpen] = useState(false);
@@ -106,6 +108,7 @@ export function CreateStudentDialog({
   const [showPassword, setShowPassword] = useState(false);
   const [classId, setClassId] = useState("");
   const [created, setCreated] = useState<CreatedSnapshot | null>(null);
+  const submittedRef = useRef<CreatedSnapshot | null>(null);
   const [state, formAction, pending] = useActionState<ActionState | null, FormData>(
     createStudentAction,
     null,
@@ -118,16 +121,7 @@ export function CreateStudentDialog({
     created
       ? undefined
       : () => {
-          const activeClassId = fixedClassId ?? classId;
-          const className =
-            (fixedClassId ? fixedClassName : classes.find((c) => c.id === activeClassId)?.name) ??
-            "their class";
-          setCreated({
-            displayName: displayName.trim(),
-            email: email.trim(),
-            password,
-            className,
-          });
+          if (submittedRef.current) setCreated(submittedRef.current);
         },
     "Student created",
   );
@@ -139,6 +133,7 @@ export function CreateStudentDialog({
     setShowPassword(false);
     setClassId("");
     setCreated(null);
+    submittedRef.current = null;
   };
 
   const handleOpenChange = (next: boolean) => {
@@ -154,9 +149,29 @@ export function CreateStudentDialog({
     password.length >= 10 &&
     (pinned || classId !== "");
 
+  const selectedClassName =
+    (fixedClassId ? fixedClassName : classes.find((c) => c.id === classId)?.name) ??
+    "their class";
+
+  const handleFormAction = (formData: FormData) => {
+    const snapshot = {
+      displayName: String(formData.get("displayName") ?? "").trim(),
+      email: String(formData.get("email") ?? "").trim(),
+      password: String(formData.get("password") ?? "").trim(),
+      className: String(formData.get("className") ?? "").trim(),
+    } satisfies CreatedSnapshot;
+
+    // Keep the dispatched credentials identical to the success snapshot.
+    formData.set("displayName", snapshot.displayName);
+    formData.set("email", snapshot.email);
+    formData.set("password", snapshot.password);
+    submittedRef.current = snapshot;
+    formAction(formData);
+  };
+
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogTrigger render={<Button className="shadow-glow" />}>
+      <DialogTrigger render={<Button className="shadow-glow" disabled={disabled} />}>
         <PlusIcon data-icon="inline-start" />
         {triggerLabel}
       </DialogTrigger>
@@ -241,9 +256,10 @@ export function CreateStudentDialog({
                 </div>
               </div>
             </DialogHeader>
-            <form action={formAction} className="mt-4">
+            <form action={handleFormAction} className="mt-4">
               <FieldGroup>
                 <input type="hidden" name="classId" value={fixedClassId ?? classId} />
+                <input type="hidden" name="className" value={selectedClassName} />
                 {pinned ? (
                   <div className="flex items-center justify-between gap-3 rounded-xl border bg-muted/40 px-3.5 py-2.5">
                     <span className="text-sm font-semibold">{fixedClassName ?? "This class"}</span>

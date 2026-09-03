@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/select";
 import { Pagination } from "@/components/features/super/pagination";
 import { parseDate } from "@/lib/serialize";
+import { normalizeDirectorySchool, normalizeDirectoryStatus } from "@/lib/directory-filters";
 
 export interface DirectorySchoolOption {
   id: string;
@@ -63,8 +64,8 @@ export function DirectoryToolbar({
 }) {
   const { params, setParam } = useDirectoryNav();
   const search = params.get("q") ?? "";
-  const schoolFilter = params.get("school");
-  const statusFilter = params.get("status");
+  const schoolFilter = normalizeDirectorySchool(params.get("school"), schools) ?? "all";
+  const statusFilter = normalizeDirectoryStatus(params.get("status")) ?? "all";
   const [value, setValue] = useState(search);
 
   return (
@@ -99,12 +100,12 @@ export function DirectoryToolbar({
       </form>
       <div className="flex gap-2">
         <Select
-          value={schoolFilter ?? "all"}
+          value={schoolFilter}
           onValueChange={(v) => setParam({ school: v === "all" ? null : v })}
         >
           <SelectTrigger className="w-44">
             <SelectDisplay
-              value={schoolFilter ?? "all"}
+              value={schoolFilter}
               placeholder="All schools"
               options={[
                 { value: "all", label: "All schools" },
@@ -123,12 +124,12 @@ export function DirectoryToolbar({
         </Select>
         {showStatus && (
           <Select
-            value={statusFilter ?? "all"}
+            value={statusFilter}
             onValueChange={(v) => setParam({ status: v === "all" ? null : v })}
           >
             <SelectTrigger className="w-36">
               <SelectDisplay
-                value={statusFilter ?? "all"}
+                value={statusFilter}
                 placeholder="Any status"
                 options={STATUS_FILTER_OPTIONS}
               />

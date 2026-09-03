@@ -12,31 +12,47 @@ export default async function TeacherStudentsPage() {
 
   let students: WithId<UserDoc>[] = [];
   let classes: WithId<ClassDoc>[] = [];
-  let loadFailed = false;
-  try {
-    // listClasses is assigned-only for teachers — the dialog can only offer
-    // those classes, matching the server-side creation rule.
-    [students, classes] = await Promise.all([
-      listStudents(actor),
-      listClasses(actor).catch(() => []),
-    ]);
-  } catch (err) {
-    console.error("[teacher/students] load failed", err);
-    loadFailed = true;
+  let studentLoadFailed = false;
+  let classLoadFailed = false;
+
+  // listClasses is assigned-only for teachers — the dialog can only offer
+  // those classes, matching the server-side creation rule.
+  const [studentsResult, classesResult] = await Promise.allSettled([
+    listStudents(actor),
+    listClasses(actor),
+  ]);
+
+  if (studentsResult.status === "fulfilled") {
+    students = studentsResult.value;
+  } else {
+    console.error("[teacher/students] student list failed", studentsResult.reason);
+    studentLoadFailed = true;
+  }
+  if (classesResult.status === "fulfilled") {
+    classes = classesResult.value;
+  } else {
+    console.error("[teacher/students] class list failed", classesResult.reason);
+    classLoadFailed = true;
   }
 
   return (
     <div className="flex flex-col gap-6">
-      {loadFailed && (
+      {studentLoadFailed && (
         <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive shadow-xs">
           <p className="font-medium">Failed to load students</p>
+        </div>
+      )}
+      {classLoadFailed && (
+        <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive shadow-xs">
+          <p className="font-medium">Failed to load classes. Student enrollment is unavailable.</p>
         </div>
       )}
       <StudentsTable
         students={serializeDocs(students)}
         viewerRole="teacher"
         total={students.length}
-        classes={serializeDocs(classes)}
+        classes={classes.map(({ id, name }) => ({ id, name }))}
+        classLoadFailed={classLoadFailed}
       />
     </div>
   );

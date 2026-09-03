@@ -313,6 +313,20 @@ export function ExamLibrary({
     return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1]));
   }, [processedExams]);
 
+  const availableSubjectKey = JSON.stringify(availableSubjects.map(([subject]) => subject));
+  const [previousAvailableSubjectKey, setPreviousAvailableSubjectKey] =
+    useState(availableSubjectKey);
+  if (availableSubjectKey !== previousAvailableSubjectKey) {
+    setPreviousAvailableSubjectKey(availableSubjectKey);
+    if (
+      subjectFilter !== "all" &&
+      !availableSubjects.some(([subject]) => subject === subjectFilter)
+    ) {
+      setSubjectFilter("all");
+      setCurrentPage(1);
+    }
+  }
+
   // Overall KPI statistics
   const stats = useMemo(() => {
     let activeOrScheduled = 0;

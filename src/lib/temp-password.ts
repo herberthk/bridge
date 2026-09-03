@@ -15,6 +15,9 @@ function pick(alphabet: string): string {
  * a password read off a screen still types correctly.
  */
 export function generateTempPassword(length = 12): string {
+  if (!Number.isFinite(length)) {
+    throw new RangeError("Temporary password length must be finite.");
+  }
   const chars = [pick(LOWER), pick(UPPER), pick(DIGITS)];
   const all = LOWER + UPPER + DIGITS;
   while (chars.length < Math.max(length, 10)) chars.push(pick(all));

@@ -17,6 +17,13 @@ describe("generateTempPassword", () => {
     expect(generateTempPassword(4)).toHaveLength(10);
   });
 
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    "rejects non-finite length %s",
+    (length) => {
+      expect(() => generateTempPassword(length)).toThrow(RangeError);
+    },
+  );
+
   it("excludes ambiguous glyphs that mistype off a screen", () => {
     for (let i = 0; i < 25; i += 1) {
       expect(generateTempPassword(32)).not.toMatch(/[0O1lI]/);

@@ -343,6 +343,7 @@ export function StudentsTable({
   fixedClassId,
   fixedClassName,
   classes = [],
+  classLoadFailed = false,
 }: {
   students: SerializedWithId<UserDoc>[];
   viewerRole: Role;
@@ -357,6 +358,8 @@ export function StudentsTable({
    * by the caller (assigned-only for teachers, whole school for admins).
    */
   classes?: CreatableClass[];
+  /** Disables standalone enrollment when the available classes could not load. */
+  classLoadFailed?: boolean;
 }) {
   // ── Filter / search ──────────────────────────────────────────────────────────
   const [query, setQuery] = useState("");
@@ -457,6 +460,7 @@ export function StudentsTable({
           classes={classes}
           fixedClassId={fixedClassId}
           fixedClassName={fixedClassName}
+          disabled={classLoadFailed && !fixedClassId}
         />
       </div>
 
