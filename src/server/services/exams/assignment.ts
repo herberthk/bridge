@@ -5,6 +5,7 @@ import {
   attemptsCol,
   classDoc,
   examDoc,
+  userDoc,
   usersCol,
 } from "@/server/firebase/collections";
 import { writeAudit } from "@/server/services/audit";
@@ -12,10 +13,39 @@ import { notifyUsers } from "@/server/services/notifications";
 import { formatExpiry, isExamExpired } from "@/lib/exam/expiry";
 import { isAssignGated, readReview, reviewProgress } from "@/lib/exam/review";
 import type { SessionUser } from "@/server/auth/session";
-import type { AttemptDoc, ExamDoc, WriteModel } from "@/types/firestore";
+import type { AttemptDoc, ExamDoc, UserDoc, WriteModel } from "@/types/firestore";
+import { MAX_UNASSIGN_STUDENTS } from "@/lib/schemas/exam";
 import type { AssignExamInput, UnassignExamInput } from "@/lib/schemas/exam";
 import { ExamsServiceError } from "./errors";
 import { getExamForActor } from "./library";
+
+function isStudentInLockedExamScope(
+  student: UserDoc | undefined,
+  actor: SessionUser,
+  exam: Pick<ExamDoc, "classId">,
+): boolean {
+  if (!student || student.role !== "student") return false;
+  if (
+    (actor.role === "admin" || actor.role === "teacher") &&
+    actor.schoolId &&
+    student.schoolId !== actor.schoolId
+  ) {
+    return false;
+  }
+  if (actor.role === "admin" && !actor.schoolId && student.createdBy !== actor.uid) {
+    return false;
+  }
+  return !exam.classId || student.classId === exam.classId;
+}
+
+function studentScopeError(rejectedCount: number, classId: string | null): ExamsServiceError {
+  return new ExamsServiceError(
+    classId
+      ? `${rejectedCount} selected student(s) are not in this exam's class.`
+      : `${rejectedCount} selected student(s) are not in your school.`,
+    403,
+  );
+}
 
 /** Returns student IDs who already have an attempt for this exam */
 export async function getAssignedStudentIdsForExam(
@@ -135,12 +165,7 @@ export async function assignExam(
   );
   const rejected = input.studentIds.filter((id) => !allowedIds.has(id));
   if (rejected.length > 0) {
-    throw new ExamsServiceError(
-      exam.classId
-        ? `${rejected.length} selected student(s) are not in this exam's class.`
-        : `${rejected.length} selected student(s) are not in your school.`,
-      403,
-    );
+    throw studentScopeError(rejected.length, exam.classId);
   }
 
   let scheduledAt: Timestamp | null = null;
@@ -188,6 +213,19 @@ export async function assignExam(
       }
     }
     const gated = assertReviewGate(lockedExam);
+
+    // The indexed lookup above is only a fast preflight. Re-read each selected
+    // student in the transaction so a role, school or class change cannot race
+    // the attempt creation.
+    const lockedStudentSnaps = await Promise.all(
+      input.studentIds.map((studentId) => tx.get(userDoc(studentId))),
+    );
+    const rejectedStudents = lockedStudentSnaps.filter(
+      (snap) => !snap.exists || !isStudentInLockedExamScope(snap.data(), actor, lockedExam),
+    );
+    if (rejectedStudents.length > 0) {
+      throw studentScopeError(rejectedStudents.length, lockedExam.classId);
+    }
 
     // Skip students who already have an open/unfinished attempt for this exam.
     // These reads share the transaction with the writes, preventing two concurrent
@@ -347,6 +385,12 @@ export async function unassignExam(
   if (studentIds.length === 0) {
     throw new ExamsServiceError("Select at least one student.", 400);
   }
+  if (studentIds.length > MAX_UNASSIGN_STUDENTS) {
+    throw new ExamsServiceError(
+      `Select no more than ${MAX_UNASSIGN_STUDENTS} students at a time.`,
+      400,
+    );
+  }
   const examSnap = await examDoc(input.examId).get();
   if (!examSnap.exists) throw new ExamsServiceError("Exam not found.", 404);
   const exam = examSnap.data()!;
@@ -398,12 +442,7 @@ export async function unassignExam(
   );
   const rejected = studentIds.filter((id) => !allowedIds.has(id));
   if (rejected.length > 0) {
-    throw new ExamsServiceError(
-      exam.classId
-        ? `${rejected.length} selected student(s) are not in this exam's class.`
-        : `${rejected.length} selected student(s) are not in your school.`,
-      403,
-    );
+    throw studentScopeError(rejected.length, exam.classId);
   }
 
   const result = await adminDb().runTransaction(async (tx) => {
@@ -434,6 +473,19 @@ export async function unassignExam(
       }
     }
 
+    // Treat the query above as preflight only. Membership can change before
+    // this transaction starts, so lock every selected student's current scope
+    // before reading attempts or queuing deletes.
+    const lockedStudentSnaps = await Promise.all(
+      studentIds.map((studentId) => tx.get(userDoc(studentId))),
+    );
+    const rejectedStudents = lockedStudentSnaps.filter(
+      (snap) => !snap.exists || !isStudentInLockedExamScope(snap.data(), actor, lockedExam),
+    );
+    if (rejectedStudents.length > 0) {
+      throw studentScopeError(rejectedStudents.length, lockedExam.classId);
+    }
+
     // All reads complete before any delete below, so they fan out concurrently.
     const attemptSnaps = await Promise.all(
       chunks.map((chunk) =>
@@ -446,16 +498,24 @@ export async function unassignExam(
     );
     const removedIds: string[] = [];
     const attemptedIds = new Set<string>();
+    const pendingAttempts: Array<(typeof attemptSnaps)[number]["docs"][number]> = [];
     for (const snap of attemptSnaps) {
       for (const d of snap.docs) {
         const attempt = d.data();
         attemptedIds.add(attempt.studentId);
         if (attempt.status === "pending") {
-          tx.delete(d.ref);
+          pendingAttempts.push(d);
           removedIds.push(attempt.studentId);
         }
       }
     }
+    if (pendingAttempts.length > MAX_UNASSIGN_STUDENTS) {
+      throw new ExamsServiceError(
+        `Too many pending assignments to withdraw at once; select no more than ${MAX_UNASSIGN_STUDENTS} students.`,
+        400,
+      );
+    }
+    pendingAttempts.forEach((attempt) => tx.delete(attempt.ref));
     // Started, submitted, graded, or flagged attempts stay — only students
     // with no pending attempt left are reported as skipped when they had
     // something on record.

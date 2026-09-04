@@ -147,6 +147,17 @@ describe("repairMath: piecewise definitions", () => {
     expect(out).not.toContain("0 \\le x \\le 2 otherwise Determine");
   });
 
+  it("separates a trailing plain else condition across multiple orphaned rows", () => {
+    const broken =
+      "$f(x) = \\begin{cases} -1, \\\\ 0, \\\\ 1, \\end{cases}$ " +
+      "x < 0; 0 \\le x < 1 else";
+    const out = repairMath(broken);
+
+    expect(out).toContain("-1 & x < 0");
+    expect(out).toContain("0 & 0 \\le x < 1");
+    expect(out).toContain("1 & \\text{else}");
+  });
+
   it("recovers bare-brace piecewise with row breaks and orphaned conditions", () => {
     const broken =
       "A continuous random variable $X$ has pdf: $f(x) = {kx(2-x), \\\\ 0,}$ " +

@@ -328,27 +328,32 @@ export function AssignExamDialog({
     if (ids.length === 0 || unassigning) return;
     setUnassigning(true);
     startTransition(async () => {
-      const res = await unassignExamAction(exam.id, ids);
-      setUnassigning(false);
-      if (!res.ok) {
-        toast.error(res.error ?? "Could not withdraw the exam. Please try again.");
-        return;
-      }
-      const removed = res.removedIds ?? [];
-      const skipped = res.skippedIds ?? [];
-      setLocalAssignedIds((prev) => prev.filter((id) => !removed.includes(id)));
-      setSelected((prev) => prev.filter((id) => !removed.includes(id)));
-      setPendingUnassign((prev) => prev.filter((id) => !removed.includes(id)));
-      if (removed.length > 0) {
-        toast.success(
-          `Exam withdrawn from ${removed.length} student${removed.length === 1 ? "" : "s"}.`,
-        );
-      }
-      if (skipped.length > 0) {
-        toast.info(
-          `${skipped.length} student${skipped.length === 1 ? "" : "s"} already started — kept. Only pending assignments are withdrawn.`,
-          { duration: 8000 },
-        );
+      try {
+        const res = await unassignExamAction(exam.id, ids);
+        if (!res.ok) {
+          toast.error(res.error ?? "Could not withdraw the exam. Please try again.");
+          return;
+        }
+        const removed = res.removedIds ?? [];
+        const skipped = res.skippedIds ?? [];
+        setLocalAssignedIds((prev) => prev.filter((id) => !removed.includes(id)));
+        setSelected((prev) => prev.filter((id) => !removed.includes(id)));
+        setPendingUnassign((prev) => prev.filter((id) => !removed.includes(id)));
+        if (removed.length > 0) {
+          toast.success(
+            `Exam withdrawn from ${removed.length} student${removed.length === 1 ? "" : "s"}.`,
+          );
+        }
+        if (skipped.length > 0) {
+          toast.info(
+            `${skipped.length} student${skipped.length === 1 ? "" : "s"} already started — kept. Only pending assignments are withdrawn.`,
+            { duration: 8000 },
+          );
+        }
+      } catch {
+        toast.error("Could not withdraw the exam. Please try again.");
+      } finally {
+        setUnassigning(false);
       }
     });
   }, [pendingUnassign, unassigning, exam.id]);

@@ -41,6 +41,7 @@ export function isStudentInExamScope(
     assignedIds instanceof Set ? assignedIds : new Set(assignedIds ?? []);
   if (assigned.has(student.id)) return true;
   if (exam.classId) return student.classId === exam.classId;
+  if (exam.params.level === null || exam.params.classLevel === null) return false;
   return (
     student.level === exam.params.level &&
     student.classLevel === exam.params.classLevel

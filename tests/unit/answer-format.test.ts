@@ -26,6 +26,13 @@ describe("continueListOnEnter", () => {
     expect(out?.text).toBe("1. first\n2. second\n3. ");
   });
 
+  it.each([
+    ["999. item", "999. item\n1000. "],
+    ["1000. item", "1000. item\n1001. "],
+  ])("increments large numbered markers in %s", (value, expected) => {
+    expect(continueListOnEnter(value, value.length)?.text).toBe(expected);
+  });
+
   it("supports the 1) delimiter style", () => {
     const value = "1) first";
     const out = continueListOnEnter(value, value.length);

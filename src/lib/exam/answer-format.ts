@@ -16,7 +16,7 @@ export interface ListContinuation {
 }
 
 const BULLET_RE = /^(\s*)([-*•])(\s+)/;
-const NUMBERED_RE = /^(\s*)(\d{1,3})([.)])(\s+)/;
+const NUMBERED_RE = /^(\s*)(\d+)([.)])(\s+)/;
 
 /**
  * What pressing Enter at `caret` (a collapsed cursor) should do.
@@ -50,7 +50,7 @@ export function continueListOnEnter(value: string, caret: number): ListContinuat
   }
 
   const marker = numbered
-    ? `${indent}${Math.min(Number(numbered[2]), 999) + 1}${numbered[3]} `
+    ? `${indent}${Number(numbered[2]) + 1}${numbered[3]} `
     : `${indent}${bullet![2]} `;
   const insertAt = safeCaret;
   return {
@@ -69,7 +69,7 @@ export function continueListOnEnter(value: string, caret: number): ListContinuat
 export function shouldPreviewAnswer(value: string): boolean {
   if (!value.trim()) return false;
   if (value.includes("\n")) return true;
-  if (/(^|\n)\s*([-*•]|\d{1,3}[.)])\s+\S/.test(value)) return true;
+  if (/(^|\n)\s*([-*•]|\d+[.)])\s+\S/.test(value)) return true;
   return value.includes("$");
 }
 

@@ -62,4 +62,13 @@ describe("isStudentInExamScope", () => {
       isStudentInExamScope({ ...student, classLevel: 2 }, legacy),
     ).toBe(false);
   });
+
+  it("rejects class-less exams without complete legacy grade targets", () => {
+    expect(
+      isStudentInExamScope(student, {
+        classId: null,
+        params: { level: null, classLevel: null },
+      }),
+    ).toBe(false);
+  });
 });

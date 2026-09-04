@@ -412,7 +412,7 @@ function rewriteMathSpans(text: string): string {
 function extractConditions(trailingText: string): string[] {
   const normalized = trailingText.replace(/\$/g, "\n");
   const out: string[] = [];
-  const splitter = /(\botherwise\b|\belsewhere\b|\\text\s*\{\s*(?:otherwise|elsewhere|else)[^}]*\})/i;
+  const splitter = /(\botherwise\b|\belsewhere\b|\belse\b|\\text\s*\{\s*(?:otherwise|elsewhere|else)[^}]*\})/i;
   for (const chunk of normalized.split(/[\n,;]+/)) {
     for (const part of chunk.split(splitter)) {
       const s = part.trim();

@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   attemptsCol: vi.fn(),
   classDoc: vi.fn(),
   examDoc: vi.fn(),
+  userDoc: vi.fn(),
   usersCol: vi.fn(),
   writeAudit: vi.fn(),
   notifyUsers: vi.fn(),
@@ -17,6 +18,7 @@ vi.mock("@/server/firebase/collections", () => ({
   attemptsCol: mocks.attemptsCol,
   classDoc: mocks.classDoc,
   examDoc: mocks.examDoc,
+  userDoc: mocks.userDoc,
   usersCol: mocks.usersCol,
 }));
 vi.mock("@/server/services/audit", () => ({ writeAudit: mocks.writeAudit }));
@@ -27,8 +29,9 @@ vi.mock("@/server/services/exams/library", () => ({
 
 import { assignExam, unassignExam } from "@/server/services/exams/assignment";
 import { ExamsServiceError } from "@/server/services/exams/errors";
+import { MAX_UNASSIGN_STUDENTS } from "@/lib/schemas/exam";
 import type { SessionUser } from "@/server/auth/session";
-import type { AttemptDoc, ExamDoc } from "@/types/firestore";
+import type { AttemptDoc, ExamDoc, UserDoc } from "@/types/firestore";
 
 const actor: SessionUser = {
   uid: "admin-1",
@@ -60,11 +63,22 @@ function input(scheduledFor: string | null) {
   };
 }
 
+function student(overrides: Partial<UserDoc> = {}): UserDoc {
+  return {
+    role: "student",
+    schoolId: "school-1",
+    classId: "class-1",
+    createdBy: "admin-1",
+    ...overrides,
+  } as UserDoc;
+}
+
 function setup(
   preflight: ExamDoc,
   locked = preflight,
   existing: AttemptDoc[] = [],
   allowedIds: string[] = ["student-1"],
+  lockedStudentOverrides: Record<string, Partial<UserDoc> | null> = {},
 ) {
   const examRef = { get: vi.fn().mockResolvedValue({ exists: true, data: () => preflight }) };
   mocks.examDoc.mockReturnValue(examRef);
@@ -75,6 +89,15 @@ function setup(
   };
   userQuery.where.mockReturnValue(userQuery);
   mocks.usersCol.mockReturnValue(userQuery);
+
+  const userRefs = new Map<string, { kind: "user"; id: string }>();
+  mocks.userDoc.mockImplementation((id: string) => {
+    const existingRef = userRefs.get(id);
+    if (existingRef) return existingRef;
+    const ref = { kind: "user" as const, id };
+    userRefs.set(id, ref);
+    return ref;
+  });
 
   const clauses: Array<[string, string, unknown]> = [];
   const attemptsQuery = {
@@ -96,6 +119,14 @@ function setup(
       > =>
         target === examRef
           ? { exists: true, data: () => locked }
+          : (target as { kind?: string }).kind === "user"
+            ? lockedStudentOverrides[(target as { id: string }).id] === null
+              ? { exists: false, data: () => undefined }
+              : {
+                  exists: true,
+                  data: () =>
+                    student(lockedStudentOverrides[(target as { id: string }).id] ?? {}),
+                }
           : {
               docs: existing.map((attempt, i) => ({
                 ref: { id: `attempt-${i}` },
@@ -209,6 +240,21 @@ describe("assignExam class scope", () => {
     const fields = userQuery.where.mock.calls.map(([field]) => field);
     expect(fields).not.toContain("classId");
   });
+
+  it("rejects a student whose role changes after preflight", async () => {
+    const { tx } = setup(
+      exam(Timestamp.fromMillis(Date.now() + 60_000)),
+      undefined,
+      [],
+      ["student-1"],
+      { "student-1": { role: "teacher" } },
+    );
+
+    const error = await assignmentError(assignExam(actor, input(null)));
+
+    expect(error.status).toBe(403);
+    expect(tx.create).not.toHaveBeenCalled();
+  });
 });
 
 describe("assignExam teacher class membership", () => {
@@ -281,6 +327,26 @@ describe("unassignExam", () => {
     expect(error.message).toContain("not in this exam's class");
   });
 
+  it.each([
+    ["role", { role: "teacher" }],
+    ["school", { schoolId: "school-2" }],
+    ["class", { classId: "class-2" }],
+  ] satisfies Array<[string, Partial<UserDoc>]>)
+    ("rejects a student whose %s changes after preflight", async (_field, overrides) => {
+      const { tx } = setup(
+        exam(Timestamp.fromMillis(Date.now() + 60_000)),
+        undefined,
+        [pending("student-1")],
+        ["student-1"],
+        { "student-1": overrides },
+      );
+
+      const error = await assignmentError(unassignExam(actor, uinput(["student-1"])));
+
+      expect(error.status).toBe(403);
+      expect(tx.delete).not.toHaveBeenCalled();
+    });
+
   it("rejects a teacher who is not assigned to the exam's class", async () => {
     setup(exam(Timestamp.fromMillis(Date.now() + 60_000)));
     mocks.classDoc.mockReturnValue({
@@ -309,6 +375,20 @@ describe("unassignExam", () => {
     const error = await assignmentError(unassignExam(actor, uinput([])));
 
     expect(error.status).toBe(400);
+  });
+
+  it("rejects selections too large for one bounded transaction", async () => {
+    const { runTransaction } = setup(exam(Timestamp.fromMillis(Date.now() + 60_000)));
+    const ids = Array.from(
+      { length: MAX_UNASSIGN_STUDENTS + 1 },
+      (_, index) => `student-${index}`,
+    );
+
+    const error = await assignmentError(unassignExam(actor, uinput(ids)));
+
+    expect(error.status).toBe(400);
+    expect(error.message).toContain(`no more than ${MAX_UNASSIGN_STUDENTS}`);
+    expect(runTransaction).not.toHaveBeenCalled();
   });
 });
 
