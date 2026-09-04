@@ -8,7 +8,6 @@ import {
   CheckCircle2Icon,
   CheckSquare2Icon,
   ClipboardCheckIcon,
-  FilterIcon,
   SearchIcon,
   SendIcon,
   SparklesIcon,
@@ -20,9 +19,11 @@ import {
 import {
   assignExamAction,
   getAssignedStudentIdsAction,
+  unassignExamAction,
   type ActionState,
 } from "@/app/admin/actions";
 import { SUBJECT_LABELS } from "@/lib/constants";
+import { isStudentInExamScope } from "@/lib/exam/assignment-scope";
 import { reviewProgress } from "@/lib/exam/review";
 import type { SerializedWithId } from "@/lib/serialize";
 import type { ExamDoc, UserDoc } from "@/types/firestore";
@@ -45,7 +46,12 @@ import { cn } from "@/lib/utils";
 
 /**
  * Assign an exam to students — modern, high-performance modal with smart pre-selection,
- * class matching intelligence, responsive non-clipped layout, and real-time filtering.
+ * hard class scoping, responsive non-clipped layout, and real-time filtering.
+ *
+ * The roster is restricted to the exam's own class (exact `classId` match), so a
+ * paper generated for Senior One can never be handed to Senior Two students —
+ * for teachers and admins alike. Students already assigned stay visible even if
+ * they have since moved class, so earlier work never vanishes from the list.
  */
 export function AssignExamDialog({
   exam,
@@ -121,6 +127,11 @@ export function AssignExamDialog({
   // Selection state
   const [selected, setSelected] = useState<string[]>(() => localAssignedIds);
 
+  // Assigned students the staffer has unchecked: staged for withdrawal, not
+  // removed until the warning banner's Continue is pressed.
+  const [pendingUnassign, setPendingUnassign] = useState<string[]>([]);
+  const [unassigning, setUnassigning] = useState(false);
+
   // When dialog opens or assigned students update, ensure already assigned students are checked
   useEffect(() => {
     if (open && localAssignedIds.length > 0) {
@@ -137,7 +148,6 @@ export function AssignExamDialog({
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "unassigned" | "assigned">("all");
-  const [classFilter, setClassFilter] = useState<"all" | "matching">("all");
 
   // Review override acknowledgment
   const [acknowledged, setAcknowledged] = useState(false);
@@ -148,9 +158,18 @@ export function AssignExamDialog({
     null,
   );
 
+  // Hard class scope: only the exam's own class is ever listed, selectable,
+  // or counted here. The `students` prop still carries the school roster (the
+  // library shares one list across many exams), so the restriction lives at the
+  // point of selection rather than the point of fetch.
+  const scopedStudents = useMemo(
+    () => students.filter((s) => isStudentInExamScope(s, exam, assignedSet)),
+    [students, exam, assignedSet],
+  );
+
   const activeStudents = useMemo(
-    () => students.filter((s) => s.status === "active"),
-    [students],
+    () => scopedStudents.filter((s) => s.status === "active"),
+    [scopedStudents],
   );
 
   // Helper to check if a student matches the exam's exact class level
@@ -222,12 +241,9 @@ export function AssignExamDialog({
       if (statusFilter === "unassigned" && isAssigned) return false;
       if (statusFilter === "assigned" && !isAssigned) return false;
 
-      // Class filter
-      if (classFilter === "matching" && !matchesExamClass(s)) return false;
-
       return true;
     });
-  }, [activeStudents, searchQuery, statusFilter, classFilter, assignedSet, matchesExamClass]);
+  }, [activeStudents, searchQuery, statusFilter, assignedSet]);
 
   // Counts for UI indicators
   const totalAssignedCount = useMemo(
@@ -272,17 +288,75 @@ export function AssignExamDialog({
     toast.info("Cleared unassigned selections.");
   }, [assignedSet]);
 
-  // Toggle individual student checkbox
+  // Toggle individual student checkbox. Unchecking an already-assigned
+  // student does not remove them immediately — it stages them for withdrawal
+  // and raises the warning banner; re-checking cancels the staging.
   const toggleStudent = useCallback(
     (studentId: string) => {
+      const wasAssigned = assignedSet.has(studentId);
       setSelected((prev) =>
         prev.includes(studentId)
           ? prev.filter((id) => id !== studentId)
           : [...prev, studentId],
       );
+      if (wasAssigned) {
+        setPendingUnassign((prev) =>
+          prev.includes(studentId)
+            ? prev.filter((id) => id !== studentId)
+            : [...prev, studentId],
+        );
+      }
     },
-    [],
+    [assignedSet],
   );
+
+  // Students staged for withdrawal, with names for the warning banner.
+  const pendingUnassignStudents = useMemo(
+    () => scopedStudents.filter((s) => pendingUnassign.includes(s.id)),
+    [scopedStudents, pendingUnassign],
+  );
+
+  // Dismiss the banner and restore every staged checkbox.
+  const cancelUnassign = useCallback(() => {
+    setSelected((prev) => Array.from(new Set([...prev, ...pendingUnassign])));
+    setPendingUnassign([]);
+  }, [pendingUnassign]);
+
+  // Confirmed in the banner: delete pending attempts, keep started ones.
+  const confirmUnassign = useCallback(() => {
+    const ids = pendingUnassign;
+    if (ids.length === 0 || unassigning) return;
+    setUnassigning(true);
+    startTransition(async () => {
+      try {
+        const res = await unassignExamAction(exam.id, ids);
+        if (!res.ok) {
+          toast.error(res.error ?? "Could not withdraw the exam. Please try again.");
+          return;
+        }
+        const removed = res.removedIds ?? [];
+        const skipped = res.skippedIds ?? [];
+        setLocalAssignedIds((prev) => prev.filter((id) => !removed.includes(id)));
+        setSelected((prev) => prev.filter((id) => !removed.includes(id)));
+        setPendingUnassign((prev) => prev.filter((id) => !removed.includes(id)));
+        if (removed.length > 0) {
+          toast.success(
+            `Exam withdrawn from ${removed.length} student${removed.length === 1 ? "" : "s"}.`,
+          );
+        }
+        if (skipped.length > 0) {
+          toast.info(
+            `${skipped.length} student${skipped.length === 1 ? "" : "s"} already started — kept. Only pending assignments are withdrawn.`,
+            { duration: 8000 },
+          );
+        }
+      } catch {
+        toast.error("Could not withdraw the exam. Please try again.");
+      } finally {
+        setUnassigning(false);
+      }
+    });
+  }, [pendingUnassign, unassigning, exam.id]);
 
   // Class label helper (e.g. Primary P.7 or Secondary S.4)
   const formatClassBadge = (s: SerializedWithId<UserDoc>) => {
@@ -305,6 +379,11 @@ export function AssignExamDialog({
         if (!next) {
           setAcknowledged(false);
           setSearchQuery("");
+          // Discard any staged withdrawal and restore its checkboxes.
+          if (pendingUnassign.length > 0) {
+            setSelected((prev) => Array.from(new Set([...prev, ...pendingUnassign])));
+          }
+          setPendingUnassign([]);
         }
       }}
     >
@@ -404,6 +483,64 @@ export function AssignExamDialog({
               </div>
             )}
 
+            {/* ── Withdrawal Warning Banner ── */}
+            {pendingUnassignStudents.length > 0 && (
+              <div
+                role="alert"
+                className="flex gap-3 rounded-xl border border-rose-500/30 bg-rose-500/10 p-3.5 shadow-xs"
+              >
+                <TriangleAlertIcon className="mt-0.5 size-4 shrink-0 text-rose-600 dark:text-rose-400" />
+                <div className="flex min-w-0 flex-1 flex-col gap-2 text-sm">
+                  <p className="font-semibold text-rose-800 dark:text-rose-300 text-xs sm:text-sm">
+                    Withdraw “{exam.title}” from {pendingUnassignStudents.length} student
+                    {pendingUnassignStudents.length === 1 ? "" : "s"}?
+                  </p>
+                  <p className="text-xs text-rose-900/80 dark:text-rose-200/80 leading-relaxed">
+                    {pendingUnassignStudents
+                      .slice(0, 3)
+                      .map((s) => s.displayName || s.email || "Unnamed student")
+                      .join(", ")}
+                    {pendingUnassignStudents.length > 3 &&
+                      ` and ${pendingUnassignStudents.length - 3} more `}
+                    will lose access to this exam immediately. Only not-started
+                    assignments are removed — anything already started,
+                    submitted, or graded is never touched.
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={unassigning}
+                      onClick={confirmUnassign}
+                      className="h-7 bg-rose-600 text-xs text-white hover:bg-rose-700"
+                    >
+                      {unassigning ? (
+                        <>
+                          <Spinner className="size-3.5" />
+                          Withdrawing…
+                        </>
+                      ) : (
+                        <>
+                          Yes, withdraw {pendingUnassignStudents.length} student
+                          {pendingUnassignStudents.length === 1 ? "" : "s"}
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={unassigning}
+                      onClick={cancelUnassign}
+                      className="h-7 border-rose-500/30 bg-background/80 text-xs text-foreground hover:bg-background"
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* ── Student Search & Filter Controls ── */}
             <div className="flex flex-col gap-2.5 w-full min-w-0">
               {/* Search Bar & Quick Toggles */}
@@ -471,19 +608,12 @@ export function AssignExamDialog({
               {/* Class & Quick Select Actions Bar */}
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs w-full min-w-0">
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setClassFilter((prev) => (prev === "matching" ? "all" : "matching"))}
-                    className={cn(
-                      "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs border transition-colors",
-                      classFilter === "matching"
-                        ? "border-primary/40 bg-primary/10 text-primary font-medium"
-                        : "border-border/70 text-muted-foreground hover:text-foreground hover:bg-muted/50",
-                    )}
-                  >
-                    <FilterIcon className="size-3" />
+                  {/* Fixed scope — not a toggle: this exam belongs to
+                      {examClassLabel}, so no other class is selectable. */}
+                  <span className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                    <UsersIcon className="size-3" />
                     Only {examClassLabel} students
-                  </button>
+                  </span>
 
                   {matchingUnassignedStudents.length > 0 && (
                     <button
@@ -539,15 +669,39 @@ export function AssignExamDialog({
               <ScrollArea className="h-56 sm:h-64 w-full">
                 <div className="flex flex-col p-1.5 divide-y divide-border/40 w-full min-w-0">
                   {filteredStudents.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-10 px-4 text-center">
-                      <UsersIcon className="size-8 text-muted-foreground/40 mb-2" />
-                      <p className="text-sm font-medium text-foreground">No students found</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {searchQuery
-                          ? "Try a different search keyword or adjust filters."
-                          : "No active students available in this view."}
-                      </p>
-                    </div>
+                    activeStudents.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-10 px-4 text-center">
+                        <UsersIcon className="size-8 text-muted-foreground/40 mb-2" />
+                        <p className="text-sm font-medium text-foreground">
+                          No active {examClassLabel} students yet
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-0.5 max-w-70">
+                          This exam belongs to {examClassLabel}, and that class
+                          has no active students to assign. Add students to the
+                          class first, then come back.
+                        </p>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="mt-3 h-8 text-xs"
+                          render={<Link href={`${basePath}/students`} />}
+                        >
+                          <UsersIcon data-icon="inline-start" className="size-3.5" />
+                          Go to Students
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col items-center justify-center py-10 px-4 text-center">
+                        <UsersIcon className="size-8 text-muted-foreground/40 mb-2" />
+                        <p className="text-sm font-medium text-foreground">No students found</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {searchQuery
+                            ? "Try a different search keyword or adjust filters."
+                            : "No active students available in this view."}
+                        </p>
+                      </div>
+                    )
                   ) : (
                     filteredStudents.map((s) => {
                       const isAssigned = assignedSet.has(s.id);

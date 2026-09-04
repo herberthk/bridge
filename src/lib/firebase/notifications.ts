@@ -179,6 +179,7 @@ export async function markAllNotificationsRead(uid: string): Promise<void> {
 /** Icon key per notification type — the bell UI maps this to a lucide icon. */
 export const NOTIFICATION_ICONS: Record<NotificationType, string> = {
   exam_assigned: "exam",
+  exam_unassigned: "withdrawn",
   retake_approved: "approved",
   retake_rejected: "rejected",
   results_ready: "results",

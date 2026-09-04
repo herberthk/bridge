@@ -41,6 +41,7 @@ import {
 
 const TYPE_META: Record<NotificationType, { icon: typeof BellIcon; tone: string }> = {
   exam_assigned: { icon: BookOpenCheckIcon, tone: "text-indigo-500 bg-indigo-500/10" },
+  exam_unassigned: { icon: XCircleIcon, tone: "text-rose-500 bg-rose-500/10" },
   retake_approved: { icon: CheckCheckIcon, tone: "text-emerald-500 bg-emerald-500/10" },
   retake_rejected: { icon: XCircleIcon, tone: "text-rose-500 bg-rose-500/10" },
   results_ready: { icon: TrophyIcon, tone: "text-amber-500 bg-amber-500/10" },

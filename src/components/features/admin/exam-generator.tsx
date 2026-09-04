@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ReadonlyURLSearchParams } from "next/navigation";
 import { useForm, useWatch, Controller } from "react-hook-form";
@@ -122,6 +122,76 @@ interface PreviewQuestion {
 
 import type { z } from "zod";
 
+/**
+ * Memoized preview row.
+ *
+ * Perf: the wizard parent re-renders on every form keystroke (`useWatch`),
+ * but preview props are state-stable — `memo` skips the re-render and the
+ * KaTeX re-run inside each `Markdown`. `content-visibility: auto` lets the
+ * browser skip layout for offscreen rows until scrolled to.
+ */
+const PreviewQuestionRow = memo(function PreviewQuestionRow({
+  q,
+  index,
+}: {
+  q: PreviewQuestion;
+  index: number;
+}) {
+  return (
+    <li className="flex gap-3.5 p-4 transition-colors hover:bg-muted/20 sm:gap-4 sm:p-5 [content-visibility:auto] [contain-intrinsic-size:auto_140px]">
+      <span
+        aria-hidden
+        className="grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 text-[13px] font-bold tabular-nums text-primary"
+      >
+        {index + 1}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge variant="secondary" className="text-[11px] tabular-nums">
+            {q.points} {q.points === 1 ? "mark" : "marks"}
+          </Badge>
+          <Badge variant="outline" className="text-[11px] capitalize">
+            {q.type.replace(/_/g, " ")}
+          </Badge>
+          {q.visual ? (
+            <Badge variant="outline" className="text-[11px]">
+              Visual
+            </Badge>
+          ) : null}
+        </div>
+        {/* `prose-bridge`, not `prose prose-sm dark:prose-invert`:
+            `@tailwindcss/typography` is not installed, so every `prose-*`
+            class here was inert and the preview rendered with none of the
+            spacing the exam runner has. */}
+        <div className="mt-2 text-sm">
+          <Markdown className="prose-bridge">{q.prompt}</Markdown>
+        </div>
+        {q.visual ? <QuestionVisualView visual={q.visual} /> : null}
+        {q.options && q.options.length > 0 && (
+          <ul className="mt-3 grid gap-1.5 sm:grid-cols-2">
+            {q.options.map((opt, i) => (
+              <li
+                key={i}
+                className="flex items-start gap-2 rounded-lg border bg-muted/30 px-2.5 py-1.5 text-[13px] leading-relaxed"
+              >
+                <span className="mt-px grid size-5 shrink-0 place-items-center rounded-md bg-muted text-[11px] font-bold text-muted-foreground">
+                  {String.fromCharCode(65 + i)}
+                </span>
+                {/* No `line-clamp-2` and no `<span>` wrapper: the clamp cut
+                    rendered KaTeX mid-formula, and `Markdown` renders a
+                    `<div>`, which a `<span>` may not hold. */}
+                <div className="min-w-0 flex-1">
+                  <Markdown className="prose-bridge">{opt}</Markdown>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </li>
+  );
+});
+
 /** Form shape before zod applies defaults. */
 type FormValues = z.input<typeof examParamsSchema>;
 
@@ -213,6 +283,8 @@ export function ExamGenerator({ classScope }: { classScope: ExamGeneratorClassSc
     title: string;
     questions: number;
     tokensUsed: number;
+    /** Pre-flight estimate at submit time — the form stays editable afterwards. */
+    estimateTokens: number;
     /** Snapshot of what was actually submitted — the form stays editable. */
     subject: Subject;
     difficulty: keyof typeof DIFFICULTY_LABELS;
@@ -590,12 +662,15 @@ export function ExamGenerator({ classScope }: { classScope: ExamGeneratorClassSc
       setGenStage(GEN_STAGES.length - 1);
       await new Promise((r) => setTimeout(r, 420));
       // Freeze the submitted params into the result — the form below stays
-      // editable, so reading live values here would mislabel the exam.
+      // editable, so reading live values here would mislabel the exam. The
+      // pre-flight estimate is snapshotted too, so the cost card can show a
+      // real variance instead of comparing actuals against later edits.
       setResult({
         examId: data.examId,
         title: data.title,
         questions: data.questions,
         tokensUsed: data.tokensUsed,
+        estimateTokens: estimateGenerationTokens(values.questionCount as number, docs.some((d) => !d.uploading && d.parseStatus === "parsed")),
         subject: values.subject as Subject,
         difficulty: values.difficulty,
         durationMinutes: values.durationMinutes,
@@ -1467,116 +1542,134 @@ export function ExamGenerator({ classScope }: { classScope: ExamGeneratorClassSc
           </form>
         </div>
 
-        {/* Right: Estimated cost — row on lg, stacked on mobile */}
+        {/* Right: Cost summary — estimate before generation, actuals after.
+            No CTA lives here: the single Generate button is the wizard
+            footer's final-step button. */}
         <div className="lg:sticky lg:top-6 lg:self-start flex flex-col gap-6">
           <Card className="shadow-lifted overflow-hidden rounded-2xl border">
-            <div className="bg-brand-soft relative overflow-hidden p-5">
-              <div aria-hidden className="pointer-events-none absolute inset-0 opacity-10" style={{ backgroundImage: "radial-gradient(20rem 10rem at 20% 0%, white, transparent 60%)" }} />
-              <p className="relative flex items-center gap-2 text-sm font-medium"><SparklesIcon className="size-4 text-primary" /> Estimated cost</p>
-              <p className="relative mt-1 text-3xl font-semibold tabular-nums">{formatUsd(tokensToUsd(estimate))}</p>
-              <p className="text-muted-foreground relative text-sm">≈ {formatUgx(usdToUgx(tokensToUsd(estimate)))} · ~{estimate.toLocaleString()} tokens</p>
-              <div className="relative mt-3 flex flex-wrap gap-1.5">
-                <Badge variant="secondary" className="gap-1"><LayersIcon className="size-3" /> {questionCount} Qs</Badge>
-                <Badge variant="secondary" className="gap-1"><ClockIcon className="size-3" /> {durationMinutes} min</Badge>
-                {docs.length > 0 && <Badge variant="secondary" className="gap-1"><FileTextIcon className="size-3" /> {docs.length} doc{docs.length > 1 ? "s" : ""}</Badge>}
-              </div>
-            </div>
-            <CardContent className="flex flex-col gap-4 p-5">
-              <p className="text-muted-foreground text-xs leading-relaxed">Final billing uses actual Gemini usage. Click <strong className="text-foreground">Generate exam</strong> explicitly — no auto-generation. Cost scales with questions + grounded docs.</p>
-              <p className="text-muted-foreground text-xs leading-relaxed">
-                Your wallet needs <strong className="text-foreground">{formatTokens(reserve)} tokens</strong> free to start — a
-                hold that covers retries. Anything unused is never charged.
-              </p>
-              <Separator />
-
-              {/* Explicit Generate CTA duplicated for large screens — only on last step per requirements */}
-              {step === STEPS.length - 1 ? (
-                <>
-                  <Button
-                    type="button"
-                    size="lg"
-                    // This CTA sits outside the <form>, so submit programmatically.
-                    // `onInvalid` handles jumping to the offending step.
-                    onClick={() => void onSubmit()}
-                    disabled={busy || uploadsPending || (docsRequired && !hasGroundingDoc)}
-                    className="shadow-glow hidden h-11 w-full rounded-xl font-semibold lg:inline-flex"
-                  >
-                    {busy ? (
-                      <>
-                        <Loader2Icon className="animate-spin" /> Generating… {Math.round(genPct)}%
-                      </>
-                    ) : (
-                      <>
-                        <SparklesIcon /> Generate exam
-                      </>
-                    )}
-                  </Button>
-                  <p className="hidden text-center text-[11px] text-muted-foreground lg:block">Explicit click required — we never generate on step change.</p>
-                </>
-              ) : (
-                <p className="hidden text-center text-xs text-muted-foreground lg:block">Complete configuration — generation unlocks on the Review step.</p>
-              )}
-
-              {/* Premium staged loader */}
-              <AnimatePresence>
-                {generating && (
-                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-                    <div className="rounded-2xl border bg-card p-4 shadow-card">
-                      <div className="flex items-center justify-between">
-                        <p className="flex items-center gap-2 text-sm font-semibold"><SparklesIcon className="size-4 text-primary" /> Generating exam</p>
-                        <span className="rounded-full bg-primary px-2.5 py-1 text-xs font-bold tabular-nums text-primary-foreground shadow-glow">{Math.round(genPct)}%</span>
-                      </div>
-                      <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
-                        <motion.div className="bg-brand h-full rounded-full" animate={{ width: `${genPct}%` }} transition={{ duration: 0.3 }} />
-                      </div>
-                      <div className="mt-3 grid gap-2">
-                        {GEN_STAGES.map((s, i) => {
-                          const active = i === genStage;
-                          const done = genPct >= s.pct;
-                          const past = i < genStage;
-                          return (
-                            <div key={s.label} className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-xs transition-colors ${active ? "border-primary/30 bg-primary/5" : past || done ? "border-success/20 bg-success/5" : "border-border bg-muted/20"}`}>
-                              <span className={`grid size-6 place-items-center rounded-full border text-[11px] font-bold ${active ? "border-primary bg-primary text-primary-foreground animate-pulse" : past || done ? "border-success bg-success text-white" : "border-border bg-muted text-muted-foreground"}`}>
-                                {past || done ? <CheckCircle2Icon className="size-3.5" /> : <s.icon className="size-3.5" />}
-                              </span>
-                              <span className={`flex-1 text-sm ${active ? "font-medium text-primary" : past || done ? "text-success" : "text-muted-foreground"}`}>{s.label}</span>
-                              {active && <Loader2Icon className="size-3.5 animate-spin text-primary" />}
-                            </div>
-                          );
-                        })}
-                      </div>
-                      <p className="text-muted-foreground mt-3 text-center text-[11px]">Gemini is drafting questions calibrated to your level — don’t close this tab.</p>
+            {result && !generating ? (
+              <>
+                <div className="bg-brand-soft relative overflow-hidden p-5">
+                  <div aria-hidden className="pointer-events-none absolute inset-0 opacity-10" style={{ backgroundImage: "radial-gradient(20rem 10rem at 20% 0%, white, transparent 60%)" }} />
+                  <p className="relative flex items-center gap-2 text-sm font-medium"><CheckCircle2Icon className="size-4 text-emerald-600" /> Actual cost</p>
+                  <p className="relative mt-1 text-3xl font-semibold tabular-nums">{formatUsd(tokensToUsd(result.tokensUsed))}</p>
+                  <p className="text-muted-foreground relative text-sm">≈ {formatUgx(usdToUgx(tokensToUsd(result.tokensUsed)))} · {result.tokensUsed.toLocaleString()} tokens</p>
+                  <div className="relative mt-3 flex flex-wrap gap-1.5">
+                    <Badge variant="secondary" className="gap-1"><LayersIcon className="size-3" /> {result.questions} Qs</Badge>
+                    <Badge variant="secondary" className="gap-1"><ClockIcon className="size-3" /> {result.durationMinutes} min</Badge>
+                    {(() => {
+                      const variance = result.estimateTokens - result.tokensUsed;
+                      const pct = result.estimateTokens > 0 ? Math.round((Math.abs(variance) / result.estimateTokens) * 100) : 0;
+                      const under = variance >= 0;
+                      return (
+                        <Badge variant="outline" className={`gap-1 tabular-nums ${under ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"}`}>
+                          {under ? "↓" : "↑"} {Math.abs(variance).toLocaleString()} ({pct}%) {under ? "under" : "over"} estimate
+                        </Badge>
+                      );
+                    })()}
+                  </div>
+                </div>
+                <CardContent className="flex flex-col gap-4 p-5">
+                  <dl className="flex flex-col gap-2 text-xs">
+                    <div className="flex items-center justify-between gap-3">
+                      <dt className="text-muted-foreground">Tokens used</dt>
+                      <dd className="font-semibold tabular-nums">{result.tokensUsed.toLocaleString()}</dd>
                     </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              {/* Mobile: Generate button inside cost card as well (stacked) — only on last step */}
-              {step === STEPS.length - 1 ? (
-                <Button
-                  type="button"
-                  onClick={() => void onSubmit()}
-                  disabled={busy || uploadsPending || (docsRequired && !hasGroundingDoc)}
-                  className="shadow-glow h-11 w-full rounded-xl font-semibold lg:hidden"
-                >
-                  {busy ? (
-                    <>
-                      <Loader2Icon className="animate-spin" /> Generating… {Math.round(genPct)}%
-                    </>
-                  ) : (
-                    <>
-                      <SparklesIcon /> Generate exam
-                    </>
+                    <div className="flex items-center justify-between gap-3">
+                      <dt className="text-muted-foreground">Estimated tokens</dt>
+                      <dd className="text-muted-foreground tabular-nums">{result.estimateTokens.toLocaleString()}</dd>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <dt className="text-muted-foreground">Avg per question</dt>
+                      <dd className="tabular-nums">~{result.questions > 0 ? Math.round(result.tokensUsed / result.questions).toLocaleString() : "—"} tokens</dd>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <dt className="text-muted-foreground">Charged (USD / UGX)</dt>
+                      <dd className="font-semibold tabular-nums">{formatUsd(tokensToUsd(result.tokensUsed))} · {formatUgx(usdToUgx(tokensToUsd(result.tokensUsed)))}</dd>
+                    </div>
+                  </dl>
+                  <Separator />
+                  <p className="text-muted-foreground text-xs leading-relaxed">Charged to your wallet — any unused reserve hold was released. Full exam is saved to your library; preview it below.</p>
+                </CardContent>
+              </>
+            ) : (
+              <>
+                <div className="bg-brand-soft relative overflow-hidden p-5">
+                  <div aria-hidden className="pointer-events-none absolute inset-0 opacity-10" style={{ backgroundImage: "radial-gradient(20rem 10rem at 20% 0%, white, transparent 60%)" }} />
+                  <p className="relative flex items-center gap-2 text-sm font-medium"><SparklesIcon className="size-4 text-primary" /> Estimated cost</p>
+                  <p className="relative mt-1 text-3xl font-semibold tabular-nums">{formatUsd(tokensToUsd(estimate))}</p>
+                  <p className="text-muted-foreground relative text-sm">≈ {formatUgx(usdToUgx(tokensToUsd(estimate)))} · ~{estimate.toLocaleString()} tokens</p>
+                  <div className="relative mt-3 flex flex-wrap gap-1.5">
+                    <Badge variant="secondary" className="gap-1"><LayersIcon className="size-3" /> {questionCount} Qs</Badge>
+                    <Badge variant="secondary" className="gap-1"><ClockIcon className="size-3" /> {durationMinutes} min</Badge>
+                    {docs.length > 0 && <Badge variant="secondary" className="gap-1"><FileTextIcon className="size-3" /> {docs.length} doc{docs.length > 1 ? "s" : ""}</Badge>}
+                  </div>
+                </div>
+                <CardContent className="flex flex-col gap-4 p-5">
+                  <dl className="flex flex-col gap-2 text-xs">
+                    <div className="flex items-center justify-between gap-3">
+                      <dt className="text-muted-foreground">Questions · ~700 tokens each</dt>
+                      <dd className="tabular-nums">~{(questionCount * 700).toLocaleString()}</dd>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <dt className="text-muted-foreground">{hasGroundingDoc ? "Grounded-source overhead" : "Base overhead"}</dt>
+                      <dd className="tabular-nums">~{(hasGroundingDoc ? 6000 : 1200).toLocaleString()}</dd>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <dt className="text-muted-foreground">Total estimate</dt>
+                      <dd className="font-semibold tabular-nums">~{estimate.toLocaleString()} tokens</dd>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <dt className="text-muted-foreground">Wallet hold to start (3×)</dt>
+                      <dd className="tabular-nums">{formatTokens(reserve)} tokens</dd>
+                    </div>
+                  </dl>
+                  <Separator />
+                  <p className="text-muted-foreground text-xs leading-relaxed">Final billing uses actual Gemini usage. Start generation from the <strong className="text-foreground">Review step</strong> — nothing runs automatically. Cost scales with questions + grounded docs.</p>
+                  <p className="text-muted-foreground text-xs leading-relaxed">
+                    Your wallet needs <strong className="text-foreground">{formatTokens(reserve)} tokens</strong> free to start — a
+                    hold that covers retries. Anything unused is never charged.
+                  </p>
+                  {step !== STEPS.length - 1 && !generating && (
+                    <p className="text-center text-xs text-muted-foreground">Generation unlocks on the Review step.</p>
                   )}
-                </Button>
-              ) : (
-                <p className="text-center text-xs text-muted-foreground lg:hidden">Generation unlocks on the Review step.</p>
-              )}
 
-              {!generating && result && (
-                <div className="rounded-xl border border-dashed bg-muted/20 p-3 text-xs text-muted-foreground">After generation, preview appears below — full exam is saved to your library.</div>
-              )}
-            </CardContent>
+                  {/* Premium staged loader */}
+                  <AnimatePresence>
+                    {generating && (
+                      <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+                        <div className="rounded-2xl border bg-card p-4 shadow-card">
+                          <div className="flex items-center justify-between">
+                            <p className="flex items-center gap-2 text-sm font-semibold"><SparklesIcon className="size-4 text-primary" /> Generating exam</p>
+                            <span className="rounded-full bg-primary px-2.5 py-1 text-xs font-bold tabular-nums text-primary-foreground shadow-glow">{Math.round(genPct)}%</span>
+                          </div>
+                          <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
+                            <motion.div className="bg-brand h-full rounded-full" animate={{ width: `${genPct}%` }} transition={{ duration: 0.3 }} />
+                          </div>
+                          <div className="mt-3 grid gap-2">
+                            {GEN_STAGES.map((s, i) => {
+                              const active = i === genStage;
+                              const done = genPct >= s.pct;
+                              const past = i < genStage;
+                              return (
+                                <div key={s.label} className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-xs transition-colors ${active ? "border-primary/30 bg-primary/5" : past || done ? "border-success/20 bg-success/5" : "border-border bg-muted/20"}`}>
+                                  <span className={`grid size-6 place-items-center rounded-full border text-[11px] font-bold ${active ? "border-primary bg-primary text-primary-foreground animate-pulse" : past || done ? "border-success bg-success text-white" : "border-border bg-muted text-muted-foreground"}`}>
+                                    {past || done ? <CheckCircle2Icon className="size-3.5" /> : <s.icon className="size-3.5" />}
+                                  </span>
+                                  <span className={`flex-1 text-sm ${active ? "font-medium text-primary" : past || done ? "text-success" : "text-muted-foreground"}`}>{s.label}</span>
+                                  {active && <Loader2Icon className="size-3.5 animate-spin text-primary" />}
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <p className="text-muted-foreground mt-3 text-center text-[11px]">Gemini is drafting questions calibrated to your level — don’t close this tab.</p>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </CardContent>
+              </>
+            )}
           </Card>
         </div>
       </div>
@@ -1611,41 +1704,24 @@ export function ExamGenerator({ classScope }: { classScope: ExamGeneratorClassSc
             </div>
             <div className="p-6">
               <div className="flex items-center justify-between gap-3">
-                <h3 className="flex items-center gap-2 text-sm font-semibold"><SparklesIcon className="size-4 text-primary" /> Exam preview — premium</h3>
-                <Badge variant="outline" className="gap-1"><LockIcon className="size-3" /> Draft · not yet assigned</Badge>
+                <h3 className="flex items-center gap-2 text-sm font-semibold"><SparklesIcon className="size-4 text-primary" /> Exam preview</h3>
+                <div className="flex items-center gap-2">
+                  {previewQuestions && previewQuestions.length > 0 && result.questions > previewQuestions.length && (
+                    <Badge variant="secondary" className="tabular-nums">Showing {previewQuestions.length} of {result.questions}</Badge>
+                  )}
+                  <Badge variant="outline" className="gap-1"><LockIcon className="size-3" /> Draft · not yet assigned</Badge>
+                </div>
               </div>
 
               {previewQuestions && previewQuestions.length > 0 ? (
-                <div className="mt-4 grid gap-3">
-                  {previewQuestions.map((q, idx) => (
-                    <motion.div key={q.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.05 }} className="rounded-2xl border bg-card p-4 shadow-card hover:shadow-lifted transition-shadow">
-                      <div className="flex items-start justify-between gap-3">
-                        <Badge variant="secondary" className="tabular-nums">Q{idx + 1} · {q.points} {q.points === 1 ? "mark" : "marks"}</Badge>
-                        <Badge variant="outline" className="capitalize">{q.type.replace(/_/g, " ")}</Badge>
-                      </div>
-                      {/* `prose-bridge`, not `prose prose-sm dark:prose-invert`:
-                          `@tailwindcss/typography` is not installed, so every
-                          `prose-*` class here was inert and the preview rendered
-                          with none of the spacing the exam runner has. */}
-                      <div className="mt-3 text-sm"><Markdown className="prose-bridge">{q.prompt}</Markdown></div>
-                      {q.visual ? <QuestionVisualView visual={q.visual} /> : null}
-                      {q.options && q.options.length > 0 && (
-                        <ul className="mt-3 grid gap-2 sm:grid-cols-2">
-                          {q.options.map((opt, i) => (
-                            <li key={i} className="flex gap-2 rounded-xl border bg-muted/30 px-3 py-2 text-sm">
-                              <span className="font-bold text-muted-foreground">{String.fromCharCode(65 + i)}.</span>
-                              {/* No `line-clamp-2` and no `<span>` wrapper: the clamp
-                                  cut rendered KaTeX mid-formula, and `Markdown`
-                                  renders a `<div>`, which a `<span>` may not hold. */}
-                              <div className="min-w-0 flex-1"><Markdown className="prose-bridge">{opt}</Markdown></div>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </motion.div>
-                  ))}
+                <div className="mt-4 overflow-hidden rounded-2xl border bg-card">
+                  <ol className="divide-y">
+                    {previewQuestions.map((q, idx) => (
+                      <PreviewQuestionRow key={q.id} q={q} index={idx} />
+                    ))}
+                  </ol>
                   {result.questions > previewQuestions.length && (
-                    <p className="text-center text-xs text-muted-foreground">Showing {previewQuestions.length} of {result.questions} — review to see and edit every question.</p>
+                    <p className="border-t bg-muted/20 px-4 py-2.5 text-center text-xs text-muted-foreground">Showing {previewQuestions.length} of {result.questions} — review to see and edit every question.</p>
                   )}
                 </div>
               ) : previewFailed ? (
@@ -1653,16 +1729,21 @@ export function ExamGenerator({ classScope }: { classScope: ExamGeneratorClassSc
                   <p className="text-sm text-amber-800 dark:text-amber-200">Preview could not be loaded — exam was generated successfully. Open in library to view all questions.</p>
                 </div>
               ) : (
-                <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                  {Array.from({ length: Math.min(3, result.questions) }).map((_, i) => (
-                    <div key={i} className="rounded-2xl border bg-muted/30 p-4">
-                      <div className="h-3 w-16 rounded bg-muted" />
-                      <div className="mt-3 space-y-2">
-                        <div className="h-2 w-full rounded bg-muted" />
-                        <div className="h-2 w-5/6 rounded bg-muted" />
-                      </div>
-                    </div>
-                  ))}
+                <div className="mt-4 overflow-hidden rounded-2xl border bg-card">
+                  <ol className="divide-y">
+                    {Array.from({ length: Math.min(3, result.questions) }).map((_, i) => (
+                      <li key={i} className="flex gap-3.5 p-4 sm:gap-4 sm:p-5">
+                        <div className="size-8 shrink-0 animate-pulse rounded-full bg-muted" />
+                        <div className="min-w-0 flex-1">
+                          <div className="h-3 w-24 animate-pulse rounded bg-muted" />
+                          <div className="mt-3 space-y-2">
+                            <div className="h-2 w-full animate-pulse rounded bg-muted" />
+                            <div className="h-2 w-5/6 animate-pulse rounded bg-muted" />
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
                 </div>
               )}
 

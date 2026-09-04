@@ -1,2 +1,4 @@
 - At the end of exam session you can stop sharing the screen and exit full screen during exam submission
-- For essay and fill in the middle questions make it possible for users to type
+- Timer not working in exam session.
+- two progress bars in exam session
+- duplicate questions in the exam

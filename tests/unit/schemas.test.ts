@@ -4,6 +4,8 @@ import {
   examOutputSchema,
   examParamsSchema,
   generateExamSchema,
+  MAX_UNASSIGN_STUDENTS,
+  unassignExamSchema,
 } from "@/lib/schemas/exam";
 import { setupSchema, loginSchema } from "@/lib/schemas/auth";
 import { setUserStatusSchema } from "@/lib/schemas/users";
@@ -95,6 +97,17 @@ describe("exam output schema", () => {
   it("trims titles and preserves the stored 160-character ceiling", () => {
     const parsed = examOutputSchema.parse(output(`  ${"x".repeat(170)}  `));
     expect(parsed.title).toBe("x".repeat(160));
+  });
+});
+
+describe("unassign exam schema", () => {
+  it("rejects selections larger than one bounded transaction", () => {
+    const studentIds = Array.from(
+      { length: MAX_UNASSIGN_STUDENTS + 1 },
+      (_, index) => `student-${index}`,
+    );
+
+    expect(unassignExamSchema.safeParse({ examId: "exam-1", studentIds }).success).toBe(false);
   });
 });
 
