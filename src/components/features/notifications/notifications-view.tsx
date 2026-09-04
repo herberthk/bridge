@@ -34,6 +34,7 @@ const PAGE_SIZE = 10;
 
 const TYPE_META: Record<NotificationType, { icon: typeof BellIcon; tone: string; label: string }> = {
   exam_assigned: { icon: BookOpenCheckIcon, tone: "text-indigo-500 bg-indigo-500/10", label: "Exam assigned" },
+  exam_unassigned: { icon: XCircleIcon, tone: "text-rose-500 bg-rose-500/10", label: "Exam withdrawn" },
   retake_approved: { icon: CheckCheckIcon, tone: "text-emerald-500 bg-emerald-500/10", label: "Retake approved" },
   retake_rejected: { icon: XCircleIcon, tone: "text-rose-500 bg-rose-500/10", label: "Retake declined" },
   results_ready: { icon: TrophyIcon, tone: "text-amber-500 bg-amber-500/10", label: "Results ready" },

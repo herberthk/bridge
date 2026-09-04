@@ -500,6 +500,7 @@ export interface ProctoringEventDoc {
  */
 export type NotificationType =
   | "exam_assigned"
+  | "exam_unassigned"
   | "retake_approved"
   | "retake_rejected"
   | "results_ready"

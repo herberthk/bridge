@@ -573,3 +573,12 @@ export const assignExamSchema = z.object({
     ),
 });
 export type AssignExamInput = z.infer<typeof assignExamSchema>;
+
+export const unassignExamSchema = z.object({
+  examId: z.string().min(1).describe("Unique identifier of the exam to withdraw from students."),
+  studentIds: z
+    .array(z.string().min(1))
+    .min(1, "Select at least one student")
+    .describe("Array of student user IDs whose pending assignment should be removed."),
+});
+export type UnassignExamInput = z.infer<typeof unassignExamSchema>;

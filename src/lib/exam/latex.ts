@@ -274,12 +274,21 @@ function toCases(body: string): string {
 
 function balanceEnvironments(body: string): string {
   let out = body;
-  for (const match of body.matchAll(/\\begin\{([a-zA-Z*]+)\}/g)) {
-    const env = match[1]!;
+  const envs = new Set<string>();
+  for (const m of body.matchAll(/\\begin\{([a-zA-Z*]+)\}/g)) envs.add(m[1]!);
+  for (const m of body.matchAll(/\\end\{([a-zA-Z*]+)\}/g)) envs.add(m[1]!);
+  for (const env of envs) {
     const name = env.replace(/\*/g, "\\*");
     const begins = countMatches(out, new RegExp(`\\\\begin\\{${name}\\}`, "g"));
     const ends = countMatches(out, new RegExp(`\\\\end\\{${name}\\}`, "g"));
     for (let k = ends; k < begins; k += 1) out += `\\end{${env}}`;
+    // A model that emits only the tail — `x &= 4 \\\\ ... \\end{aligned}$$`
+    // without the opening — leaves KaTeX with an end and no begin, which renders
+    // as the red raw source in the review screen. Prepending recovers it.
+    for (let k = begins; k < ends; k += 1) {
+      const opener = env === "array" ? `\\begin{array}{ll} ` : `\\begin{${env}} `;
+      out = `${opener}${out}`;
+    }
   }
   return out;
 }
@@ -391,6 +400,68 @@ function rewriteMathSpans(text: string): string {
 }
 
 /**
+ * Extracts ordered condition tokens from text trailing a piecewise block.
+ *
+ * The model orphans conditions in several shapes: `$0 \\le x \\le 2$
+ * $\\text{otherwise}$` (dollar-separated), newline-separated plain text, or —
+ * the shape that kept reaching students — same-line plain text
+ * `0 \\le x \\le 2 otherwise`. Splitting only on newlines/commas keeps that last
+ * shape as one segment, so the pairing below sees 1 condition for 2 rows and
+ * gives up. Splitting `otherwise`-words out first recovers both tokens.
+ */
+function extractConditions(trailingText: string): string[] {
+  const normalized = trailingText.replace(/\$/g, "\n");
+  const out: string[] = [];
+  const splitter = /(\botherwise\b|\belsewhere\b|\\text\s*\{\s*(?:otherwise|elsewhere|else)[^}]*\})/i;
+  for (const chunk of normalized.split(/[\n,;]+/)) {
+    for (const part of chunk.split(splitter)) {
+      const s = part.trim();
+      if (s.length > 0 && CONDITION.test(s)) out.push(s);
+    }
+  }
+  return out;
+}
+
+function pairOrphanedRows(
+  fullMatch: string,
+  formulaHead: string,
+  innerCases: string,
+  trailingText: string,
+  beginMarker: string,
+): string {
+  const rawRows = splitTopLevel(innerCases, ["\\\\"])
+    .map((r) => r.trim().replace(/[,;]+$/, "").trim())
+    .filter((r) => r.length > 0);
+
+  // If rows already contain `&` or recognised conditions, this cases block is not orphaned.
+  if (rawRows.length < 2 || rawRows.some((r) => r.includes("&")) || rawRows.some((r) => CONDITION.test(r))) {
+    return fullMatch;
+  }
+
+  const condSegments = extractConditions(trailingText);
+  if (condSegments.length !== rawRows.length) return fullMatch;
+
+  const pairedRows = rawRows.map((val, idx) => `${val} & ${textualize(condSegments[idx]!)}`);
+  const markerIndex = formulaHead.indexOf(beginMarker);
+  let prefix = markerIndex !== -1 ? formulaHead.slice(0, markerIndex).trim() : formulaHead.trim();
+  // Bare-brace openers (`\{`, `\left\{`) end with a backslash once sliced before
+  // `{`, which would typeset as a stray space inside `$$`. Strip it.
+  prefix = prefix.replace(/(?:\\left\s*)?\\?\{?\s*$/, "").replace(/\\$/, "").trim();
+
+  // Strip consumed conditions from trailingText
+  let remainingTrailing = trailingText;
+  for (const cond of condSegments) {
+    remainingTrailing = remainingTrailing.replace(
+      new RegExp(`\\\$?\\s*${cond.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\\$?`, "i"),
+      "",
+    );
+  }
+  remainingTrailing = remainingTrailing.replace(/^\s*[,;.]\s*/, "").trim();
+
+  return `\n\n$$${prefix} \\begin{cases} ${pairedRows.join(" \\\\ ")} \\end{cases}$$\n\n${remainingTrailing ? `${remainingTrailing} ` : ""}`;
+}
+
+/**
  * Recovers piecewise definitions where the model closed `\end{cases}` around values
  * alone, leaving conditions orphaned outside on subsequent lines or following spans.
  *
@@ -398,44 +469,81 @@ function rewriteMathSpans(text: string): string {
  *   `$f(x) = \begin{cases} kx(2-x), \\ 0, \end{cases}$ $0 \le x \le 2$ $\text{otherwise}$`
  * Transformed to:
  *   `$$f(x) = \begin{cases} kx(2-x) & 0 \le x \le 2 \\ 0 & \text{otherwise} \end{cases}$$`
+ *
+ * A second shape is also covered: a bare brace with row breaks
+ * (`$f(x) = {kx(2-x), \\\\ 0,}$`) followed by the same orphaned conditions.
+ * That never contained `\begin{cases}`, so the first pattern cannot see it, but
+ * it is the same authoring failure and pairs the same way. Set definitions such
+ * as `$A = \\{1, 2, 3\\}$` have no row breaks and no trailing conditions, so the
+ * row-count and condition-count guards leave them alone.
  */
 function stitchOrphanedPiecewise(text: string): string {
   // Pattern matching a cases definition inside delimiters
-  const pattern = /(?:\$\$|\$|\\\[)\s*([a-zA-Z]\w*(?:\([^)]*\))?\s*(?:=|:=|\\coloneqq)\s*\\begin\{cases\}([\s\S]*?)\\end\{cases\})\s*(?:\$\$|\$|\\\])([\s\S]*?)(?=(?:\n\s*\n|[A-Z][a-z]{2,}\b|\bFind\b|\bDetermine\b|\bCalculate\b|\bEvaluate\b|\bShow\b|\bWhat\b|\bWhere\b|$))/g;
+  const pattern =
+    /(?:\$\$|\$|\\\[)\s*([a-zA-Z]\w*(?:\([^)]*\))?\s*(?:=|:=|\\coloneqq)\s*\\begin\{cases\}([\s\S]*?)\\end\{cases\})\s*(?:\$\$|\$|\\\])([\s\S]*?)(?=(?:\n\s*\n|[A-Z][a-z]{2,}\b|\bFind\b|\bDetermine\b|\bCalculate\b|\bEvaluate\b|\bShow\b|\bWhat\b|\bWhere\b|$))/g;
 
-  return text.replace(pattern, (fullMatch, formulaHead: string, innerCases: string, trailingText: string) => {
-    const rawRows = splitTopLevel(innerCases, ["\\\\"])
-      .map((r) => r.trim().replace(/[,;]+$/, "").trim())
-      .filter((r) => r.length > 0);
+  let out = text.replace(
+    pattern,
+    (fullMatch, formulaHead: string, innerCases: string, trailingText: string) =>
+      pairOrphanedRows(fullMatch, formulaHead, innerCases, trailingText, "\\begin{cases}"),
+  );
 
-    // If rows already contain `&` or recognised conditions, this cases block is not orphaned.
-    if (rawRows.length < 2 || rawRows.some((r) => r.includes("&")) || rawRows.some((r) => CONDITION.test(r))) {
-      return fullMatch;
-    }
+  // Bare-brace twin: `= {a, \\\\ b,}` with the conditions outside. Requires a row
+  // break inside, otherwise every set in the paper would be a candidate. The
+  // closer accepts the one-sided `\left\{…\right.` form, which has no literal `}`.
+  const barePattern =
+    /(?:\$\$|\$|\\\[)\s*([a-zA-Z]\w*(?:\([^)]*\))?\s*(?:=|:=|\\coloneqq)\s*(?:\\left\s*)?(?:\\\{|\{(?![a-zA-Z]+\}))([\s\S]*?\\\\[\s\S]*?)(?:\\?\}(?:\s*\\right\.?)?|\\right\.?))\s*(?:\$\$|\$|\\\])([\s\S]*?)(?=(?:\n\s*\n|[A-Z][a-z]{2,}\b|\bFind\b|\bDetermine\b|\bCalculate\b|\bEvaluate\b|\bShow\b|\bWhat\b|\bWhere\b|$))/g;
 
-    // Look for condition tokens in trailingText
-    const condSegments = trailingText
-      .split(/[\n,;]|(?<=\$)\s*(?=\$)/)
-      .map((s) => s.replace(/\$/g, "").trim())
-      .filter((s) => s.length > 0 && CONDITION.test(s));
+  out = out.replace(
+    barePattern,
+    (fullMatch, formulaHead: string, innerCases: string, trailingText: string) =>
+      pairOrphanedRows(fullMatch, formulaHead, innerCases, trailingText, "{"),
+  );
 
-    if (condSegments.length === rawRows.length) {
-      const pairedRows = rawRows.map((val, idx) => `${val} & ${textualize(condSegments[idx]!)}`);
-      const eqSignIndex = formulaHead.indexOf("\\begin{cases}");
-      const prefix = eqSignIndex !== -1 ? formulaHead.slice(0, eqSignIndex).trim() : "";
+  return out;
+}
 
-      // Strip consumed conditions from trailingText
-      let remainingTrailing = trailingText;
-      for (const cond of condSegments) {
-        remainingTrailing = remainingTrailing.replace(new RegExp(`\\\$?\\s*${cond.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\\$?`, "i"), "");
+/**
+ * Wraps display-math fragments that lost their opening delimiters.
+ *
+ * The live failure this recovers: a system of equations stored as
+ * `x + 2y - z &= 4 \\\\ ... \\\\ x + y - 4z &= k \\end{aligned}$$` — row breaks,
+ * alignment tabs and a closing environment, but no `$$` and no
+ * `\\begin{aligned}`. `rewriteMathSpans` only repairs spans that *open* with `$`,
+ * so it walks straight past a fragment like this and KaTeX renders the raw source
+ * in red. Anything already containing `\\begin{` is left for the normal path,
+ * where `balanceEnvironments` now prepends the missing opener inside the span.
+ */
+function wrapStrayEnvironments(text: string): string {
+  return text.replace(
+    /(^|\n|[.:?]\s+)([^\n$]*?&[^\n]*?\\\\[\s\S]*?\\end\{(aligned\*?|align\*?|gather\*?|split|array|cases)\}\s*(?:\$\$?)?)/g,
+    (full, prefix: string, mathChunk: string) => {
+      if (/\\begin\{/.test(mathChunk)) return full;
+      const chunk = mathChunk.replace(/\s*\$+\s*$/, "").trim();
+      if (!chunk) return full;
+      // The `^` alternative lets the match start at the string start and swallow
+      // leading prose (`Find k: x + ... &= ...`). The equation itself starts after
+      // the last sentence boundary before the first alignment tab.
+      const ampAt = chunk.indexOf("&");
+      const head = ampAt === -1 ? chunk : chunk.slice(0, ampAt);
+      const boundary = Math.max(head.lastIndexOf(": "), head.lastIndexOf(". "), head.lastIndexOf("? "));
+      if (boundary !== -1) {
+        const prose = chunk.slice(0, boundary + 1).trim();
+        const math = chunk.slice(boundary + 1).trim();
+        // Guard against splitting an equation-internal colon (rare) — only split
+        // when the tail still looks like aligned maths.
+        if (math.includes("&") && math.includes("\\\\")) {
+          return `${prefix}${prose}\n\n$$${math}$$\n\n`;
+        }
       }
-      remainingTrailing = remainingTrailing.replace(/^\s*[,;.]\s*/, "").trim();
-
-      return `\n\n$$${prefix} \\begin{cases} ${pairedRows.join(" \\\\ ")} \\end{cases}$$\n\n${remainingTrailing ? `${remainingTrailing} ` : ""}`;
-    }
-
-    return fullMatch;
-  });
+      // No sentence boundary: only wrap when the chunk itself starts with maths
+      // (`x + …`, `\lambda…`, `2x…`). A leading prose phrase (`Find k x + …`)
+      // would otherwise be swallowed into display maths and typeset as variables,
+      // so leave that shape for a human rather than mis-rendering it.
+      if (/^[A-Za-z]{2,}\s+[A-Za-z]/.test(chunk)) return full;
+      return `${prefix}\n\n$$${chunk}$$\n\n`;
+    },
+  );
 }
 
 /**
@@ -469,13 +577,102 @@ function formatPedagogicalProse(text: string): string {
   return out;
 }
 
+/**
+ * Ranges of existing `$…$` / `$$…$$` spans, so bare-environment wrapping never
+ * fires inside maths that already has delimiters (which would double-wrap).
+ */
+function getMathRanges(text: string): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] !== "$" || isEscaped(text, i)) {
+      i += 1;
+      continue;
+    }
+    const display = text[i + 1] === "$";
+    const openLen = display ? 2 : 1;
+    let close = -1;
+    for (let j = i + openLen; j < text.length; j += 1) {
+      if (text[j] === "$" && !isEscaped(text, j)) {
+        if (!display || text[j + 1] === "$") {
+          close = j;
+          break;
+        }
+      }
+      if (!display && text[j] === "\n" && text[j + 1] === "\n") break;
+    }
+    if (close === -1) break;
+    const end = display ? close + 1 : close;
+    ranges.push([i, Math.min(end, text.length - 1)]);
+    i = end + 1;
+  }
+  return ranges;
+}
+
+/**
+ * Wraps `\begin{…}…\end{…}` blocks that never got delimiters.
+ *
+ * The live failure: a prompt storing `Let A = \begin{pmatrix} 2 & 1 \\ 1 & 2
+ * \end{pmatrix}. Find…` with no `$` around the matrix, which reaches the page as
+ * literal backslashes. Only blocks outside existing math ranges are wrapped, so
+ * `$…\begin{pmatrix}…\end{pmatrix}…$` is left for the normal path.
+ */
+function wrapBareEnvironments(text: string): string {
+  const pattern =
+    /\\begin\{(pmatrix|bmatrix|Bmatrix|matrix|vmatrix|Vmatrix|cases|aligned|align\*?|gather\*?|split|array)\}([\s\S]*?)\\end\{\1\}/g;
+  const ranges = getMathRanges(text);
+  const hits: Array<{ start: number; end: number; chunk: string }> = [];
+  for (const m of text.matchAll(pattern)) {
+    const start = m.index ?? 0;
+    const end = start + m[0].length - 1;
+    if (ranges.some(([s, e]) => start >= s && end <= e)) continue;
+    hits.push({ start, end, chunk: m[0] });
+  }
+  let out = text;
+  for (let k = hits.length - 1; k >= 0; k -= 1) {
+    const hit = hits[k]!;
+    out = `${out.slice(0, hit.start)}\n\n$$${hit.chunk.trim()}$$\n\n${out.slice(hit.end + 1)}`;
+  }
+  return out;
+}
+
 function repairSegment(input: string): string {
+  // Standalone bare formula — typically a multiple-choice option the model wrote
+  // without delimiters (`\lambda_1 = 3, \mathbf{v}_1 = \begin{pmatrix}…`).
+  // Prompts are prose with sentence boundaries (`. Find…`) and markdown blocks;
+  // options are short, start with maths and have none of those, so only they land
+  // here. Wrapping the whole string recovers the `\lambda` fragments outside the
+  // matrix too, which wrapping the environment alone would leave raw.
+  const standalone = input.trim();
+  if (
+    standalone &&
+    !standalone.includes("$") &&
+    /\\[a-zA-Z]+|\\\\/.test(standalone) &&
+    standalone.length < 500 &&
+    !/[.!?]\s+[A-Z]/.test(standalone) &&
+    !/^\s{0,3}#{1,6}\s+/.test(standalone) &&
+    !/^\s{0,3}>\s?/.test(standalone) &&
+    !/^\s{0,3}[-*+]\s+/.test(standalone) &&
+    !/^\s{0,3}\|/.test(standalone) &&
+    /^(?:\\|\$|[0-9(\[]|[A-Za-z]+\s*(?:_|\^|=|<|>))/.test(standalone)
+  ) {
+    // `%` comments out the rest of a formula; `;;` is the model's separator for
+    // eigenpairs and renders as spacing in maths, so give it a readable break.
+    const inner = repairMathBody(
+      standalone.replace(/(?<!\\)%/g, "\\%").replace(/;;/g, ", \\quad "),
+    );
+    if (!inner) return input;
+    return /\\\\|\\begin\{/.test(inner) ? `\n\n$$${inner}$$\n\n`.replace(/\n{3,}/g, "\n\n").trim() : `$${inner}$`;
+  }
+
   let normalized = input
     // `\[…\]` and `\(…\)` are display/inline intent that `remark-math` does not
     // recognise, so they reach the page as literal backslash-brackets.
     .replace(/(?<!\\)\\\[([\s\S]*?)(?<!\\)\\\]/g, (_m, b: string) => `\n\n$$${b.trim()}$$\n\n`)
     .replace(/(?<!\\)\\\(([\s\S]*?)(?<!\\)\\\)/g, (_m, b: string) => `$${b.trim()}$`);
 
+  normalized = wrapBareEnvironments(normalized);
+  normalized = wrapStrayEnvironments(normalized);
   normalized = stitchOrphanedPiecewise(normalized);
   normalized = formatPedagogicalProse(normalized);
   const rewritten = rewriteMathSpans(normalized);

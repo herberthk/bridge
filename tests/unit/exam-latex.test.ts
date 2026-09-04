@@ -134,6 +134,97 @@ describe("repairMath: piecewise definitions", () => {
     expect(out).toMatch(/\n\n\$\$f\(x\)/);
   });
 
+  it("recovers same-line plain-text orphaned conditions (screenshot Q6 regression)", () => {
+    const broken =
+      "A continuous random variable $X$ has a probability density function given by: " +
+      "$f(x) = \\begin{cases} kx(2-x), \\\\ 0, \\end{cases}$ 0 \\le x \\le 2 otherwise " +
+      "Determine the exact value of $\\text{Var}(3X-2)$.";
+    const out = repairMath(broken);
+    expect(out).toContain("\\begin{cases}");
+    expect(out).toContain("kx(2-x) & 0 \\le x \\le 2");
+    expect(out).toContain("0 & \\text{otherwise}");
+    expect(out).toContain("\\end{cases}$$");
+    expect(out).not.toContain("0 \\le x \\le 2 otherwise Determine");
+  });
+
+  it("recovers bare-brace piecewise with row breaks and orphaned conditions", () => {
+    const broken =
+      "A continuous random variable $X$ has pdf: $f(x) = {kx(2-x), \\\\ 0,}$ " +
+      "$0 \\le x \\le 2$ otherwise Determine the exact value of $k$.";
+    const out = repairMath(broken);
+    expect(out).toContain("\\begin{cases}");
+    expect(out).toContain("kx(2-x) & 0 \\le x \\le 2");
+    expect(out).toContain("0 & \\text{otherwise}");
+  });
+
+  it("wraps a system of equations that lost its opening (screenshot aligned regression)", () => {
+    const broken =
+      "Find the unique real value of $k$ for which the system has infinitely many solutions: " +
+      "x + 2y - z &= 4 \\\\ 2x + 5y + z &= 9 \\\\ x + y - 4z &= k \\end{aligned}$$";
+    const out = repairMath(broken);
+    expect(out).toContain("$$\\begin{aligned}");
+    expect(out).toContain("x + 2y - z &= 4");
+    expect(out).toContain("\\end{aligned}$$");
+    expect(out).toContain("Find the unique real value of $k$");
+    // Prose stays outside the display block.
+    expect(out).not.toMatch(/\$\$\\begin\{aligned\} Find/);
+  });
+
+  it("prepends a missing environment opener inside a math span", () => {
+    const out = repairMath("$$x &= 2 \\\\ y &= 3\\end{aligned}$$");
+    expect(out).toContain("\\begin{aligned}");
+    expect(out).toContain("\\end{aligned}$$");
+  });
+
+  it("leaves no stray backslash for escaped bare-brace openers", () => {
+    const out = repairMath(
+      "PDF: $f(x) = \\{kx(2-x), \\\\ 0,\\}$ $0 \\le x \\le 2$ $\\text{otherwise}$ Find k.",
+    );
+    expect(out).toContain("$$f(x) = \\begin{cases}");
+    expect(out).not.toMatch(/=\s*\\\s*\\begin\{cases\}/);
+  });
+
+  it("recovers one-sided \\left\\{…\\right. orphans", () => {
+    const out = repairMath(
+      "PDF: $f(x) = \\left\\{kx(2-x), \\\\ 0,\\right.$ $0 \\le x \\le 2$ $\\text{otherwise}$ Find k.",
+    );
+    expect(out).toContain("\\begin{cases}");
+    expect(out).toContain("kx(2-x) & 0 \\le x \\le 2");
+    expect(out).toContain("0 & \\text{otherwise}");
+  });
+
+  it("does not swallow prose without a sentence boundary into display maths", () => {
+    const out = repairMath("Find k x + 2y - z &= 4 \\\\ 2x &= 5 \\end{aligned}$$");
+    expect(out).not.toMatch(/\$\$\\begin\{aligned\} Find k/);
+  });
+
+  it("wraps bare eigen options that never got delimiters (screenshot matrix-options regression)", () => {
+    const bare =
+      "\\lambda_1 = 3, \\mathbf{v}_1 = \\begin{pmatrix} 1 \\\\ 1 \\end{pmatrix};; " +
+      "\\lambda_2 = 1, \\mathbf{v}_2 = \\begin{pmatrix} 1 \\\\ -1 \\end{pmatrix}";
+    const out = repairMath(bare);
+    expect(out).toContain("$$\\lambda_1 = 3");
+    expect(out).toContain("\\begin{pmatrix}");
+    expect(out).toContain("\\end{pmatrix}$$");
+    expect(out).not.toContain(";;");
+    // Idempotent: stored-clean output passes straight through on render.
+    expect(repairMath(out)).toBe(out);
+  });
+
+  it("leaves plain options alone", () => {
+    expect(repairMath("6")).toBe("6");
+    expect(repairMath("True")).toBe("True");
+  });
+
+  it("wraps a bare matrix environment inside prose without touching existing maths", () => {
+    const prompt =
+      "Let $A$ = \\begin{pmatrix} 2 & 1 \\\\ 1 & 2 \\end{pmatrix}. Find the eigenvalues.";
+    const out = repairMath(prompt);
+    expect(out).toContain("$$\\begin{pmatrix} 2 & 1 \\\\ 1 & 2 \\end{pmatrix}$$");
+    expect(out).toContain("Let $A$ =");
+    expect(out).toContain("Find the eigenvalues.");
+  });
+
   it("formats worked example steps with bold step titles and paragraph breaks", () => {
     const rawSteps =
       "Step 1: By symmetry, E(X) = 3. Step 2: Let u = x - 3, so x = u + 3 and -2 <= u <= 2. Step 3: Var(X) = E(u^2). Step 4: Finish.";

@@ -25,7 +25,7 @@ vi.mock("@/server/services/exams/library", () => ({
   getExamForActor: mocks.getExamForActor,
 }));
 
-import { assignExam } from "@/server/services/exams/assignment";
+import { assignExam, unassignExam } from "@/server/services/exams/assignment";
 import { ExamsServiceError } from "@/server/services/exams/errors";
 import type { SessionUser } from "@/server/auth/session";
 import type { AttemptDoc, ExamDoc } from "@/types/firestore";
@@ -60,13 +60,18 @@ function input(scheduledFor: string | null) {
   };
 }
 
-function setup(preflight: ExamDoc, locked = preflight, existing: AttemptDoc[] = []) {
+function setup(
+  preflight: ExamDoc,
+  locked = preflight,
+  existing: AttemptDoc[] = [],
+  allowedIds: string[] = ["student-1"],
+) {
   const examRef = { get: vi.fn().mockResolvedValue({ exists: true, data: () => preflight }) };
   mocks.examDoc.mockReturnValue(examRef);
 
   const userQuery = {
     where: vi.fn(),
-    get: vi.fn().mockResolvedValue({ docs: [{ id: "student-1" }] }),
+    get: vi.fn().mockResolvedValue({ docs: allowedIds.map((id) => ({ id })) }),
   };
   userQuery.where.mockReturnValue(userQuery);
   mocks.usersCol.mockReturnValue(userQuery);
@@ -82,13 +87,25 @@ function setup(preflight: ExamDoc, locked = preflight, existing: AttemptDoc[] = 
   mocks.attemptsCol.mockReturnValue(attemptsQuery);
 
   const tx = {
-    get: vi.fn(async (target: unknown) =>
-      target === examRef
-        ? { exists: true, data: () => locked }
-        : { docs: existing.map((attempt) => ({ data: () => attempt })) },
+    get: vi.fn(
+      async (
+        target: unknown,
+      ): Promise<
+        | { exists: boolean; data: () => unknown }
+        | { docs: { ref: { id: string }; data: () => AttemptDoc }[] }
+      > =>
+        target === examRef
+          ? { exists: true, data: () => locked }
+          : {
+              docs: existing.map((attempt, i) => ({
+                ref: { id: `attempt-${i}` },
+                data: () => attempt,
+              })),
+            },
     ),
     create: vi.fn(),
     update: vi.fn(),
+    delete: vi.fn(),
   };
   const runTransaction = vi.fn(async (callback: (transaction: typeof tx) => unknown) =>
     callback(tx),
@@ -153,6 +170,145 @@ describe("assignExam scheduling", () => {
     const error = await assignmentError(assignExam(actor, input(null)));
     expect(error.status).toBe(409);
     expect(tx.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("assignExam class scope", () => {
+  it("constrains the student lookup to the exam's class for admins", async () => {
+    setup(exam(Timestamp.fromMillis(Date.now() + 60_000)));
+
+    await expect(assignExam(actor, input(null))).resolves.toBe(1);
+    const userQuery = mocks.usersCol.mock.results[0]?.value as {
+      where: ReturnType<typeof vi.fn>;
+    };
+    expect(userQuery.where).toHaveBeenCalledWith("classId", "==", "class-1");
+  });
+
+  it("rejects students outside the exam's class for admins", async () => {
+    setup(
+      exam(Timestamp.fromMillis(Date.now() + 60_000)),
+      undefined,
+      [],
+      [],
+    );
+
+    const error = await assignmentError(assignExam(actor, input(null)));
+
+    expect(error.status).toBe(403);
+    expect(error.message).toContain("not in this exam's class");
+  });
+
+  it("keeps only the school check for class-less legacy exams", async () => {
+    const legacy = { ...exam(Timestamp.fromMillis(Date.now() + 60_000)), classId: null };
+    setup(legacy);
+
+    await expect(assignExam(actor, input(null))).resolves.toBe(1);
+    const userQuery = mocks.usersCol.mock.results[0]?.value as {
+      where: ReturnType<typeof vi.fn>;
+    };
+    const fields = userQuery.where.mock.calls.map(([field]) => field);
+    expect(fields).not.toContain("classId");
+  });
+});
+
+describe("assignExam teacher class membership", () => {
+  const teacher: SessionUser = {
+    ...actor,
+    uid: "teacher-1",
+    email: "teacher@school.test",
+    displayName: "Teacher",
+    role: "teacher",
+  };
+
+  it("aborts when the teacher is unassigned from the class mid-flight", async () => {
+    const { tx } = setup(exam(Timestamp.fromMillis(Date.now() + 60_000)));
+    // Preflight still sees the teacher on the class…
+    const classRef = {
+      get: vi.fn(async () => ({
+        exists: true,
+        data: () => ({ schoolId: "school-1", teacherIds: ["teacher-1"] }),
+      })),
+    };
+    mocks.classDoc.mockReturnValue(classRef);
+    // …but by commit time the admin has removed them.
+    const originalGet = tx.get.getMockImplementation();
+    if (!originalGet) throw new Error("test setup broken");
+    tx.get.mockImplementation(async (target: unknown) => {
+      if (target === classRef) {
+        return {
+          exists: true,
+          data: () => ({ schoolId: "school-1", teacherIds: [] }),
+        };
+      }
+      return originalGet(target);
+    });
+
+    const error = await assignmentError(assignExam(teacher, input(null)));
+
+    expect(error.status).toBe(403);
+    expect(error.message).toContain("not assigned to this exam's class");
+    expect(tx.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("unassignExam", () => {
+  const uinput = (ids: string[]) => ({ examId: "exam-1", studentIds: ids });
+  const pending = (studentId: string) =>
+    ({ studentId, status: "pending" }) as AttemptDoc;
+  const started = (studentId: string) =>
+    ({ studentId, status: "in_progress" }) as AttemptDoc;
+
+  it("deletes pending attempts and skips started ones", async () => {
+    const { tx } = setup(
+      exam(Timestamp.fromMillis(Date.now() + 60_000)),
+      undefined,
+      [pending("student-1"), started("student-2")],
+      ["student-1", "student-2"],
+    );
+
+    const result = await unassignExam(actor, uinput(["student-1", "student-2"]));
+
+    expect(result).toEqual({ removedIds: ["student-1"], skippedIds: ["student-2"] });
+    expect(tx.delete).toHaveBeenCalledOnce();
+  });
+
+  it("rejects students outside the exam's class", async () => {
+    setup(exam(Timestamp.fromMillis(Date.now() + 60_000)), undefined, [], []);
+
+    const error = await assignmentError(unassignExam(actor, uinput(["student-1"])));
+
+    expect(error.status).toBe(403);
+    expect(error.message).toContain("not in this exam's class");
+  });
+
+  it("rejects a teacher who is not assigned to the exam's class", async () => {
+    setup(exam(Timestamp.fromMillis(Date.now() + 60_000)));
+    mocks.classDoc.mockReturnValue({
+      get: vi.fn(async () => ({
+        exists: true,
+        data: () => ({ schoolId: "school-1", teacherIds: ["teacher-9"] }),
+      })),
+    });
+    const teacher: SessionUser = {
+      ...actor,
+      uid: "teacher-1",
+      email: "teacher@school.test",
+      displayName: "Teacher",
+      role: "teacher",
+    };
+
+    const error = await assignmentError(unassignExam(teacher, uinput(["student-1"])));
+
+    expect(error.status).toBe(403);
+    expect(error.message).toContain("not assigned to this exam's class");
+  });
+
+  it("rejects an empty selection", async () => {
+    setup(exam(Timestamp.fromMillis(Date.now() + 60_000)));
+
+    const error = await assignmentError(unassignExam(actor, uinput([])));
+
+    expect(error.status).toBe(400);
   });
 });
 

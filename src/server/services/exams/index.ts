@@ -9,7 +9,7 @@
  * - `./ai-errors` — failure classifiers + usage normalization
  * - `./scope` — class-scope validation for generation
  * - `./generation` — the `generateExam` pipeline
- * - `./assignment` — `assignExam` + attempt lookups
+ * - `./assignment` — `assignExam` + `unassignExam` + attempt lookups
  * - `./library` — reads (`listExams`, `getExamForActor`, …)
  */
 export { ExamsServiceError } from "./errors";
@@ -29,7 +29,12 @@ export {
 export { clampProse, repairProse, sanitizeVisual } from "./content";
 export { resolveExamClassId } from "./scope";
 export { generateExam } from "./generation";
-export { assignExam, getAssignedStudentIdsForExam } from "./assignment";
+export {
+  assignExam,
+  getAssignedStudentIdsForExam,
+  unassignExam,
+} from "./assignment";
+export type { UnassignResult } from "./assignment";
 export {
   countExams,
   getAttemptForActor,

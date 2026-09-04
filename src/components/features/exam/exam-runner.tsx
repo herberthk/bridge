@@ -45,7 +45,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { AnswerEditor } from "@/components/features/exam/answer-editor";
 
 /* ── Timer ring ────────────────────────────────────────────── */
 
@@ -297,29 +297,23 @@ function QuestionView({
       )}
 
       {question.type === "short_answer" && (
-        <div className="rounded-2xl border bg-card p-3 shadow-card">
-          <Input
-            className="h-12 rounded-xl border-0 bg-muted/40 px-4 shadow-none focus-visible:bg-card focus-visible:ring-2"
-            placeholder="Type your answer…"
-            value={typeof value === "string" ? value : ""}
-            onChange={(e) => onChange(e.target.value)}
-          />
-        </div>
+        <AnswerEditor
+          questionId={question.id}
+          value={typeof value === "string" ? value : ""}
+          variant="compact"
+          label="Your answer"
+          placeholder="Type your answer… Use - for bullets, 1. for numbering."
+        />
       )}
 
       {question.type === "essay" && (
-        <div className="rounded-2xl border bg-card p-1 shadow-card">
-          <Textarea
-            rows={9}
-            placeholder="Write your answer here. You can use multiple paragraphs…"
-            className="min-h-[160px] resize-y rounded-xl border-0 bg-muted/30 p-4 shadow-none focus-visible:bg-card focus-visible:ring-2"
-            value={typeof value === "string" ? value : ""}
-            onChange={(e) => onChange(e.target.value)}
-          />
-          <div className="flex justify-end px-3 pb-2 pt-1">
-            <span className="text-muted-foreground text-[11px] tabular-nums">{typeof value === "string" ? value.trim().split(/\s+/).filter(Boolean).length : 0} words</span>
-          </div>
-        </div>
+        <AnswerEditor
+          questionId={question.id}
+          value={typeof value === "string" ? value : ""}
+          variant="full"
+          label="Your essay answer"
+          placeholder="Write your answer here. Use - for bullets, 1. for numbering, $…$ for maths…"
+        />
       )}
 
       {question.type === "matching" && question.pairs && (

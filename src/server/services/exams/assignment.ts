@@ -13,7 +13,7 @@ import { formatExpiry, isExamExpired } from "@/lib/exam/expiry";
 import { isAssignGated, readReview, reviewProgress } from "@/lib/exam/review";
 import type { SessionUser } from "@/server/auth/session";
 import type { AttemptDoc, ExamDoc, WriteModel } from "@/types/firestore";
-import type { AssignExamInput } from "@/lib/schemas/exam";
+import type { AssignExamInput, UnassignExamInput } from "@/lib/schemas/exam";
 import { ExamsServiceError } from "./errors";
 import { getExamForActor } from "./library";
 
@@ -105,9 +105,11 @@ export async function assignExam(
   };
   assertReviewGate(exam);
 
-  // Enforce that every referenced student actually belongs to this admin
-  // (same school / standalone household). Prevents assigning exams to
-  // arbitrary student ids across the platform.
+  // Enforce that every referenced student actually belongs to this exam's
+  // class (same school / standalone household first). An exam belongs to
+  // exactly one class, so class membership is checked for every staff role —
+  // the dialog only ever offers in-class students, and this closes the forged
+  // request bypass around it. Class-less legacy exams keep the school check.
   // Firestore "in" queries accept max 10 values (was 30 in older SDKs).
   // Chunks are independent reads, so they fan out concurrently.
   const CHUNK = 10;
@@ -118,8 +120,7 @@ export async function assignExam(
     } else if (actor.role === "admin") {
       query = query.where("createdBy", "==", actor.uid);
     }
-    // Teachers invite students from their exam's class only.
-    if (actor.role === "teacher" && exam.classId) {
+    if (exam.classId) {
       query = query.where("classId", "==", exam.classId);
     }
     return query.where(FieldPath.documentId(), "in", chunk).get();
@@ -135,7 +136,9 @@ export async function assignExam(
   const rejected = input.studentIds.filter((id) => !allowedIds.has(id));
   if (rejected.length > 0) {
     throw new ExamsServiceError(
-      `${rejected.length} selected student(s) are not in your school.`,
+      exam.classId
+        ? `${rejected.length} selected student(s) are not in this exam's class.`
+        : `${rejected.length} selected student(s) are not in your school.`,
       403,
     );
   }
@@ -165,6 +168,24 @@ export async function assignExam(
       lockedExam.schoolId !== actor.schoolId
     ) {
       throw new ExamsServiceError("This exam belongs to another school.", 403);
+    }
+    if (actor.role === "teacher") {
+      // Re-verify class membership on the locked exam, not just at preflight:
+      // an admin unassigning this teacher between the preflight read and the
+      // commit must not leave a working assignment behind. The exam's class
+      // never changes after generation, so the locked `classId` is truth.
+      const lockedClassId = lockedExam.classId;
+      if (!lockedClassId) {
+        throw new ExamsServiceError("This exam is not tied to one of your classes.", 403);
+      }
+      const lockedClassSnap = await tx.get(classDoc(lockedClassId));
+      const lockedCls = lockedClassSnap.exists ? lockedClassSnap.data() : undefined;
+      if (!lockedCls || lockedCls.schoolId !== actor.schoolId) {
+        throw new ExamsServiceError("This exam's class belongs to another school.", 403);
+      }
+      if (!(lockedCls.teacherIds ?? []).includes(actor.uid)) {
+        throw new ExamsServiceError("You are not assigned to this exam's class.", 403);
+      }
     }
     const gated = assertReviewGate(lockedExam);
 
@@ -295,4 +316,174 @@ export async function assignExam(
   });
 
   return created;
+}
+
+export interface UnassignResult {
+  /** Students whose pending assignment was deleted. */
+  removedIds: string[];
+  /** Students left untouched because they already started (or finished). */
+  skippedIds: string[];
+}
+
+/**
+ * Withdraw an exam from students — deletes only `pending` (not-started)
+ * attempts. Anything the student already opened, submitted, or was graded on
+ * is left exactly as it is: pulling started work out from under a student
+ * would silently rewrite their record and any grade derived from it.
+ *
+ * The same class rules as assignment apply: the exam's class must be one of
+ * the teacher's classes, and every referenced student must belong to the
+ * exam's class (when it has one). No review gate — removing access needs no
+ * question approval.
+ */
+export async function unassignExam(
+  actor: SessionUser,
+  input: UnassignExamInput,
+): Promise<UnassignResult> {
+  if (actor.role !== "admin" && actor.role !== "super_admin" && actor.role !== "teacher") {
+    throw new ExamsServiceError("Not allowed.", 403);
+  }
+  const studentIds = Array.from(new Set(input.studentIds.filter(Boolean)));
+  if (studentIds.length === 0) {
+    throw new ExamsServiceError("Select at least one student.", 400);
+  }
+  const examSnap = await examDoc(input.examId).get();
+  if (!examSnap.exists) throw new ExamsServiceError("Exam not found.", 404);
+  const exam = examSnap.data()!;
+  if (
+    (actor.role === "admin" || actor.role === "teacher") &&
+    exam.schoolId &&
+    exam.schoolId !== actor.schoolId
+  ) {
+    throw new ExamsServiceError("This exam belongs to another school.", 403);
+  }
+
+  // Teachers withdraw only from their own exam's class — mirrors assignExam.
+  if (actor.role === "teacher") {
+    if (!exam.classId) {
+      throw new ExamsServiceError("This exam is not tied to one of your classes.", 403);
+    }
+    const classSnap = await classDoc(exam.classId).get();
+    if (!classSnap.exists || classSnap.data()!.schoolId !== actor.schoolId) {
+      throw new ExamsServiceError("This exam's class belongs to another school.", 403);
+    }
+    if (!(classSnap.data()!.teacherIds ?? []).includes(actor.uid)) {
+      throw new ExamsServiceError("You are not assigned to this exam's class.", 403);
+    }
+  }
+
+  // Every referenced student must belong to the exam's class (when it has
+  // one) — withdrawing another class's students is the same wrong-student
+  // fault as assigning them, in reverse.
+  const CHUNK = 10;
+  const buildStudentQuery = (chunk: string[]) => {
+    let query = usersCol().where("role", "==", "student");
+    if ((actor.role === "admin" || actor.role === "teacher") && actor.schoolId) {
+      query = query.where("schoolId", "==", actor.schoolId);
+    } else if (actor.role === "admin") {
+      query = query.where("createdBy", "==", actor.uid);
+    }
+    if (exam.classId) {
+      query = query.where("classId", "==", exam.classId);
+    }
+    return query.where(FieldPath.documentId(), "in", chunk).get();
+  };
+  const chunks: string[][] = [];
+  for (let i = 0; i < studentIds.length; i += CHUNK) {
+    chunks.push(studentIds.slice(i, i + CHUNK));
+  }
+  const allowedIds = new Set<string>();
+  (await Promise.all(chunks.map(buildStudentQuery))).forEach((snap) =>
+    snap.docs.forEach((d) => allowedIds.add(d.id)),
+  );
+  const rejected = studentIds.filter((id) => !allowedIds.has(id));
+  if (rejected.length > 0) {
+    throw new ExamsServiceError(
+      exam.classId
+        ? `${rejected.length} selected student(s) are not in this exam's class.`
+        : `${rejected.length} selected student(s) are not in your school.`,
+      403,
+    );
+  }
+
+  const result = await adminDb().runTransaction(async (tx) => {
+    const lockedExamRef = examDoc(input.examId);
+    const lockedExamSnap = await tx.get(lockedExamRef);
+    if (!lockedExamSnap.exists) throw new ExamsServiceError("Exam not found.", 404);
+    const lockedExam = lockedExamSnap.data()!;
+    if (
+      (actor.role === "admin" || actor.role === "teacher") &&
+      lockedExam.schoolId &&
+      lockedExam.schoolId !== actor.schoolId
+    ) {
+      throw new ExamsServiceError("This exam belongs to another school.", 403);
+    }
+    if (actor.role === "teacher") {
+      // Same mid-flight membership re-check as assignment.
+      const lockedClassId = lockedExam.classId;
+      if (!lockedClassId) {
+        throw new ExamsServiceError("This exam is not tied to one of your classes.", 403);
+      }
+      const lockedClassSnap = await tx.get(classDoc(lockedClassId));
+      const lockedCls = lockedClassSnap.exists ? lockedClassSnap.data() : undefined;
+      if (!lockedCls || lockedCls.schoolId !== actor.schoolId) {
+        throw new ExamsServiceError("This exam's class belongs to another school.", 403);
+      }
+      if (!(lockedCls.teacherIds ?? []).includes(actor.uid)) {
+        throw new ExamsServiceError("You are not assigned to this exam's class.", 403);
+      }
+    }
+
+    // All reads complete before any delete below, so they fan out concurrently.
+    const attemptSnaps = await Promise.all(
+      chunks.map((chunk) =>
+        tx.get(
+          attemptsCol()
+            .where("examId", "==", input.examId)
+            .where("studentId", "in", chunk),
+        ),
+      ),
+    );
+    const removedIds: string[] = [];
+    const attemptedIds = new Set<string>();
+    for (const snap of attemptSnaps) {
+      for (const d of snap.docs) {
+        const attempt = d.data();
+        attemptedIds.add(attempt.studentId);
+        if (attempt.status === "pending") {
+          tx.delete(d.ref);
+          removedIds.push(attempt.studentId);
+        }
+      }
+    }
+    // Started, submitted, graded, or flagged attempts stay — only students
+    // with no pending attempt left are reported as skipped when they had
+    // something on record.
+    const skippedIds = studentIds.filter(
+      (id) => !removedIds.includes(id) && attemptedIds.has(id),
+    );
+    return { removedIds, skippedIds };
+  });
+
+  // Notify the withdrawn students (best-effort — never blocks the withdrawal).
+  if (result.removedIds.length > 0) {
+    void notifyUsers(result.removedIds, {
+      type: "exam_unassigned",
+      title: `Withdrawn: ${exam.title}`,
+      body: `Your assignment to “${exam.title}” was withdrawn. Contact your teacher if you think this is a mistake.`,
+      link: "/student",
+      actorId: actor.uid,
+    });
+  }
+
+  await writeAudit({
+    actorId: actor.uid,
+    actorRole: actor.role,
+    action: "exam.unassigned",
+    targetType: "exam",
+    targetId: input.examId,
+    meta: { students: result.removedIds.length },
+  });
+
+  return result;
 }

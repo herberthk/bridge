@@ -20,6 +20,7 @@ import {
 import {
   assignExam,
   getAssignedStudentIdsForExam,
+  unassignExam,
   ExamsServiceError,
 } from "@/server/services/exams";
 import { saveQuestions, setApproval } from "@/server/services/exam-review";
@@ -47,7 +48,14 @@ import type { ExamReview, Question } from "@/types/firestore";
 import type { z } from "zod";
 
 export type ActionState =
-  | { ok: true; createdCount?: number; assignedIds?: string[]; inviteUrl?: string }
+  | {
+      ok: true;
+      createdCount?: number;
+      assignedIds?: string[];
+      removedIds?: string[];
+      skippedIds?: string[];
+      inviteUrl?: string;
+    }
   | { ok: false; error: string };
 
 /** Revalidate the same pages for both staff areas after a shared mutation. */
@@ -186,6 +194,49 @@ export async function assignExamAction(
         err instanceof ExamsServiceError
           ? err.message
           : "Assignment failed. Try again.",
+    };
+  }
+}
+
+/**
+ * Withdraw an exam from students — deletes only pending (not-started)
+ * attempts. Called directly (not as a form action) from the assign modal's
+ * withdrawal banner, after the staffer confirms.
+ */
+export async function unassignExamAction(
+  examId: string,
+  studentIds: string[],
+): Promise<ActionState> {
+  const actor = await apiUser("admin", "teacher", "super_admin");
+  if (!actor) return { ok: false, error: "Not authorized." };
+  if (!examId || studentIds.length === 0) {
+    return { ok: false, error: "Select at least one student." };
+  }
+
+  try {
+    const result = await unassignExam(actor, { examId, studentIds });
+    revalidatePath("/admin/exams");
+    revalidatePath(`/admin/exams/${examId}/review`);
+    revalidatePath(`/admin/exams/${examId}`);
+    revalidatePath("/admin");
+    revalidatePath("/teacher/exams");
+    revalidatePath(`/teacher/exams/${examId}`);
+    revalidatePath("/teacher");
+    if (result.removedIds.length === 0) {
+      return {
+        ok: false,
+        error:
+          "Those students already started this exam — only pending assignments can be withdrawn.",
+      };
+    }
+    return { ok: true, removedIds: result.removedIds, skippedIds: result.skippedIds };
+  } catch (err) {
+    return {
+      ok: false,
+      error:
+        err instanceof ExamsServiceError
+          ? err.message
+          : "Withdrawal failed. Try again.",
     };
   }
 }
