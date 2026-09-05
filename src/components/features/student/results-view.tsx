@@ -721,7 +721,11 @@ const DetailedAssessment = memo(function DetailedAssessment({
   const total = exam.questions.length;
   const feedback = attempt.feedback;
 
-  if (total > 0 && correct.length === total) {
+  const perfect =
+    total > 0 &&
+    correct.length === total &&
+    marks.correct.earned === marks.correct.possible;
+  if (perfect) {
     return (
       <Card className="border-emerald-500/25 bg-emerald-500/[0.06] shadow-card">
         <CardHeader>
