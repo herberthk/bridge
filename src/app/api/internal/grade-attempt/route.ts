@@ -4,6 +4,14 @@ import { timingSafeEqual } from "crypto";
 import { gradeAttemptWithAi } from "@/server/services/grading";
 
 /**
+ * Room for the grading model call plus its one retry (2 × 50s + backoff — see
+ * GRADING_CALL_TIMEOUT_MS). Match a higher host timeout where available
+ * (App Hosting: `runConfig.timeoutSeconds`); if the host kills the run, the
+ * attempt simply stays "submitted" for the next sweeper pass.
+ */
+export const maxDuration = 120;
+
+/**
  * Internal endpoint for trusted server-side callers only (e.g. the Cloud
  * Functions sweeper that auto-submits expired attempts). Not reachable by
  * normal users: every request must present the shared secret in the

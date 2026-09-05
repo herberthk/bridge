@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { gradeOne, gradeAnswers } from "@/server/services/attempts";
+import { gradeOne, gradeAnswers, hasAnswer, summarizeScore, applyAiGrades } from "@/server/services/attempts";
 import { normalizeAnswer } from "@/lib/schemas/attempt";
-import type { Question } from "@/types/firestore";
+import type { AttemptAnswer, Question } from "@/types/firestore";
 
 const base: Question = {
   id: "q1",
@@ -130,5 +130,103 @@ describe("normalizeAnswer", () => {
   it("lowercases, collapses spaces, and strips trailing punctuation/quotes", () => {
     expect(normalizeAnswer("  The   Answer. ")).toBe("the answer");
     expect(normalizeAnswer("“Kampala”")).toBe('"kampala"');
+  });
+});
+
+describe("hasAnswer", () => {
+  it("rejects null, undefined, and empty strings", () => {
+    expect(hasAnswer(null)).toBe(false);
+    expect(hasAnswer(undefined)).toBe(false);
+    expect(hasAnswer("")).toBe(false);
+  });
+  it("treats blank strings as unanswered so they skip AI grading", () => {
+    expect(hasAnswer("   ")).toBe(false);
+    expect(hasAnswer("My answer")).toBe(true);
+  });
+  it("treats untouched per-slot arrays as unanswered", () => {
+    expect(hasAnswer([])).toBe(false);
+    expect(hasAnswer(["", null, "  "])).toBe(false);
+    expect(hasAnswer(["", "Paris"])).toBe(true);
+  });
+  it("accepts numbers and booleans (objective responses)", () => {
+    expect(hasAnswer(0)).toBe(true);
+    expect(hasAnswer(false)).toBe(true);
+  });
+});
+
+function stored(
+  questionId: string,
+  earned: number | null,
+  possible: number,
+  correct: boolean | null = earned !== null && earned >= possible,
+): AttemptAnswer {
+  return {
+    questionId,
+    type: "essay",
+    response: "answer",
+    graded:
+      earned === null ? null : { earned, possible, correct, feedback: null },
+  };
+}
+
+describe("summarizeScore", () => {
+  const points = [{ points: 5 }, { points: 5 }, { points: 10 }, { points: 10 }, { points: 10 }];
+  it("sums earned over paper possible, counting partial credit and skipping blanks", () => {
+    // 5 + 0 + 10 + 7 + ungraded = 22/40 → 55%
+    const answers = [
+      stored("q1", 5, 5),
+      stored("q2", 0, 5),
+      stored("q3", 10, 10),
+      stored("q4", 7, 10),
+      stored("q5", null, 10),
+    ];
+    expect(summarizeScore(answers, points)).toEqual({ earned: 22, possible: 40, percentage: 55 });
+  });
+  it("rounds half-up", () => {
+    expect(summarizeScore([stored("q1", 2, 3)], [{ points: 3 }]).percentage).toBe(67);
+    expect(summarizeScore([stored("q1", 1, 3)], [{ points: 3 }]).percentage).toBe(33);
+  });
+  it("returns zeros when the paper carries no marks", () => {
+    expect(summarizeScore([stored("q1", 0, 0)], [{ points: 0 }])).toEqual({
+      earned: 0,
+      possible: 0,
+      percentage: 0,
+    });
+  });
+});
+
+describe("applyAiGrades", () => {
+  const paper = [{ id: "q4", points: 10 }];
+  const pending: AttemptAnswer[] = [
+    { questionId: "q4", type: "essay", response: "My essay", graded: null },
+  ];
+  it("merges a full-marks grade", () => {
+    const [a] = applyAiGrades(pending, [{ questionId: "q4", earned: 10, possible: 10, feedback: "Great" }], paper);
+    expect(a!.graded).toMatchObject({ earned: 10, possible: 10, correct: true });
+  });
+  it("keeps partial credit on the failed side", () => {
+    const [a] = applyAiGrades(pending, [{ questionId: "q4", earned: 7, possible: 10, feedback: "Ok" }], paper);
+    expect(a!.graded).toMatchObject({ earned: 7, possible: 10, correct: false });
+  });
+  it("normalizes a deviant model possible to the paper and clamps earned", () => {
+    const [a] = applyAiGrades(pending, [{ questionId: "q4", earned: 12, possible: 8, feedback: "x" }], paper);
+    expect(a!.graded).toMatchObject({ earned: 10, possible: 10, correct: true });
+    const [b] = applyAiGrades(pending, [{ questionId: "q4", earned: 7, possible: 8, feedback: "x" }], paper);
+    expect(b!.graded).toMatchObject({ earned: 7, possible: 10, correct: false });
+  });
+  it("ignores grades for unknown questions and leaves other answers untouched", () => {
+    const objective: AttemptAnswer = {
+      questionId: "q1",
+      type: "multiple_choice",
+      response: 1,
+      graded: { earned: 5, possible: 5, correct: true, feedback: null },
+    };
+    const out = applyAiGrades(
+      [objective, ...pending],
+      [{ questionId: "ghost", earned: 5, possible: 5, feedback: "x" }],
+      [...paper, { id: "q1", points: 5 }],
+    );
+    expect(out[0]).toBe(objective);
+    expect(out[1]!.graded).toBeNull();
   });
 });

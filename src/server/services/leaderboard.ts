@@ -1,4 +1,4 @@
-import { attemptsCol, examDoc, usersCol } from "@/server/firebase/collections";
+import { attemptsCol, classDoc, examDoc, userDoc, usersCol } from "@/server/firebase/collections";
 import {
   buildClassStats,
   buildLeaderboard,
@@ -67,6 +67,64 @@ export async function getClassLeaderboard(
   );
 
   return { classInfo: cls, entries, stats };
+}
+
+export interface StudentClassStanding {
+  className: string;
+  /** Null until the student has a graded attempt (unranked). */
+  rank: number | null;
+  rankedTotal: number;
+  classAverage: number | null;
+  topPercentage: number | null;
+}
+
+/**
+ * Where one student stands in their own class, for dashboards.
+ *
+ * Classmates' names and scores never leave the server — ranking runs through
+ * the shared pure builder internally, but only the student's own rank plus
+ * class aggregates are returned. Null when unassigned, scoreless, or
+ * classless: callers render "—", never an error.
+ */
+export async function getStudentClassStanding(
+  actor: SessionUser,
+): Promise<StudentClassStanding | null> {
+  if (actor.role !== "student") return null;
+  const me = await userDoc(actor.uid).get().catch(() => null);
+  const classId = me?.exists ? me.data()!.classId : null;
+  if (!classId) return null;
+
+  const [cls, studentsSnap] = await Promise.all([
+    classDoc(classId).get().catch(() => null),
+    usersCol().where("role", "==", "student").where("classId", "==", classId).get(),
+  ]);
+  const students = studentsSnap.docs.map((d) => ({ id: d.id, ...d.data()! }));
+  if (!students.some((s) => s.id === actor.uid)) return null;
+  const attempts = await listAttemptsForStudents(students.map((s) => s.id));
+
+  const lean = attempts.map((a) => ({
+    studentId: a.studentId,
+    status: a.status,
+    score: a.score,
+    submittedAt: a.submittedAt,
+  }));
+  const entries = buildLeaderboard(
+    students.map((s) => ({ id: s.id, displayName: s.displayName })),
+    lean,
+  );
+  const stats = buildClassStats(
+    students.map((s) => ({ id: s.id, displayName: s.displayName })),
+    lean.map(({ studentId, status, score }) => ({ studentId, status, score })),
+  );
+  const mine = entries.find((e) => e.studentId === actor.uid);
+  if (!mine) return null;
+  return {
+    className: cls?.exists ? cls.data()!.name : "My class",
+    rank: mine.rank,
+    rankedTotal: entries.filter((e) => e.rank !== null).length,
+    classAverage: stats.averagePercentage,
+    topPercentage: stats.topPercentage,
+  };
 }
 
 /** All attempts (any status) for a set of students — chunked "in" queries. */

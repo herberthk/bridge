@@ -641,6 +641,48 @@ export async function getStudentRetakeCounts(
   );
 }
 
+export interface StudentRetakeRequest {
+  id: string;
+  attemptId: string;
+  examId: string;
+  examTitle: string;
+  reason: string;
+  status: RetakeRequestDoc["status"];
+  createdAt: RetakeRequestDoc["createdAt"];
+  decidedAt: RetakeRequestDoc["decidedAt"];
+}
+
+/**
+ * A student's own retake requests, newest first, with exam titles joined.
+ * Bounded (latest few) so the dashboard stays cheap — the titles ride along
+ * via the existing single-doc helper.
+ */
+export async function listStudentRetakeRequests(
+  actor: SessionUser,
+  limit = 6,
+): Promise<StudentRetakeRequest[]> {
+  if (actor.role !== "student") {
+    throw new RetakesServiceError("Only students can view their requests.", 403);
+  }
+  const snap = await retakeRequestsCol()
+    .where("studentId", "==", actor.uid)
+    .orderBy("createdAt", "desc")
+    .limit(limit)
+    .get();
+  const items = snap.docs.map((d) => ({ id: d.id, ...d.data()! }));
+  const titles = await Promise.all(items.map((r) => getExamTitle(r.examId)));
+  return items.map((r, i) => ({
+    id: r.id,
+    attemptId: r.attemptId,
+    examId: r.examId,
+    examTitle: titles[i] ?? "Exam",
+    reason: r.reason,
+    status: r.status,
+    createdAt: r.createdAt,
+    decidedAt: r.decidedAt,
+  }));
+}
+
 async function aggregateRetakesByExam(
   baseQuery: Query<AttemptDoc>,
   pageSize: number,

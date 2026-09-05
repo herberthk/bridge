@@ -5,8 +5,10 @@ import React from "react";
 
 import { modelIds } from "@/server/ai/provider";
 import { attemptDoc, examDoc, userDoc } from "@/server/firebase/collections";
+import { adminDb } from "@/server/firebase/admin";
 import { writeAudit } from "@/server/services/audit";
 import { consumeTokens } from "@/server/services/billing";
+import { hasAnswer, summarizeScore, applyAiGrades } from "@/server/services/attempts";
 import { repairProse, thinkingOptions } from "@/server/services/exams";
 import { appUrl, sendTemplateEmail } from "@/server/services/email";
 import { ExamResultsEmail } from "@/emails/templates";
@@ -36,6 +38,10 @@ const essayGradeSchema = z.object({
 /**
  * AI-grade the subjective answers of a submitted attempt and finalize the
  * attempt (`graded`) with per-question + overall feedback.
+ *
+ * Safe to call redundantly (submit route, internal sweeper, backfills):
+ * finalization is claimed inside a transaction, so concurrent or repeated
+ * calls grade at most once — losers no-op before billing.
  */
 export async function gradeAttemptWithAi(attemptId: string): Promise<void> {
   const attemptSnap = await attemptDoc(attemptId).get();
@@ -47,10 +53,11 @@ export async function gradeAttemptWithAi(attemptId: string): Promise<void> {
   if (!examSnap.exists) return;
   const exam = examSnap.data()!;
 
-  const pending = attempt.answers.filter(
-    (a) => a.graded === null && a.response !== null,
-  );
+  const pending = attempt.answers.filter((a) => a.graded === null && hasAnswer(a.response));
   if (pending.length === 0) {
+    // Nothing for the model to do (objective-only or blank essays) — claim
+    // and finalize synchronously. This is also the self-heal path for docs
+    // submitted before synchronous finalization existed.
     await finalize(attemptId, attempt, exam, [], null);
     return;
   }
@@ -60,53 +67,30 @@ export async function gradeAttemptWithAi(attemptId: string): Promise<void> {
   let output: z.infer<typeof essayGradeSchema>;
   let tokensUsed = 0;
   try {
-    const modelId = modelIds.text();
-    const googleOptions = { thinkingConfig: thinkingOptions(modelId), structuredOutputs: false };
-    const result = await generateText({
-      model: vertex(modelId),
-      instructions: [
-        "You are a fair, encouraging Ugandan-curriculum examiner grading exam answers.",
-        "Grade each answer against its marks (points). Be consistent and objective.",
-        "For each answer give concise specific feedback (1–3 sentences) the student can learn from.",
-        "Then write an overallFeedback paragraph (Markdown), 3 strengths, and 3 improvements",
-        "targeted at this student's performance. Use LaTeX for any math.",
-      ].join("\n"),
-      prompt: JSON.stringify({
-        exam: { title: exam.title, subject: exam.params.subject, level: exam.params.level, class: exam.params.classLevel },
-        answers: pending.map((a) => {
-          const q = questionsById.get(a.questionId);
-          return {
-            questionId: a.questionId,
-            question: q?.prompt,
-            type: a.type,
-            points: q?.points,
-            acceptableGuidance: q?.acceptableAnswers,
-            studentAnswer: a.response,
-          };
-        }),
-      }),
-      output: Output.object({ schema: essayGradeSchema }),
-      temperature: 0.3,
-      maxOutputTokens: Math.min(12_000, Math.max(2_000, pending.length * 500 + 800)),
-      providerOptions: {
-        google: googleOptions,
-        googleVertex: googleOptions,
-      },
-    });
-    output = result.output;
-    const usage = result.usage;
-    tokensUsed = usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+    ({ output, tokensUsed } = await generateGrades(exam, pending, questionsById));
   } catch (err) {
     console.error("[grading] AI failed", err);
+    // Leave the attempt "submitted" for the sweeper retry, but leave a trace
+    // so stuck attempts are distinguishable from merely slow ones.
+    await writeAudit({
+      actorId: null,
+      actorRole: null,
+      action: "attempt.grading_failed",
+      targetType: "attempt",
+      targetId: attemptId,
+      meta: { pending: pending.length, error: err instanceof Error ? err.message : String(err) },
+    }).catch(() => undefined);
     throw err;
   }
 
-  await finalize(attemptId, attempt, exam, output.grades, {
+  const claimed = await finalize(attemptId, attempt, exam, output.grades, {
     overall: output.overallFeedback,
     strengths: output.strengths,
     improvements: output.improvements,
     generatedByModel: modelIds.text(),
   });
+  // Lost the finalize race (concurrent retry won) — it already billed.
+  if (!claimed) return;
 
   // Bill the exam owner's wallet for grading tokens.
   const walletId = exam.schoolId ?? exam.createdBy;
@@ -120,13 +104,14 @@ export async function gradeAttemptWithAi(attemptId: string): Promise<void> {
     actorId: null,
   }).catch((err) => console.error("[grading] billing failed", err));
 
-  await examDoc(attempt.examId).update({
-    usage: {
-      ...exam.usage,
-      gradingTokens: (exam.usage.gradingTokens ?? 0) + tokensUsed,
-    },
-    updatedAt: FieldValue.serverTimestamp(),
-  }).catch(() => undefined);
+  // Atomic increment — the old read-modify-write lost tokens when generation
+  // and grading billing landed concurrently.
+  await examDoc(attempt.examId)
+    .update({
+      "usage.gradingTokens": FieldValue.increment(tokensUsed),
+      updatedAt: FieldValue.serverTimestamp(),
+    })
+    .catch(() => undefined);
 
   await writeAudit({
     actorId: null,
@@ -139,6 +124,76 @@ export async function gradeAttemptWithAi(attemptId: string): Promise<void> {
 
   // Notify the student their results are ready (best-effort).
   void notifyStudentOfResults(attemptId).catch(() => undefined);
+}
+
+/**
+ * Wall clock for one grading call — sized so the call plus its one retry
+ * (2 × 50s + backoff) fits inside the internal route's `maxDuration = 120`.
+ * A larger budget just burns a doomed second attempt before the host kills it.
+ */
+const GRADING_CALL_TIMEOUT_MS = 50_000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * One grading call plus a single retry for transient Vertex blips (quota,
+ * 5xx, network). The loser's work is harmless: finalization is claimed
+ * transactionally downstream, so a duplicate success bills exactly once.
+ */
+async function generateGrades(
+  exam: ExamDoc,
+  pending: AttemptAnswer[],
+  questionsById: Map<string, ExamDoc["questions"][number]>,
+): Promise<{ output: z.infer<typeof essayGradeSchema>; tokensUsed: number }> {
+  let lastErr: unknown = null;
+  for (let attemptNo = 1; attemptNo <= 2; attemptNo += 1) {
+    try {
+      const modelId = modelIds.text();
+      const googleOptions = { thinkingConfig: thinkingOptions(modelId), structuredOutputs: false };
+      const result = await generateText({
+        model: vertex(modelId),
+        instructions: [
+          "You are a fair, encouraging Ugandan-curriculum examiner grading exam answers.",
+          "Grade each answer against its marks (points). Be consistent and objective.",
+          "For each answer give concise specific feedback (1–3 sentences) the student can learn from.",
+          "Then write an overallFeedback paragraph (Markdown), 3 strengths, and 3 improvements",
+          "targeted at this student's performance. Use LaTeX for any math.",
+        ].join("\n"),
+        prompt: JSON.stringify({
+          exam: { title: exam.title, subject: exam.params.subject, level: exam.params.level, class: exam.params.classLevel },
+          answers: pending.map((a) => {
+            const q = questionsById.get(a.questionId);
+            return {
+              questionId: a.questionId,
+              question: q?.prompt,
+              type: a.type,
+              points: q?.points,
+              acceptableGuidance: q?.acceptableAnswers,
+              studentAnswer: a.response,
+            };
+          }),
+        }),
+        output: Output.object({ schema: essayGradeSchema }),
+        temperature: 0.3,
+        maxOutputTokens: Math.min(12_000, Math.max(2_000, pending.length * 500 + 800)),
+        abortSignal: AbortSignal.timeout(GRADING_CALL_TIMEOUT_MS),
+        providerOptions: {
+          google: googleOptions,
+          googleVertex: googleOptions,
+        },
+      });
+      const usage = result.usage;
+      return {
+        output: result.output,
+        tokensUsed: usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0),
+      };
+    } catch (err) {
+      lastErr = err;
+      console.error(`[grading] AI attempt ${attemptNo}/2 failed`, err);
+      if (attemptNo < 2) await sleep(2000);
+    }
+  }
+  throw lastErr;
 }
 
 async function notifyStudentOfResults(attemptId: string): Promise<void> {
@@ -179,34 +234,31 @@ async function notifyStudentOfResults(attemptId: string): Promise<void> {
   });
 }
 
+/**
+ * Claim the finalize exactly once and write the graded result.
+ *
+ * Returns true when this call won the claim (caller proceeds to bill);
+ * false when the attempt is gone or another worker already finalized it —
+ * in which case the caller must stop before billing, or tokens get charged
+ * twice for one grading.
+ */
 async function finalize(
   attemptId: string,
   attempt: AttemptDoc,
   exam: ExamDoc,
   aiGrades: { questionId: string; earned: number; possible: number; feedback: string }[],
   feedback: Omit<AttemptFeedback, "perQuestion"> | null,
-): Promise<void> {
-  const gradesByQuestion = new Map(aiGrades.map((g) => [g.questionId, g]));
+): Promise<boolean> {
+  // Shared pure helpers: per-question merge (AI `possible` normalized to the
+  // paper) plus prose repair for AI-written feedback only.
+  const answers: AttemptAnswer[] = applyAiGrades(attempt.answers, aiGrades, exam.questions).map(
+    (a) =>
+      a.graded?.feedback
+        ? { ...a, graded: { ...a.graded, feedback: repairProse(a.graded.feedback) } }
+        : a,
+  );
 
-  const answers: AttemptAnswer[] = attempt.answers.map((a) => {
-    const ai = gradesByQuestion.get(a.questionId);
-    if (ai) {
-      return {
-        ...a,
-        graded: {
-          earned: Math.min(ai.earned, ai.possible || a.graded?.possible || 0),
-          possible: ai.possible || a.graded?.possible || 0,
-          correct: ai.possible > 0 ? ai.earned >= ai.possible : null,
-          feedback: repairProse(ai.feedback),
-        },
-      };
-    }
-    return a;
-  });
-
-  const earned = answers.reduce((n, a) => n + (a.graded?.earned ?? 0), 0);
-  const possible = exam.questions.reduce((n, q) => n + q.points, 0);
-  const percentage = possible > 0 ? Math.round((earned / possible) * 100) : 0;
+  const score = summarizeScore(answers, exam.questions);
 
   const fullFeedback: AttemptFeedback | null = feedback
     ? {
@@ -228,12 +280,20 @@ async function finalize(
       }
     : null;
 
-  await attemptDoc(attemptId).update({
-    status: "graded",
-    answers,
-    score: { earned, possible, percentage },
-    feedback: fullFeedback,
-    gradedAt: FieldValue.serverTimestamp(),
-    updatedAt: FieldValue.serverTimestamp(),
+  // The claim: only a still-"submitted" attempt may be finalized. A retry
+  // racing the original (or a sweeper racing a late success) loses here and
+  // returns false, so the loser stops before billing.
+  return adminDb().runTransaction(async (tx) => {
+    const snap = await tx.get(attemptDoc(attemptId));
+    if (!snap.exists || snap.data()!.status !== "submitted") return false;
+    tx.update(attemptDoc(attemptId), {
+      status: "graded",
+      answers,
+      score,
+      feedback: fullFeedback,
+      gradedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    return true;
   });
 }
