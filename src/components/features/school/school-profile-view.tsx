@@ -1,8 +1,8 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useMemo } from "react";
 import { format } from "date-fns";
-import { BadgeCheckIcon, Building2Icon, SaveIcon, ShieldQuestionIcon } from "lucide-react";
+import { BadgeCheckIcon, Building2Icon, ListChecksIcon, SaveIcon, ShieldQuestionIcon } from "lucide-react";
 
 import {
   requestVerificationAction,
@@ -29,6 +29,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { VerifiedBadge } from "@/components/features/school/verified-badge";
+import { AdminPageHeader } from "@/components/features/admin/admin-page-header";
+import { getSchoolProfileCompleteness } from "@/lib/admin-ui";
 import { useActionToast } from "@/components/features/super/schools-manager";
 import type { SchoolVerificationStatus } from "@/lib/constants";
 
@@ -50,27 +52,81 @@ export function SchoolProfileView({ school }: { school: SerializedWithId<SchoolD
     Boolean(school.registrationNumber?.trim()) &&
     Boolean(school.address?.trim());
 
+  const completeness = useMemo(
+    () =>
+      getSchoolProfileCompleteness({
+        name: school.name,
+        motto: school.motto,
+        phone: school.phone,
+        email: school.email,
+        address: school.address,
+        registrationNumber: school.registrationNumber,
+        description: school.description,
+      }),
+    [
+      school.name,
+      school.motto,
+      school.phone,
+      school.email,
+      school.address,
+      school.registrationNumber,
+      school.description,
+    ],
+  );
+
+  const createdLabel = school.createdAt
+    ? format(new Date(school.createdAt as unknown as string), "d MMMM yyyy")
+    : "—";
+
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight">
-            <Building2Icon className="text-primary size-6" />
-            School profile
-            <VerifiedBadge status={school.verification} size="md" />
-          </h1>
-          <p className="text-muted-foreground mt-1 text-sm">
-            {school.level === "primary" ? "Primary" : "Secondary"} school ·
-            created{" "}
-            {school.createdAt
-              ? format(new Date(school.createdAt as unknown as string), "d MMMM yyyy")
-              : "—"}
-          </p>
-        </div>
-      </div>
+      <AdminPageHeader
+        icon={<Building2Icon className="size-5" />}
+        eyebrow="School administration"
+        title={school.name?.trim() || "School profile"}
+        description={`${school.level === "primary" ? "Primary" : "Secondary"} school · Created ${createdLabel} · Keep public details accurate — they appear to teachers, students and the platform.`}
+        actions={<VerifiedBadge status={school.verification} size="md" />}
+      />
 
-      <Card className="shadow-card">
-        <CardHeader>
+      {/* Profile strength — guides admins to a verification-ready profile. */}
+      <Card className="shadow-card overflow-hidden">
+        <CardContent className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <span className="bg-primary/10 text-primary flex size-9 shrink-0 items-center justify-center rounded-xl">
+              <ListChecksIcon className="size-4" />
+            </span>
+            <div>
+              <p className="text-sm font-semibold">
+                Profile strength {completeness.percent}%
+                <span className="text-muted-foreground font-normal">
+                  {" "}· {completeness.completed}/{completeness.total} fields complete
+                </span>
+              </p>
+              <p className="text-muted-foreground mt-0.5 text-xs">
+                {completeness.missing.length === 0
+                  ? "Complete — your school is ready for verification review."
+                  : `Next: add ${completeness.missing.slice(0, 3).join(", ")}${completeness.missing.length > 3 ? ` +${completeness.missing.length - 3} more` : ""}.`}
+              </p>
+            </div>
+          </div>
+          <div
+            className="bg-muted h-2 w-full overflow-hidden rounded-full sm:w-56"
+            role="progressbar"
+            aria-valuenow={completeness.percent}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label="School profile completeness"
+          >
+            <div
+              className="bg-primary h-full rounded-full transition-[width]"
+              style={{ width: `${completeness.percent}%` }}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="shadow-card overflow-hidden">
+        <CardHeader className="border-b bg-muted/20">
           <CardTitle>Public details</CardTitle>
           <CardDescription>
             Shown to teachers, students and the platform. Accurate details are
@@ -136,8 +192,8 @@ export function SchoolProfileView({ school }: { school: SerializedWithId<SchoolD
         </CardContent>
       </Card>
 
-      <Card className="shadow-card">
-        <CardHeader>
+      <Card className="shadow-card overflow-hidden">
+        <CardHeader className="border-b bg-muted/20">
           <CardTitle className="flex items-center gap-2">
             <BadgeCheckIcon className="size-4 text-sky-500" />
             Verification
@@ -145,7 +201,8 @@ export function SchoolProfileView({ school }: { school: SerializedWithId<SchoolD
           <CardDescription>
             Verified schools get a{" "}
             <VerifiedBadge status="verified" /> — confirming to teachers,
-            parents and students that this is the official {school.name}.
+            parents and students that this is the official {school.name}. Review
+            typically follows once registration details are complete.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center justify-between gap-4">

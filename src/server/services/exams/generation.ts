@@ -293,7 +293,7 @@ export async function generateExam(
         output: Output.object({ schema: examOutputSchema }),
         instructions,
         prompt,
-        temperature: 0.35,
+        // temperature: 0.35,
         maxOutputTokens: shapedCap,
         maxRetries: AI_CALL_RETRIES,
         abortSignal: callSignal(sliceDeadline),
@@ -378,7 +378,7 @@ export async function generateExam(
       // the same warmer sample as any other failure: reaching the cap means the
       // model repeated itself into it, and re-issuing at 0.35 would re-run the
       // sample that did that.
-      temperature: 0.5,
+      // temperature: 0.5,
       maxRetries: AI_CALL_RETRIES,
       abortSignal: callSignal(sliceDeadline),
       onLanguageModelCallEnd: retryProbe.onEnd,

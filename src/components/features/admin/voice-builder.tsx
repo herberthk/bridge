@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { memo, useCallback, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createGoogle } from "@ai-sdk/google";
 import { experimental_useRealtime as useRealtime } from "@ai-sdk/react";
@@ -9,10 +9,13 @@ import { toast } from "sonner";
 import {
   AudioLinesIcon,
   CheckCircle2Icon,
+  CircleHelpIcon,
+  ListOrderedIcon,
   Loader2Icon,
   MicIcon,
   PhoneOffIcon,
   SparklesIcon,
+  WalletCardsIcon,
 } from "lucide-react";
 
 import {
@@ -23,6 +26,7 @@ import {
   type QuestionType,
   type Subject,
 } from "@/lib/constants";
+import { formatUsd, voiceMinutesToUsd } from "@/lib/pricing";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -42,6 +46,13 @@ interface DraftSpec {
   explanations?: boolean;
   workedExamples?: boolean;
 }
+
+/** Static onboarding steps — hoisted so render doesn't rebuild the array. */
+const HOW_IT_WORKS = [
+  { title: "1. Talk naturally", body: "Describe subject, class, topic and length in one sentence." },
+  { title: "2. Confirm the spec", body: "The assistant echoes each detail into the draft panel." },
+  { title: "3. Generate", body: "Continue to the generator to craft full questions." },
+] as const;
 
 /** Client-side provider descriptor — auth flows through the server token. */
 const googleClient = createGoogle({ apiKey: "voice-builder" });
@@ -139,7 +150,7 @@ export function VoiceBuilder() {
         if (res.ok && data && "ok" in data) {
           setBilled(data.minutes);
           toast.success(
-            `Voice session billed: ${data.minutes.toFixed(1)} min ($${(data.minutes * 0.08).toFixed(2)})`,
+            `Voice session billed: ${data.minutes.toFixed(1)} min (${formatUsd(voiceMinutesToUsd(data.minutes))})`,
           );
         } else {
           toast.error(data && "error" in data ? data.error : "Billing failed.");
@@ -169,15 +180,19 @@ export function VoiceBuilder() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [realtime.connect, realtime.startAudioCapture]);
 
-  const transcript = realtime.messages
-    .filter((m) => m.role !== "system")
-    .map((m) =>
-      m.parts
-        .map((p) => ("text" in p ? p.text : ""))
-        .join("")
-        .trim(),
-    )
-    .filter(Boolean);
+  const transcript = useMemo(
+    () =>
+      realtime.messages
+        .filter((m) => m.role !== "system")
+        .map((m) =>
+          m.parts
+            .map((p) => ("text" in p ? p.text : ""))
+            .join("")
+            .trim(),
+        )
+        .filter(Boolean),
+    [realtime.messages],
+  );
 
   const specReady = Boolean(
     spec.subject &&
@@ -187,19 +202,34 @@ export function VoiceBuilder() {
       (spec.subject !== "history" || spec.subsidiary),
   );
 
+  // Spec completeness drives the progress meter — pure derivation, no effects.
+  const specProgress = useMemo(() => {
+    const steps = [
+      Boolean(spec.subject),
+      Boolean(spec.level),
+      Boolean(spec.topic),
+      Boolean(spec.questionCount),
+      spec.subject !== "history" || Boolean(spec.subsidiary),
+    ];
+    const done = steps.filter(Boolean).length;
+    return { done, total: steps.length, percent: Math.round((done / steps.length) * 100) };
+  }, [spec.subject, spec.level, spec.topic, spec.questionCount, spec.subsidiary]);
+
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Voice exam builder</h1>
-        <p className="text-muted-foreground mt-1 text-sm">
-          Talk to Bridge — describe the exam you want and watch the spec build
-          live. Billed at $0.08/min from your school wallet.
-        </p>
+      {/* How it works — sets expectations before the mic is on. */}
+      <div className="grid gap-3 sm:grid-cols-3">
+        {HOW_IT_WORKS.map((s) => (
+          <div key={s.title} className="rounded-xl border bg-card/60 px-4 py-3 text-xs backdrop-blur-sm">
+            <p className="font-semibold text-foreground">{s.title}</p>
+            <p className="text-muted-foreground mt-0.5">{s.body}</p>
+          </div>
+        ))}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Talk panel */}
-        <Card className="overflow-hidden">
+        <Card className="shadow-card overflow-hidden">
           <div className="bg-brand-soft relative flex h-72 flex-col items-center justify-center gap-5">
             {connected && (
               <div
@@ -214,6 +244,7 @@ export function VoiceBuilder() {
               type="button"
               onClick={() => (connected ? void endSession() : void startSession())}
               aria-label={connected ? "End voice session" : "Start voice session"}
+              aria-pressed={connected}
               animate={
                 connected
                   ? { scale: [1, 1.06, 1], boxShadow: "0 0 0 0 rgba(79,70,229,0.35)" }
@@ -238,8 +269,16 @@ export function VoiceBuilder() {
             </div>
           </div>
           <CardContent className="flex max-h-64 flex-col gap-2 overflow-y-auto p-4">
+            {/* Polite live region announces message count only — the scrollable
+                transcript itself stays silent so readers aren't re-read whole. */}
+            <p aria-live="polite" className="sr-only">
+              {transcript.length === 0
+                ? "No transcript messages yet."
+                : `${transcript.length} transcript ${transcript.length === 1 ? "message" : "messages"}.`}
+            </p>
             {transcript.length === 0 ? (
-              <p className="text-muted-foreground py-6 text-center text-sm">
+              <p className="text-muted-foreground flex items-center justify-center gap-1.5 py-6 text-center text-sm">
+                <CircleHelpIcon className="size-4 shrink-0" />
                 The conversation transcript appears here.
               </p>
             ) : (
@@ -253,13 +292,29 @@ export function VoiceBuilder() {
         </Card>
 
         {/* Draft spec panel */}
-        <Card>
-          <CardHeader>
+        <Card className="shadow-card">
+          <CardHeader className="border-b bg-muted/20">
             <CardTitle className="flex items-center gap-2 text-base">
               <SparklesIcon className="size-4" />
               Draft exam spec
+              <span className="text-muted-foreground ml-auto font-mono text-xs font-normal tabular-nums">
+                {specProgress.done}/{specProgress.total} · {specProgress.percent}%
+              </span>
             </CardTitle>
             <CardDescription>Updates live as you talk.</CardDescription>
+            <div
+              className="bg-muted mt-2 h-1.5 overflow-hidden rounded-full"
+              role="progressbar"
+              aria-valuenow={specProgress.percent}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-label="Draft spec completeness"
+            >
+              <div
+                className="bg-primary h-full rounded-full transition-[width]"
+                style={{ width: `${specProgress.percent}%` }}
+              />
+            </div>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <dl className="flex flex-col gap-2.5 text-sm">
@@ -311,9 +366,10 @@ export function VoiceBuilder() {
             </dl>
 
             {billed !== null && (
-              <p className="text-muted-foreground text-xs">
-                Last session: {billed.toFixed(1)} min · $
-                {(billed * 0.08).toFixed(2)} charged to your wallet.
+              <p className="text-muted-foreground flex items-center gap-1.5 text-xs">
+                <WalletCardsIcon className="size-3.5 shrink-0" />
+                Last session: {billed.toFixed(1)} min ·{" "}
+                {formatUsd(voiceMinutesToUsd(billed))} charged to your wallet.
               </p>
             )}
 
@@ -352,15 +408,21 @@ export function VoiceBuilder() {
         </Card>
       </div>
 
-      <p className="text-muted-foreground flex items-center gap-1.5 text-xs">
-        <AudioLinesIcon className="size-3.5" />
-        Powered by the Gemini Live API with tool calling.
-      </p>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-muted-foreground">
+        <p className="flex items-center gap-1.5">
+          <AudioLinesIcon className="size-3.5" />
+          Powered by the Gemini Live API with tool calling.
+        </p>
+        <p className="flex items-center gap-1.5">
+          <ListOrderedIcon className="size-3.5" />
+          Tip: include class level and question count — e.g. “S4, 25 multiple choice, 60 minutes”.
+        </p>
+      </div>
     </div>
   );
 }
 
-function SpecRow({ label, value }: { label: string; value: string | null }) {
+const SpecRow = memo(function SpecRow({ label, value }: { label: string; value: string | null }) {
   return (
     <div className="flex items-center justify-between gap-4">
       <dt className="text-muted-foreground">{label}</dt>
@@ -369,4 +431,4 @@ function SpecRow({ label, value }: { label: string; value: string | null }) {
       </dd>
     </div>
   );
-}
+});

@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { memo, useActionState, useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { format } from "date-fns";
 import { toast } from "sonner";
 import {
@@ -24,6 +24,8 @@ import type { RetakeDecisionEntry } from "@/server/services/retakes";
 import type { RetakeRequestDoc } from "@/types/firestore";
 import type { Serialized, SerializedWithId } from "@/lib/serialize";
 import { parseDate } from "@/lib/serialize";
+import { getAvatarColor, getInitials } from "@/lib/admin-ui";
+import { AdminPageHeader } from "@/components/features/admin/admin-page-header";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -52,34 +54,11 @@ const SORT_FIELD_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
   { value: "exam", label: "Sort by exam" },
 ];
 
-// ─── Helpers ────────────────────────────────────────────────────────────────────
+// ─── Helpers (shared, unit-tested in lib/admin-ui) ────────────────────────────
 
-const AVATAR_COLORS = [
-  "bg-violet-500",
-  "bg-blue-500",
-  "bg-cyan-500",
-  "bg-emerald-500",
-  "bg-orange-500",
-  "bg-pink-500",
-  "bg-indigo-500",
-  "bg-teal-500",
-];
+// ─── Request Card (memoized — approve/reject re-renders stay local) ──────────
 
-function getAvatarColor(id: string): string {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) & 0xffffffff;
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-}
-
-function getInitials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
-
-// ─── Request Card ────────────────────────────────────────────────────────────────
-
-function RequestCard({
+const RequestCard = memo(function RequestCard({
   request,
   studentName,
   examTitle,
@@ -160,7 +139,7 @@ function RequestCard({
       </div>
     </div>
   );
-}
+});
 
 // ─── Main Export ─────────────────────────────────────────────────────────────────
 
@@ -204,15 +183,18 @@ export function RetakeRequests({
     }
   }, [state]);
 
-  const submit = (requestId: string, approve: boolean) => {
-    const fd = new FormData();
-    fd.set("requestId", requestId);
-    fd.set("approve", String(approve));
-    lastApproveRef.current = approve;
-    startTransition(() => {
-      formAction(fd);
-    });
-  };
+  const submit = useCallback(
+    (requestId: string, approve: boolean) => {
+      const fd = new FormData();
+      fd.set("requestId", requestId);
+      fd.set("approve", String(approve));
+      lastApproveRef.current = approve;
+      startTransition(() => {
+        formAction(fd);
+      });
+    },
+    [formAction],
+  );
 
   // ── Derived: filtered + sorted ────────────────────────────────────────────────
   const filtered = useMemo(() => {
@@ -252,30 +234,23 @@ export function RetakeRequests({
     <div className="flex flex-col gap-6">
 
       {/* ── Page Header ──────────────────────────────────────────────────────────── */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-2.5">
-            <span className="flex size-9 items-center justify-center rounded-xl bg-primary/10 text-primary">
-              <RotateCcwIcon className="size-5" />
-            </span>
-            <h1 className="text-2xl font-semibold tracking-tight">Retake Requests</h1>
-          </div>
-          <p className="text-muted-foreground ml-0.5 mt-0.5 text-sm">
-            Approving creates a fresh attempt for the student.
-          </p>
-        </div>
-
-        {/* Stat pill */}
-        {requests.length > 0 && (
-          <div className="flex items-center gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-700 dark:text-amber-400">
-            <ClockIcon className="size-4 shrink-0" />
-            <span className="text-lg font-bold tabular-nums leading-none">{requests.length}</span>
-            <span className="text-xs font-medium opacity-80">
-              {requests.length === 1 ? "pending request" : "pending requests"}
-            </span>
-          </div>
-        )}
-      </div>
+      <AdminPageHeader
+        icon={<RotateCcwIcon className="size-5" />}
+        eyebrow="Student appeals"
+        title="Retake Requests"
+        description="Approving creates a fresh attempt for the student. Rejected requests are recorded in history for transparency."
+        actions={
+          requests.length > 0 ? (
+            <div className="flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-amber-700 dark:text-amber-400">
+              <ClockIcon className="size-4 shrink-0" />
+              <span className="text-lg font-bold tabular-nums leading-none">{requests.length}</span>
+              <span className="text-xs font-medium opacity-80">
+                {requests.length === 1 ? "pending request" : "pending requests"}
+              </span>
+            </div>
+          ) : undefined
+        }
+      />
 
       {/* ── Toolbar ───────────────────────────────────────────────────────────────── */}
       {requests.length > 0 && (

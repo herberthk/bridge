@@ -4,7 +4,7 @@ import { generateText, Output } from "ai";
 import { z } from "zod";
 import React from "react";
 
-import { modelIds, temperatureOptions } from "@/server/ai/provider";
+import { modelIds } from "@/server/ai/provider";
 import { attemptDoc, auditLogsCol, examDoc, userDoc } from "@/server/firebase/collections";
 import { adminDb } from "@/server/firebase/admin";
 import { writeAudit } from "@/server/services/audit";
@@ -245,7 +245,6 @@ async function generateGrades(
           }),
         }),
         output: Output.object({ schema: essayGradeSchema }),
-        ...temperatureOptions(modelId, 0.3),
         maxOutputTokens: Math.min(12_000, Math.max(2_000, pending.length * 500 + 800)),
         abortSignal: AbortSignal.timeout(GRADING_CALL_TIMEOUT_MS),
         providerOptions: {

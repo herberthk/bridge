@@ -41,7 +41,7 @@ import {
 } from "lucide-react";
 
 import type { AdminDashboardData } from "@/server/services/analytics";
-import { formatTokens, formatUsd, tokensToUsd } from "@/lib/pricing";
+import { formatTokens, formatUsd, STANDARD_EXAM_TOKEN_ESTIMATE, tokensToUsd } from "@/lib/pricing";
 import { AnimatedCounter, FadeIn } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -380,8 +380,12 @@ export function AdminDashboardView({
     sortedExams,
   ]);
 
-  // Estimated exams remaining based on 15k tokens per full exam generation
-  const estimatedGenerationsLeft = Math.floor(walletBalance / 15_000);
+  // Estimated exams remaining based on one standard grounded exam per
+  // STANDARD_EXAM_TOKEN_ESTIMATE (see lib/pricing).
+  const estimatedGenerationsLeft = Math.floor(walletBalance / STANDARD_EXAM_TOKEN_ESTIMATE);
+  // Captured once per mount — avoids re-creating "today" on every render.
+  const [todayLabel] = useState(() => format(new Date(), "EEEE, d MMMM yyyy"));
+  const isNewWorkspace = examCount === 0 && attemptsTotal === 0;
 
   return (
     <TooltipProvider>
@@ -397,7 +401,7 @@ export function AdminDashboardView({
                   {actor.schoolId ? "School Administration" : "Instructor Workspace"}
                 </Badge>
                 <span className="text-muted-foreground text-xs">
-                  • {format(new Date(), "EEEE, d MMMM yyyy")}
+                  • {todayLabel}
                 </span>
               </div>
               <h1 className="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">
@@ -463,6 +467,46 @@ export function AdminDashboardView({
             >
               <RefreshCwIcon className="mr-1 size-3" /> Reload
             </Button>
+          </div>
+        )}
+
+        {/* ─── Getting started (new workspaces) ─── */}
+        {isNewWorkspace && !loadFailed && (
+          <div className="shadow-card rounded-2xl border bg-card p-5 sm:p-6">
+            <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
+              <div>
+                <h2 className="text-sm font-semibold">Get your school live in three steps</h2>
+                <ol className="text-muted-foreground mt-2 flex flex-col gap-1.5 text-xs sm:text-sm">
+                  <li>
+                    <Link href="/admin/teachers" className="text-primary font-medium hover:underline">
+                      1. Invite teachers
+                    </Link>{" "}
+                    — they accept a secure link and appear in your roster.
+                  </li>
+                  <li>
+                    <Link href="/admin/classes" className="text-primary font-medium hover:underline">
+                      2. Create a class
+                    </Link>{" "}
+                    — group students before assigning exams.
+                  </li>
+                  <li>
+                    <Link href="/admin/classes" className="text-primary font-medium hover:underline">
+                      3. Generate your first AI exam
+                    </Link>{" "}
+                    — aligned to UNEB curricula in under a minute.
+                  </li>
+                </ol>
+              </div>
+              <Button
+                className="shadow-glow h-9 gap-2 self-start text-xs font-semibold md:self-center"
+                nativeButton={false}
+                render={<Link href="/admin/classes" />}
+              >
+                <SparklesIcon className="size-4" />
+                Get started
+                <ArrowRightIcon className="size-3.5" />
+              </Button>
+            </div>
           </div>
         )}
 
