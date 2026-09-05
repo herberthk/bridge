@@ -670,7 +670,9 @@ export async function listStudentRetakeRequests(
     .limit(limit)
     .get();
   const items = snap.docs.map((d) => ({ id: d.id, ...d.data()! }));
-  const titles = await Promise.all(items.map((r) => getExamTitle(r.examId)));
+  const titles = await Promise.all(
+    items.map((r) => getExamTitle(r.examId).catch(() => null)),
+  );
   return items.map((r, i) => ({
     id: r.id,
     attemptId: r.attemptId,
