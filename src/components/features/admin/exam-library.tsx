@@ -499,7 +499,7 @@ export function ExamLibrary({
           eyebrow="Assessment library"
           title="Exam Library"
           description="Manage, review, filter, and assign curriculum-aligned AI exams across your school."
-          meta={`${stats.total} total · ${stats.activeOrScheduled} active · ${stats.draftsNeedingReview} awaiting review`}
+          meta={`${stats.total} total · ${stats.activeOrScheduled} active or scheduled · ${stats.draftsNeedingReview} awaiting review`}
           actions={
             <Button
               className="shadow-glow transition-all hover:scale-[1.02] active:scale-[0.98]"

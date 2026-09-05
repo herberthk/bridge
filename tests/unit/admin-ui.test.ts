@@ -6,6 +6,9 @@ import {
   getAvatarColor,
   getInitials,
   getSchoolProfileCompleteness,
+  isConsumptionTransaction,
+  isCreditTransaction,
+  isSchoolAdminWorkspace,
 } from "@/lib/admin-ui";
 
 describe("ADMIN_AVATAR_COLORS", () => {
@@ -112,5 +115,35 @@ describe("getSchoolProfileCompleteness", () => {
       "Address",
       "Description",
     ]);
+  });
+});
+
+describe("isSchoolAdminWorkspace", () => {
+  it("gates onboarding to school admins with a schoolId", () => {
+    expect(isSchoolAdminWorkspace({ role: "admin", schoolId: "s1" })).toBe(true);
+    expect(isSchoolAdminWorkspace({ role: "admin", schoolId: null })).toBe(false);
+    expect(isSchoolAdminWorkspace({ role: "admin" })).toBe(false);
+    expect(isSchoolAdminWorkspace({ role: "teacher", schoolId: "s1" })).toBe(false);
+    expect(isSchoolAdminWorkspace({ role: "super_admin", schoolId: "s1" })).toBe(false);
+  });
+});
+
+describe("ledger direction predicates", () => {
+  it("counts token deductions and zero-token voice consumption", () => {
+    expect(isConsumptionTransaction({ type: "consumption", tokensDelta: -100 })).toBe(true);
+    // Voice sessions bill by minutes: tokensDelta 0 but still consumption.
+    expect(isConsumptionTransaction({ type: "consumption", tokensDelta: 0 })).toBe(true);
+    // Negative adjustments are outflows even though their type differs.
+    expect(isConsumptionTransaction({ type: "adjustment", tokensDelta: -50 })).toBe(true);
+    expect(isConsumptionTransaction({ type: "topup", tokensDelta: 100 })).toBe(false);
+    expect(isConsumptionTransaction({ type: "adjustment", tokensDelta: 50 })).toBe(false);
+  });
+
+  it("keeps zero-token consumption out of credits", () => {
+    expect(isCreditTransaction({ type: "topup", tokensDelta: 100 })).toBe(true);
+    expect(isCreditTransaction({ type: "refund", tokensDelta: 100 })).toBe(true);
+    expect(isCreditTransaction({ type: "adjustment", tokensDelta: 50 })).toBe(true);
+    expect(isCreditTransaction({ type: "consumption", tokensDelta: 0 })).toBe(false);
+    expect(isCreditTransaction({ type: "consumption", tokensDelta: -100 })).toBe(false);
   });
 });

@@ -293,7 +293,6 @@ export async function generateExam(
         output: Output.object({ schema: examOutputSchema }),
         instructions,
         prompt,
-        // temperature: 0.35,
         maxOutputTokens: shapedCap,
         maxRetries: AI_CALL_RETRIES,
         abortSignal: callSignal(sliceDeadline),
@@ -359,11 +358,12 @@ export async function generateExam(
     // mean "no thinking" on Gemini 3, it means *dynamic* thinking, so the retry
     // would be slower than the attempt it is recovering from — the opposite of
     // what a fallback is for.
+    const retryDetail = wasTruncated
+      ? "previous attempt reached the cap without closing its JSON, "
+      : "";
     console.warn(
       `[exams] gen ${attemptLabel} retrying shaped call at the same ${shapedCap} token cap: ` +
-        (wasTruncated
-          ? "previous attempt reached the cap without closing its JSON, re-rolling warmer"
-          : "warmer temperature"),
+        `${retryDetail}re-rolling with provider-default sampling`,
     );
     const fallbackStartedAt = Date.now();
     const retryProbe = roundTripProbe(`${attemptLabel} retry`);
@@ -373,12 +373,10 @@ export async function generateExam(
       prompt,
       output: Output.object({ schema: examOutputSchema }),
       maxOutputTokens: shapedCap,
-      // Nudged off the first attempt's setting so a re-roll is a genuinely
-      // different request rather than a byte-identical one. A truncation now gets
-      // the same warmer sample as any other failure: reaching the cap means the
-      // model repeated itself into it, and re-issuing at 0.35 would re-run the
-      // sample that did that.
-      // temperature: 0.5,
+      // Sampling is provider-default on both attempts (no temperature override) —
+      // the retry is a fresh sample, not a forced one. A truncation gets the same
+      // default sample as any other failure: reaching the cap means the model
+      // repeated itself into it, and re-rolling samples past that.
       maxRetries: AI_CALL_RETRIES,
       abortSignal: callSignal(sliceDeadline),
       onLanguageModelCallEnd: retryProbe.onEnd,

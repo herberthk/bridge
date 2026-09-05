@@ -6,13 +6,17 @@ import {
   estimateRevisionTokens,
   formatUgx,
   formatUsd,
+  reserveForGeneration,
   reserveForRevision,
+  STANDARD_EXAM_RESERVE,
+  STANDARD_EXAM_TOKEN_ESTIMATE,
   textTokensToMicros,
   tokensToUsd,
   usdMicrosToUgx,
   usdToUgx,
   voiceMinutesToMicros,
   voiceMinutesToUsd,
+  GENERATION_RESERVE_MULTIPLIER,
   TOPUP_PACKS,
   REVISION_RESERVE_MULTIPLIER,
 } from "@/lib/pricing";
@@ -83,6 +87,19 @@ describe("pricing: estimates", () => {
     const estimate = estimateRevisionTokens(10);
     expect(REVISION_RESERVE_MULTIPLIER).toBe(4);
     expect(reserveForRevision(estimate)).toBe(estimate * 4);
+  });
+
+  it("derives the standard exam estimate from the generator estimator", () => {
+    expect(STANDARD_EXAM_TOKEN_ESTIMATE).toBe(estimateGenerationTokens(15, true));
+    expect(STANDARD_EXAM_TOKEN_ESTIMATE).toBe(15 * 700 + 6000);
+  });
+
+  it("derives the standard exam reserve from the same 3× generation policy", () => {
+    expect(GENERATION_RESERVE_MULTIPLIER).toBe(3);
+    expect(STANDARD_EXAM_RESERVE).toBe(
+      reserveForGeneration(STANDARD_EXAM_TOKEN_ESTIMATE),
+    );
+    expect(STANDARD_EXAM_RESERVE).toBe(STANDARD_EXAM_TOKEN_ESTIMATE * 3);
   });
 });
 

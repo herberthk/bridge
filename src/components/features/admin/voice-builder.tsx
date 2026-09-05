@@ -54,6 +54,18 @@ const HOW_IT_WORKS = [
   { title: "3. Generate", body: "Continue to the generator to craft full questions." },
 ] as const;
 
+/**
+ * Subsidiary progress step. Requires a selected subject first so an empty spec
+ * stays at 0/5; non-history subjects complete once chosen, history needs its
+ * branch too. Pure for unit tests — mirrors `specReady` below.
+ */
+export function isSubsidiaryStepComplete(
+  subject: Subject | undefined,
+  subsidiary: string | undefined,
+): boolean {
+  return Boolean(subject && (subject !== "history" || subsidiary));
+}
+
 /** Client-side provider descriptor — auth flows through the server token. */
 const googleClient = createGoogle({ apiKey: "voice-builder" });
 const LIVE_MODEL =
@@ -209,7 +221,7 @@ export function VoiceBuilder() {
       Boolean(spec.level),
       Boolean(spec.topic),
       Boolean(spec.questionCount),
-      spec.subject !== "history" || Boolean(spec.subsidiary),
+      isSubsidiaryStepComplete(spec.subject, spec.subsidiary),
     ];
     const done = steps.filter(Boolean).length;
     return { done, total: steps.length, percent: Math.round((done / steps.length) * 100) };

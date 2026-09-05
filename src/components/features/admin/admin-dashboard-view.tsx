@@ -42,6 +42,7 @@ import {
 
 import type { AdminDashboardData } from "@/server/services/analytics";
 import { formatTokens, formatUsd, STANDARD_EXAM_TOKEN_ESTIMATE, tokensToUsd } from "@/lib/pricing";
+import { isSchoolAdminWorkspace } from "@/lib/admin-ui";
 import { AnimatedCounter, FadeIn } from "@/components/motion";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -385,7 +386,10 @@ export function AdminDashboardView({
   const estimatedGenerationsLeft = Math.floor(walletBalance / STANDARD_EXAM_TOKEN_ESTIMATE);
   // Captured once per mount — avoids re-creating "today" on every render.
   const [todayLabel] = useState(() => format(new Date(), "EEEE, d MMMM yyyy"));
-  const isNewWorkspace = examCount === 0 && attemptsTotal === 0;
+  const isSchoolAdmin = isSchoolAdminWorkspace(actor);
+  // Onboarding card shows only for new school-admin workspaces — standalone
+  // instructor workspaces can't invite teachers or create classes.
+  const isNewSchoolWorkspace = examCount === 0 && attemptsTotal === 0 && isSchoolAdmin;
 
   return (
     <TooltipProvider>
@@ -470,8 +474,8 @@ export function AdminDashboardView({
           </div>
         )}
 
-        {/* ─── Getting started (new workspaces) ─── */}
-        {isNewWorkspace && !loadFailed && (
+        {/* ─── Getting started (new school-admin workspaces) ─── */}
+        {isNewSchoolWorkspace && !loadFailed && (
           <div className="shadow-card rounded-2xl border bg-card p-5 sm:p-6">
             <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
               <div>
