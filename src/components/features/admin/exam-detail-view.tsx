@@ -5,7 +5,6 @@ import Link from "next/link";
 import { format } from "date-fns";
 import { toast } from "sonner";
 import {
-  AlertCircleIcon,
   AlertTriangleIcon,
   ArrowLeftIcon,
   BarChart3Icon,
@@ -21,7 +20,6 @@ import {
   ClockIcon,
   CopyIcon,
   CpuIcon,
-  ExternalLinkIcon,
   FileTextIcon,
   GraduationCapIcon,
   HelpCircleIcon,
@@ -29,16 +27,12 @@ import {
   LightbulbIcon,
   RotateCcwIcon,
   SearchIcon,
-  Share2Icon,
   ShieldCheckIcon,
   SlidersHorizontalIcon,
-  SparklesIcon,
   TrendingDownIcon,
   TrendingUpIcon,
   TrophyIcon,
   UsersIcon,
-  XCircleIcon,
-  ZapIcon,
 } from "lucide-react";
 
 import { AssignExamDialog } from "@/components/features/admin/assign-exam-dialog";
@@ -59,7 +53,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Progress, ProgressTrack, ProgressIndicator } from "@/components/ui/progress";
+import { Progress } from "@/components/ui/progress";
 import {
   Select,
   SelectContent,

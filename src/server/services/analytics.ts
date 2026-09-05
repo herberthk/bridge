@@ -4,7 +4,6 @@ import {
   attemptsCol,
   countQuery,
   dailyMetricDoc,
-  examDoc,
   examsCol,
   metricsCol,
   schoolDoc,

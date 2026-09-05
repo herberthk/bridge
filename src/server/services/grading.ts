@@ -8,7 +8,7 @@ import { attemptDoc, examDoc, userDoc } from "@/server/firebase/collections";
 import { adminDb } from "@/server/firebase/admin";
 import { writeAudit } from "@/server/services/audit";
 import { consumeTokens } from "@/server/services/billing";
-import { hasAnswer, summarizeScore, applyAiGrades } from "@/server/services/attempts";
+import { hasAnswer, summarizeScore, applyAiGrades, assertCompleteGrades } from "@/server/services/attempts";
 import { repairProse, thinkingOptions } from "@/server/services/exams";
 import { appUrl, sendTemplateEmail } from "@/server/services/email";
 import { ExamResultsEmail } from "@/emails/templates";
@@ -36,18 +36,34 @@ const essayGradeSchema = z.object({
 });
 
 /**
+ * Consecutive failed runs before an attempt dead-letters for a human instead
+ * of retrying forever. Each failed run burns real Vertex tokens that are
+ * deliberately NOT billed (schools never pay for model failures), so an
+ * uncapped retry loop is an unbounded platform cost.
+ */
+export const MAX_GRADING_ATTEMPTS = 5;
+
+/**
  * AI-grade the subjective answers of a submitted attempt and finalize the
  * attempt (`graded`) with per-question + overall feedback.
  *
  * Safe to call redundantly (submit route, internal sweeper, backfills):
  * finalization is claimed inside a transaction, so concurrent or repeated
- * calls grade at most once — losers no-op before billing.
+ * calls grade at most once — losers no-op before billing. Failed runs
+ * increment `gradingAttempts`; past the cap the attempt is left `submitted`
+ * with an `attempt.grading_exhausted` audit for staff to pick up.
  */
 export async function gradeAttemptWithAi(attemptId: string): Promise<void> {
   const attemptSnap = await attemptDoc(attemptId).get();
   if (!attemptSnap.exists) return;
   const attempt = attemptSnap.data()!;
   if (attempt.status !== "submitted") return;
+  if ((attempt.gradingAttempts ?? 0) >= MAX_GRADING_ATTEMPTS) {
+    // Dead-lettered: a previous run already left the exhausted trace, so
+    // only log for host-level visibility and stop before spending tokens.
+    console.error("[grading] attempts exhausted", { attemptId });
+    return;
+  }
 
   const examSnap = await examDoc(attempt.examId).get();
   if (!examSnap.exists) return;
@@ -72,14 +88,22 @@ export async function gradeAttemptWithAi(attemptId: string): Promise<void> {
     console.error("[grading] AI failed", err);
     // Leave the attempt "submitted" for the sweeper retry, but leave a trace
     // so stuck attempts are distinguishable from merely slow ones.
-    await writeAudit({
-      actorId: null,
-      actorRole: null,
-      action: "attempt.grading_failed",
-      targetType: "attempt",
-      targetId: attemptId,
-      meta: { pending: pending.length, error: err instanceof Error ? err.message : String(err) },
-    }).catch(() => undefined);
+    await recordGradingFailure(attemptId, pending.length, err);
+    throw err;
+  }
+
+  // The model must return each pending question exactly once — no missing,
+  // duplicate, or unknown IDs. Rejecting here (before finalize) leaves the
+  // attempt "submitted" so the sweeper retries, instead of finalizing a
+  // partial grade set where missing answers silently score 0.
+  try {
+    assertCompleteGrades(
+      pending.map((a) => a.questionId),
+      output.grades.map((g) => g.questionId),
+    );
+  } catch (err) {
+    console.error("[grading] invalid grade set", err);
+    await recordGradingFailure(attemptId, pending.length, err);
     throw err;
   }
 
@@ -194,6 +218,40 @@ async function generateGrades(
     }
   }
   throw lastErr;
+}
+
+/**
+ * Count a failed run toward the retry cap and leave an audit trace.
+ * Best-effort: a counter write must never mask the original error.
+ * When the cap is reached the audit action flips to `grading_exhausted`
+ * so staff can find dead-lettered attempts.
+ */
+async function recordGradingFailure(
+  attemptId: string,
+  pendingCount: number,
+  err: unknown,
+): Promise<void> {
+  await attemptDoc(attemptId)
+    .update({
+      gradingAttempts: FieldValue.increment(1),
+      updatedAt: FieldValue.serverTimestamp(),
+    })
+    .catch(() => undefined);
+  const snap = await attemptDoc(attemptId).get().catch(() => null);
+  const failures = snap?.exists ? (snap.data()!.gradingAttempts ?? 1) : 1;
+  const exhausted = failures >= MAX_GRADING_ATTEMPTS;
+  await writeAudit({
+    actorId: null,
+    actorRole: null,
+    action: exhausted ? "attempt.grading_exhausted" : "attempt.grading_failed",
+    targetType: "attempt",
+    targetId: attemptId,
+    meta: {
+      pending: pendingCount,
+      failures,
+      error: err instanceof Error ? err.message : String(err),
+    },
+  }).catch(() => undefined);
 }
 
 async function notifyStudentOfResults(attemptId: string): Promise<void> {

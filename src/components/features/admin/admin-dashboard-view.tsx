@@ -13,7 +13,6 @@ import {
   AwardIcon,
   BarChart3Icon,
   BookOpenIcon,
-  CheckCircle2Icon,
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -27,24 +26,18 @@ import {
   EyeIcon,
   FileSpreadsheetIcon,
   FileTextIcon,
-  FilterIcon,
   GraduationCapIcon,
   HelpCircleIcon,
-  InfoIcon,
   LayoutGridIcon,
   LayoutListIcon,
   PercentIcon,
-  PlusIcon,
   RefreshCwIcon,
   RotateCcwIcon,
   SearchIcon,
   SparklesIcon,
-  TrendingDownIcon,
   TrendingUpIcon,
-  UsersIcon,
   WalletCardsIcon,
   XIcon,
-  ZapIcon,
 } from "lucide-react";
 
 import type { AdminDashboardData } from "@/server/services/analytics";
@@ -77,15 +70,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  Tooltip,
-  TooltipContent,
   TooltipProvider,
-  TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
   CategoryBars,
   ChartCard,
-  RevenueArea,
 } from "@/components/features/dashboard/charts";
 
 // ─── Types & Configuration ──────────────────────────────────────────────────

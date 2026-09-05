@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect } from "react";
+import { useActionState, useState } from "react";
 import Link from "next/link";
 import { format } from "date-fns";
 import {
@@ -15,7 +15,7 @@ import {
 import { setUserStatusAction } from "@/app/admin/actions";
 import type { ActionState } from "@/app/admin/actions";
 import type { AttemptDoc, ClassDoc, SchoolDoc, UserDoc } from "@/types/firestore";
-import type { Serialized, SerializedWithId } from "@/lib/serialize";
+import type {  SerializedWithId } from "@/lib/serialize";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -219,6 +219,9 @@ function StatusActions({
   action: (formData: FormData) => void;
   pending: boolean;
 }) {
+  // Computed once per mount (not per render): the 7-day suspension deadline
+  // submitted with the form. Stable across re-renders and rule-compliant.
+  const [suspendedUntil] = useState(() => new Date(Date.now() + 7 * 86400_000).toISOString());
   return (
     <div className="flex gap-2">
       {status !== "active" && (
@@ -235,11 +238,7 @@ function StatusActions({
         <form action={action}>
           <input type="hidden" name="userId" value={studentId} />
           <input type="hidden" name="status" value="suspended" />
-          <input
-            type="hidden"
-            name="suspendedUntil"
-            value={new Date(Date.now() + 7 * 86400_000).toISOString()}
-          />
+          <input type="hidden" name="suspendedUntil" value={suspendedUntil} />
           <Button type="submit" variant="outline" size="sm" disabled={pending}>
             <PauseIcon data-icon="inline-start" />
             Suspend 7 days

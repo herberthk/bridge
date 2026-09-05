@@ -2,3 +2,4 @@
 - Timer not working in exam session.
 - two progress bars in exam session
 - duplicate questions in the exam
+- Ability for admin to re-assign student to another class but maintain history

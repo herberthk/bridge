@@ -25,13 +25,13 @@ export function google(): GoogleProvider {
  *
  * The defaults track what the exam pipeline's timing envelope was actually
  * measured on. `exams.ts` derives its slices from a throughput figure taken off a
- * real `gemini-3.7-flash` round trip, and `thinkingOptions` branches on the major
+ * real `gemini-3.8-flash` round trip, and `thinkingOptions` branches on the major
  * version — 3.x takes `thinkingLevel`, 2.5 takes a numeric `thinkingBudget` — so a
  * default from the other generation would silently plan against numbers nothing
  * measured. Overridable per environment via `BRIDGE_MODEL_*`.
  */
 export const modelIds = {
-  text: () => process.env.BRIDGE_MODEL_TEXT ?? "gemini-3.7-flash",
+  text: () => process.env.BRIDGE_MODEL_TEXT ?? "gemini-3.8-flash",
   /**
    * The escalation target for a chunk that has already failed twice.
    *
@@ -41,8 +41,8 @@ export const modelIds = {
    * attempt into a guaranteed abort — an escalation that cannot finish is worse
    * than no escalation. Raising it means raising the slice too.
    */
-  textPro: () => process.env.BRIDGE_MODEL_TEXT_PRO ?? "gemini-3.7-flash",
-  live: () => process.env.BRIDGE_MODEL_LIVE ?? "gemini-live-2.5-flash-native-audio",
+  textPro: () => process.env.BRIDGE_MODEL_TEXT_PRO ?? "gemini-3.8-flash",
+  live: () => process.env.BRIDGE_MODEL_LIVE ?? "gemini-3.1-flash-live-preview",
 };
 
 /** Fast, balanced default for generation + grading. */

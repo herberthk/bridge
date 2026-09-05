@@ -8,7 +8,6 @@ import type { PagedResult } from "@/server/services/platform";
 import type { SchoolDoc } from "@/types/firestore";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Pagination } from "@/components/features/super/pagination";
 import { VerifiedBadge } from "@/components/features/school/verified-badge";
 import { parseDate, type SerializedWithId } from "@/lib/serialize";
 

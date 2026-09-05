@@ -8,25 +8,34 @@ import { listStudentAttempts } from "@/server/services/attempts";
 import { getStudentClassStanding } from "@/server/services/leaderboard";
 import { listStudentRetakeRequests } from "@/server/services/retakes";
 import { StudentDashboard } from "@/components/features/student/student-dashboard";
+import { withTimeout } from "@/lib/promise";
 
 export const metadata = { title: "Dashboard • Bridge" };
 
 /**
- * Student home: essentials stream in one parallel round, the class standing
- * follows only if cheaply resolvable — and every source fails independently,
- * so one slow query degrades single sections instead of blanking the page.
+ * Bound one parallel round so a slow or non-settling source degrades its
+ * sections instead of blocking the whole page; each source still fails
+ * independently via allSettled. Class standing follows only if cheaply
+ * resolvable.
  */
+const SOURCE_TIMEOUT_MS = 10_000;
+
 export default async function StudentHomePage() {
   const actor = await requireRole("student");
 
   const [dashboardRes, attemptsRes, requestsRes] = await Promise.allSettled([
-    studentDashboard(actor),
-    listStudentAttempts(actor),
-    listStudentRetakeRequests(actor),
+    withTimeout(studentDashboard(actor), SOURCE_TIMEOUT_MS, "[student dashboard] dashboard"),
+    withTimeout(listStudentAttempts(actor), SOURCE_TIMEOUT_MS, "[student dashboard] attempts"),
+    withTimeout(
+      listStudentRetakeRequests(actor),
+      SOURCE_TIMEOUT_MS,
+      "[student dashboard] retake requests",
+    ),
   ]);
 
   const data = dashboardRes.status === "fulfilled" ? dashboardRes.value : null;
   const attempts = attemptsRes.status === "fulfilled" ? attemptsRes.value : [];
+  const attemptsAvailable = attemptsRes.status === "fulfilled";
   const requests = requestsRes.status === "fulfilled" ? requestsRes.value : [];
   for (const res of [dashboardRes, attemptsRes, requestsRes]) {
     if (res.status === "rejected") console.error("[student dashboard] load failed", res.reason);
@@ -57,6 +66,7 @@ export default async function StudentHomePage() {
         todayLabel={format(new Date(), "EEEE, d MMMM yyyy")}
         data={data}
         attempts={attempts}
+        attemptsAvailable={attemptsAvailable}
         requests={requests}
         standing={standing}
         degraded={degraded}
