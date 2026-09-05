@@ -45,7 +45,7 @@ import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { KpiCard } from "@/components/features/dashboard/charts";
 import { VerifiedBadge } from "@/components/features/school/verified-badge";
-import { useActionToast, TempPasswordField } from "@/components/features/super/schools-manager";
+import { useActionToast } from "@/components/features/super/schools-manager";
 import { formatTokens, formatUgx, formatUsd, tokensToUsd, usdToUgx } from "@/lib/pricing";
 
 interface SchoolDetailProps {

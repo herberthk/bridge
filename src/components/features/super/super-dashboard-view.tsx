@@ -10,7 +10,6 @@ import {
   ShieldCheckIcon,
   TrendingUpIcon,
   UserRoundIcon,
-  UsersIcon,
 } from "lucide-react";
 
 import type { SuperDashboardData } from "@/server/services/analytics";
@@ -25,7 +24,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { formatTokens, formatUgx, formatUsd } from "@/lib/pricing";
+import { formatTokens, formatUgx } from "@/lib/pricing";
 
 /**
  * Super-admin platform dashboard: revenue, consumption, growth, schools,

@@ -1,5 +1,5 @@
-import { TableSkeleton } from "@/components/features/dashboard/skeletons";
+import { StudentResultsSkeleton } from "@/components/features/dashboard/skeletons";
 
 export default function Loading() {
-  return <TableSkeleton rows={4} />;
+  return <StudentResultsSkeleton />;
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { gradeOne, gradeAnswers, hasAnswer, summarizeScore, applyAiGrades } from "@/server/services/attempts";
+import { gradeOne, gradeAnswers, hasAnswer, summarizeScore, applyAiGrades, assertCompleteGrades } from "@/server/services/attempts";
 import { normalizeAnswer } from "@/lib/schemas/attempt";
 import type { AttemptAnswer, Question } from "@/types/firestore";
 
@@ -228,5 +228,26 @@ describe("applyAiGrades", () => {
     );
     expect(out[0]).toBe(objective);
     expect(out[1]!.graded).toBeNull();
+  });
+});
+
+describe("assertCompleteGrades", () => {
+  it("accepts a complete grade set in any order", () => {
+    expect(() => assertCompleteGrades(["q1", "q2"], ["q2", "q1"])).not.toThrow();
+    expect(() => assertCompleteGrades([], [])).not.toThrow();
+  });
+  it("rejects a missing grade", () => {
+    expect(() => assertCompleteGrades(["q1", "q2"], ["q1"])).toThrow(/incomplete/);
+  });
+  it("rejects an unknown grade id", () => {
+    expect(() => assertCompleteGrades(["q1", "q2"], ["q1", "ghost"])).toThrow(/unexpected/);
+  });
+  it("rejects a duplicate grade id masking a missing one", () => {
+    // Same length, but q2 is silently ungraded — the exact case that used
+    // to finalize with a 0 for the missing answer.
+    expect(() => assertCompleteGrades(["q1", "q2"], ["q1", "q1"])).toThrow(/duplicate/);
+  });
+  it("rejects duplicate pending ids (broken input, not a model error)", () => {
+    expect(() => assertCompleteGrades(["q1", "q1"], ["q1", "q1"])).toThrow(/duplicate pending/);
   });
 });

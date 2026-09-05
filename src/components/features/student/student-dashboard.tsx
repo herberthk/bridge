@@ -20,7 +20,6 @@ import {
   ShieldAlertIcon,
   TimerIcon,
   TrophyIcon,
-  type LucideIcon,
 } from "lucide-react";
 
 import type { StudentDashboardData } from "@/server/services/analytics";
@@ -32,6 +31,7 @@ import { parseDate } from "@/lib/serialize";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { KpiTile } from "@/components/features/dashboard/kpi-tile";
 import {
   Card,
   CardContent,
@@ -77,55 +77,6 @@ function scoreBar(pct: number): string {
   return "bg-rose-500";
 }
 
-// ─── KPI tile (static numerals — zero JS by design) ───────────────────────────
-
-function KpiTile({
-  icon: Icon,
-  label,
-  value,
-  hint,
-  accent,
-  iconClass,
-}: {
-  icon: LucideIcon;
-  label: string;
-  value: string;
-  hint?: string;
-  accent?: boolean;
-  iconClass?: string;
-}) {
-  return (
-    <div
-      className={cn(
-        "relative overflow-hidden rounded-2xl p-5",
-        accent
-          ? "bg-brand bg-noise text-white shadow-glow ring-1 ring-white/20"
-          : "border bg-card shadow-card",
-      )}
-    >
-      <div className="flex items-center gap-2">
-        <span
-          className={cn(
-            "flex size-8 items-center justify-center rounded-lg",
-            accent ? "bg-white/15 text-white" : iconClass,
-          )}
-        >
-          <Icon className="size-4" />
-        </span>
-        <p className={cn("text-[13px] font-medium", accent ? "opacity-80" : "text-muted-foreground")}>
-          {label}
-        </p>
-      </div>
-      <p className="mt-2.5 truncate text-3xl font-bold tabular-nums">{value}</p>
-      {hint && (
-        <p className={cn("mt-1 truncate text-xs", accent ? "opacity-70" : "text-muted-foreground")}>
-          {hint}
-        </p>
-      )}
-    </div>
-  );
-}
-
 // ─── Main dashboard (server component — no client JS except charts island) ────
 
 export function StudentDashboard({
@@ -133,6 +84,7 @@ export function StudentDashboard({
   todayLabel,
   data,
   attempts,
+  attemptsAvailable,
   requests,
   standing,
   degraded,
@@ -141,6 +93,7 @@ export function StudentDashboard({
   todayLabel: string;
   data: StudentDashboardData | null;
   attempts: StudentAttemptWithExam[];
+  attemptsAvailable: boolean;
   requests: StudentRetakeRequest[];
   standing: StudentClassStanding | null;
   degraded: boolean;
@@ -152,7 +105,9 @@ export function StudentDashboard({
     queue.find(({ attempt }) => attempt.status === "in_progress") ?? queue[0] ?? null;
   const gradedAll = attempts.filter(({ attempt }) => attempt.score !== null);
   const recent = gradedAll.slice(0, 5);
-  const isNew = attempts.length === 0;
+  // A rejected attempts fetch falls back to [] upstream — only treat an
+  // explicitly successful empty load as a brand-new student.
+  const isNew = attemptsAvailable && attempts.length === 0;
 
   const taken = data?.taken ?? gradedAll.length;
   const average =

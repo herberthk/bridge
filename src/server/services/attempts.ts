@@ -196,7 +196,6 @@ export async function submitAttempt(
   const late = now > deadlineMs + 2_000; // 2s network grace
 
   const answers = gradeAnswers(exam.questions, input.answers);
-  const possibleTotal = exam.questions.reduce((n, q) => n + q.points, 0);
   const needsAiGrading = answers.some((a) => a.graded === null && hasAnswer(a.response));
 
   // Objective-only attempts are fully graded right here: leaving them
@@ -226,8 +225,7 @@ export async function submitAttempt(
         input.timeSpentSeconds,
         Math.round((now - startedMs) / 1000),
       ),
-      score:
-        !needsAiGrading && possibleTotal > 0 ? summarizeScore(answers, exam.questions) : null,
+      score: !needsAiGrading ? summarizeScore(answers, exam.questions) : null,
       // Synchronous finalization carries its own timestamp so downstream
       // readers never have to infer "graded" from score presence.
       ...(needsAiGrading ? {} : { gradedAt: ts }),
@@ -339,6 +337,33 @@ export function applyAiGrades(
       },
     };
   });
+}
+
+/**
+ * Throw unless `gradeIds` contains each pending question ID exactly once —
+ * no missing, duplicate, or unknown IDs (pure — unit-tested).
+ *
+ * The AI finalize gate: rejecting before `finalize` leaves the attempt
+ * "submitted" for sweeper retry instead of finalizing a partial grade set
+ * where missing answers would silently score 0.
+ */
+export function assertCompleteGrades(pendingIds: string[], gradeIds: string[]): void {
+  const pendingSet = new Set(pendingIds);
+  if (pendingSet.size !== pendingIds.length) {
+    throw new Error("[grading] invalid grade set: duplicate pending question ids");
+  }
+  if (gradeIds.length !== pendingIds.length) {
+    throw new Error(
+      `[grading] incomplete grade set: expected ${pendingIds.length} grades, got ${gradeIds.length}`,
+    );
+  }
+  const seen = new Set<string>();
+  for (const id of gradeIds) {
+    if (!pendingSet.has(id) || seen.has(id)) {
+      throw new Error(`[grading] invalid grade set: unexpected or duplicate id "${id}"`);
+    }
+    seen.add(id);
+  }
 }
 
 /** Deterministic grading for objective questions (pure — unit-tested). */

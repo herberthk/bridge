@@ -1614,11 +1614,7 @@ export function ResultsView({
             {questions.length > 1 && (
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <div
-                <div
                   role="group"
-                  aria-label="Filter questions by result"
-                  className="flex w-fit flex-wrap gap-1 rounded-full border bg-muted/60 p-1"
-                >
                   aria-label="Filter questions by result"
                   className="flex w-fit flex-wrap gap-1 rounded-full border bg-muted/60 p-1"
                 >
@@ -1628,8 +1624,7 @@ export function ResultsView({
                     return (
                       <button
                         key={t.id}
-                        role="tab"
-                        aria-selected={active}
+                        aria-pressed={active}
                         type="button"
                         onClick={() => handleFilter(t.id)}
                         className={cn(

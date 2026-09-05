@@ -5,33 +5,20 @@ import Link from "next/link";
 import {
   ArrowRightIcon,
   AudioLinesIcon,
-  AwardIcon,
   BarChart3Icon,
-  BookOpenIcon,
-  BotIcon,
   BrainIcon,
   CalculatorIcon,
   CheckCircle2Icon,
   CheckIcon,
   ChevronDownIcon,
   ClockIcon,
-  EyeIcon,
-  FileTextIcon,
-  FlameIcon,
   GraduationCapIcon,
-  HelpCircleIcon,
-  LayersIcon,
-  LockIcon,
   MenuIcon,
   ScanEyeIcon,
   SchoolIcon,
   ShieldCheckIcon,
-  SlidersHorizontalIcon,
-  SmartphoneIcon,
   SparklesIcon,
   StarIcon,
-  TrendingUpIcon,
-  UploadCloudIcon,
   UsersIcon,
   WalletCardsIcon,
   XIcon,
@@ -48,10 +35,8 @@ import {
 } from "@/components/motion";
 import {
   A_LEVEL_SUBJECTS,
-  BILLING,
   O_LEVEL_SUBJECTS,
   PRIMARY_SUBJECTS,
-  QUESTION_TYPE_LABELS,
   SUBJECT_LABELS,
 } from "@/lib/constants";
 import { cn } from "@/lib/utils";
@@ -540,7 +525,7 @@ function InteractiveShowcase() {
                   </span>
                   <div>
                     <p className="font-medium text-foreground">
-                      "Bridge, I need a Senior 3 Biology test on Digestion and Enzymes. Give me 15 multiple choice questions, 5 fill-in-the-blanks, and 1 essay question on enzyme denaturation with temperature."
+                      &ldquo;Bridge, I need a Senior 3 Biology test on Digestion and Enzymes. Give me 15 multiple choice questions, 5 fill-in-the-blanks, and 1 essay question on enzyme denaturation with temperature.&rdquo;
                     </p>
                     <span className="text-[10px] text-muted-foreground mt-0.5 block">00:04s</span>
                   </div>

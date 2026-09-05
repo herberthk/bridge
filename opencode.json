@@ -1,0 +1,27 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "commands": {
+    "review": {
+      "description": "Custom project review rules",
+      "template": "Analyze the diff Focus on Code quality and best practices, Potential bugs and edge cases, Performance implications, Security vulnerabilities, Test coverage. Provide constructive feedback without making direct changes"
+    }
+  },
+  "agent": {
+    "reviewer": {
+      "description": "Review changes without editing files",
+      "mode": "subagent",
+      "prompt": "Focus on Code quality and best practices, Potential bugs and edge cases, Performance implications, Security vulnerabilities, Test coverage. Provide constructive feedback without making direct changes",
+      "permission": {
+        "edit": "deny",
+        "bash": "deny"
+      }
+    }
+  },
+  "compaction": {
+    "auto": true,
+    "keep": {
+      "tokens": 30000
+    },
+    "buffer": 40000
+  }
+}
