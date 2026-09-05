@@ -45,14 +45,6 @@ export const modelIds = {
   live: () => process.env.BRIDGE_MODEL_LIVE ?? "gemini-3.1-flash-live-preview",
 };
 
-/** Gemini 3.x rejects temperature; other configured model families retain it. */
-export function temperatureOptions(
-  modelId: string,
-  temperature: number,
-): { temperature?: number } {
-  return /(?:^|\/)gemini-3(?:[.-]|$)/i.test(modelId) ? {} : { temperature };
-}
-
 /** Fast, balanced default for generation + grading. */
 export function textModel() {
   return google()(modelIds.text());

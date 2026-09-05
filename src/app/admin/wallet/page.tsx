@@ -1,4 +1,4 @@
-export const dynamic = "force-dynamic";
+import type { Metadata } from "next";
 
 import { requireRole } from "@/server/auth/session";
 import {
@@ -7,6 +7,14 @@ import {
 } from "@/server/services/billing";
 import { WalletView } from "@/components/features/admin/wallet-view";
 import { serializeDoc, serializeDocs } from "@/lib/serialize";
+
+export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Wallet & AI Usage | Bridge Admin",
+  description:
+    "Track generative token balance, top-ups and per-execution spend.",
+};
 
 export default async function AdminWalletPage() {
   const actor = await requireRole("admin");

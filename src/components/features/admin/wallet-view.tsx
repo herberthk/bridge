@@ -42,6 +42,7 @@ import {
   formatUgx,
   formatUsd,
   reserveForGeneration,
+  STANDARD_EXAM_TOKEN_ESTIMATE,
   tokensToUsd,
   TOPUP_PACKS,
   usdToUgx,
@@ -518,8 +519,8 @@ export function WalletView({
     return { label: "Low Reserve", badge: "bg-rose-500/15 text-rose-700 border-rose-500/30 dark:text-rose-300" };
   }, [balance]);
 
-  // Capacity estimate: standard 15-question exam with grounding documents ~16,500 tokens
-  const estimatedExamsPossible = Math.floor(balance / 16_500);
+  // Capacity estimate: one standard grounded exam per STANDARD_EXAM_TOKEN_ESTIMATE.
+  const estimatedExamsPossible = Math.floor(balance / STANDARD_EXAM_TOKEN_ESTIMATE);
 
   // ─── Filtering & Sorting ────────────────────────────────────────────────────
   const filteredTransactions = useMemo(() => {
@@ -627,7 +628,14 @@ export function WalletView({
 
   const hasActiveFilters = search || categoryFilter !== "all" || directionFilter !== "all" || dateFilter !== "all";
 
-  // ─── Export CSV ─────────────────────────────────────────────────────────────
+  // Counted once per transaction list — the card footer reads this instead of
+  // filtering on every render.
+  const consumptionCount = useMemo(
+    () => transactions.filter((t) => t.tokensDelta < 0).length,
+    [transactions],
+  );
+
+  // ─── Export CSV (Blob URL — safe for large ledgers and quoted fields) ──────
   const handleExportCSV = useCallback(() => {
     if (sortedTransactions.length === 0) {
       toast.error("No transactions to export");
@@ -652,14 +660,16 @@ export function WalletView({
       ].join(",");
     });
 
-    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows].join("\n");
-    const encodedUri = encodeURI(csvContent);
+    const csvContent = [headers.join(","), ...rows].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8" });
+    const objectUrl = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
+    link.setAttribute("href", objectUrl);
     link.setAttribute("download", `wallet_transactions_${format(new Date(), "yyyyMMdd_HHmm")}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(objectUrl);
     toast.success(`Exported ${sortedTransactions.length} transactions as CSV`);
   }, [sortedTransactions]);
 
@@ -703,7 +713,10 @@ export function WalletView({
 
         {/* ─── Load Failed Warning ─── */}
         {loadFailed && (
-          <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-center gap-3 rounded-xl border p-4 text-sm">
+          <div
+            role="alert"
+            className="border-destructive/30 bg-destructive/10 text-destructive flex items-center gap-3 rounded-xl border p-4 text-sm"
+          >
             <ShieldAlertIcon className="size-5 shrink-0" />
             <div>
               <p className="font-semibold">Wallet data synchronization failed</p>
@@ -711,6 +724,19 @@ export function WalletView({
                 Balances and ledgers shown below may be cached. Try refreshing your browser.
               </p>
             </div>
+          </div>
+        )}
+
+        {/* ─── Low-balance next step ─── */}
+        {!loadFailed && balance < STANDARD_EXAM_TOKEN_ESTIMATE && (
+          <div
+            role="status"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-300"
+          >
+            <p className="text-xs sm:text-sm">
+              <span className="font-semibold">Low fuel:</span> a standard exam
+              needs ~{formatTokens(STANDARD_EXAM_TOKEN_ESTIMATE)} tokens. Top up to keep generating without interruption.
+            </p>
           </div>
         )}
 
@@ -807,7 +833,7 @@ export function WalletView({
               </p>
             </CardContent>
             <CardFooter className="border-t bg-muted/20 py-2 text-[11px] text-muted-foreground">
-              {transactions.filter((t) => t.tokensDelta < 0).length} generative executions recorded
+              {consumptionCount} generative executions recorded
             </CardFooter>
           </Card>
         </div>

@@ -53,16 +53,53 @@ export function ChartSkeleton() {
   );
 }
 
-/** Full dashboard: heading + KPI row + two charts. */
+/** Shared admin hero header — mirrors `AdminPageHeader` (icon + badge + title + actions). */
+export function AdminHeaderSkeleton({ withActions = true }: { withActions?: boolean }) {
+  return (
+    <div className="shadow-card relative overflow-hidden rounded-2xl border bg-card p-6 sm:p-7">
+      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
+        <div className="flex items-start gap-3.5">
+          <Skeleton className="size-11 shrink-0 rounded-xl" />
+          <div className="flex min-w-0 flex-col gap-2">
+            <Skeleton className="h-5 w-36 rounded-full" />
+            <Skeleton className="h-7 w-52 max-w-full" />
+            <Skeleton className="h-4 w-72 max-w-full" />
+          </div>
+        </div>
+        {withActions && (
+          <div className="flex flex-wrap items-center gap-2.5">
+            <Skeleton className="h-9 w-28 rounded-lg" />
+            <Skeleton className="h-9 w-32 rounded-lg" />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Full dashboard: hero header card + KPI row + two charts. */
 export function DashboardSkeleton() {
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-2">
-        <Skeleton className="h-7 w-52" />
-        <Skeleton className="h-4 w-72" />
+      <div className="shadow-card relative overflow-hidden rounded-2xl border bg-card p-6 sm:p-7">
+        <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
+          <div className="flex min-w-0 flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Skeleton className="h-5 w-36 rounded-full" />
+              <Skeleton className="h-3.5 w-40" />
+            </div>
+            <Skeleton className="h-8 w-64 max-w-full" />
+            <Skeleton className="h-4 w-96 max-w-full" />
+          </div>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <Skeleton className="h-9 w-28 rounded-lg" />
+            <Skeleton className="h-9 w-24 rounded-lg" />
+            <Skeleton className="h-9 w-32 rounded-lg" />
+          </div>
+        </div>
       </div>
-      <KpiGridSkeleton />
-      <div className="grid gap-4 lg:grid-cols-2">
+      <KpiGridSkeleton cards={6} />
+      <div className="grid gap-6 lg:grid-cols-2">
         <ChartSkeleton />
         <ChartSkeleton />
       </div>

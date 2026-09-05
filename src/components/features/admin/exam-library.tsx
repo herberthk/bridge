@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 
 import { AssignExamDialog } from "@/components/features/admin/assign-exam-dialog";
+import { AdminPageHeader } from "@/components/features/admin/admin-page-header";
 import { reviewProgress } from "@/lib/exam/review";
 import {
   SUBJECT_LABELS,
@@ -493,22 +494,13 @@ export function ExamLibrary({
     <TooltipProvider delay={200}>
       <div className="flex flex-col gap-6">
         {/* Header with Title & CTA */}
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2.5">
-              <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
-                Exam Library
-              </h1>
-              <Badge variant="outline" className="border-primary/20 bg-primary/5 text-primary text-xs font-semibold">
-                {stats.total} Total
-              </Badge>
-            </div>
-            <p className="text-muted-foreground mt-1 text-sm">
-              Manage, review, filter, and assign curriculum-aligned AI exams across your school.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2.5">
+        <AdminPageHeader
+          icon={<FileStackIcon className="size-5" />}
+          eyebrow="Assessment library"
+          title="Exam Library"
+          description="Manage, review, filter, and assign curriculum-aligned AI exams across your school."
+          meta={`${stats.total} total · ${stats.activeOrScheduled} active · ${stats.draftsNeedingReview} awaiting review`}
+          actions={
             <Button
               className="shadow-glow transition-all hover:scale-[1.02] active:scale-[0.98]"
               nativeButton={false}
@@ -517,8 +509,8 @@ export function ExamLibrary({
               <SparklesIcon data-icon="inline-start" className="size-4 text-amber-300" />
               Generate Exam
             </Button>
-          </div>
-        </div>
+          }
+        />
 
         {/* Overview KPI Cards */}
         <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
@@ -653,9 +645,10 @@ export function ExamLibrary({
                 <Select
                   value={subjectFilter}
                   onValueChange={(val) => {
-                    //@ts-expect-error it will be fixed later
-                    setSubjectFilter(val);
-                    setCurrentPage(1);
+                    if (val) {
+                      setSubjectFilter(val);
+                      setCurrentPage(1);
+                    }
                   }}
                 >
                   <SelectTrigger size="sm" className="w-full">

@@ -121,6 +121,16 @@ export function estimateGradingTokens(questionCount: number): number {
   return questionCount * 500 + 800;
 }
 
+/**
+ * Token cost of one "standard" exam (15 questions with grounding documents).
+ *
+ * Single source of truth for capacity displays and low-balance thresholds:
+ * equals `estimateGenerationTokens(15, true)` (15 × 700 + 6000). Dashboard,
+ * wallet and voice copy must reference this instead of magic numbers so the
+ * figures can't drift apart again.
+ */
+export const STANDARD_EXAM_TOKEN_ESTIMATE = 16_500;
+
 /** Popular top-up packs shown in the wallet UI (tokens). */
 export const TOPUP_PACKS = [
   { tokens: 100_000, label: "Starter" },
