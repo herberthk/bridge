@@ -447,12 +447,10 @@ export interface AttemptDoc {
   recordings: AttemptRecordings;
   gradedAt: Timestamp | null;
   feedback: AttemptFeedback | null;
-  /**
-   * Failed AI-grading runs (generation errors + rejected grade sets).
-   * Caps sweeper retries so a persistently ungradable attempt dead-letters
-   * for a human instead of burning model calls forever. Absent = 0.
-   */
+  /** Claimed AI-grading runs. Caps concurrent and swept model calls. Absent = 0. */
   gradingAttempts?: number;
+  /** Persisted owner token prevents overlapping workers until this lease expires. */
+  gradingLease?: { token: string; expiresAt: Timestamp } | null;
   /** Set when this attempt is an approved retake of an earlier one. */
   retakeOf: string | null;
   retakeAuthorizedBy: string | null;

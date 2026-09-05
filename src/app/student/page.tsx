@@ -23,13 +23,18 @@ const SOURCE_TIMEOUT_MS = 10_000;
 export default async function StudentHomePage() {
   const actor = await requireRole("student");
 
-  const [dashboardRes, attemptsRes, requestsRes] = await Promise.allSettled([
+  const [dashboardRes, attemptsRes, requestsRes, standingRes] = await Promise.allSettled([
     withTimeout(studentDashboard(actor), SOURCE_TIMEOUT_MS, "[student dashboard] dashboard"),
     withTimeout(listStudentAttempts(actor), SOURCE_TIMEOUT_MS, "[student dashboard] attempts"),
     withTimeout(
       listStudentRetakeRequests(actor),
       SOURCE_TIMEOUT_MS,
       "[student dashboard] retake requests",
+    ),
+    withTimeout(
+      getStudentClassStanding(actor),
+      SOURCE_TIMEOUT_MS,
+      "[student dashboard] standing",
     ),
   ]);
 
@@ -41,12 +46,9 @@ export default async function StudentHomePage() {
     if (res.status === "rejected") console.error("[student dashboard] load failed", res.reason);
   }
 
-  let standing: Awaited<ReturnType<typeof getStudentClassStanding>> = null;
-  try {
-    standing = await getStudentClassStanding(actor);
-  } catch (err) {
-    console.error("[student dashboard] standing failed", err);
-    standing = null;
+  const standing = standingRes.status === "fulfilled" ? standingRes.value : null;
+  if (standingRes.status === "rejected") {
+    console.error("[student dashboard] standing failed", standingRes.reason);
   }
 
   const degraded =

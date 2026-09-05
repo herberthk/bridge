@@ -1,10 +1,11 @@
-import { FieldValue } from "firebase-admin/firestore";
+import { randomUUID } from "crypto";
+import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { generateText, Output } from "ai";
 import { z } from "zod";
 import React from "react";
 
-import { modelIds } from "@/server/ai/provider";
-import { attemptDoc, examDoc, userDoc } from "@/server/firebase/collections";
+import { modelIds, temperatureOptions } from "@/server/ai/provider";
+import { attemptDoc, auditLogsCol, examDoc, userDoc } from "@/server/firebase/collections";
 import { adminDb } from "@/server/firebase/admin";
 import { writeAudit } from "@/server/services/audit";
 import { consumeTokens } from "@/server/services/billing";
@@ -48,33 +49,39 @@ export const MAX_GRADING_ATTEMPTS = 5;
  * attempt (`graded`) with per-question + overall feedback.
  *
  * Safe to call redundantly (submit route, internal sweeper, backfills):
- * finalization is claimed inside a transaction, so concurrent or repeated
- * calls grade at most once — losers no-op before billing. Failed runs
- * increment `gradingAttempts`; past the cap the attempt is left `submitted`
- * with an `attempt.grading_exhausted` audit for staff to pick up.
+ * generation is claimed inside a transaction, so concurrent or repeated calls
+ * make at most one model request at a time. Each claim increments
+ * `gradingAttempts`; past the cap the attempt stays `submitted` with an
+ * `attempt.grading_exhausted` audit for staff to pick up.
  */
 export async function gradeAttemptWithAi(attemptId: string): Promise<void> {
   const attemptSnap = await attemptDoc(attemptId).get();
   if (!attemptSnap.exists) return;
   const attempt = attemptSnap.data()!;
   if (attempt.status !== "submitted") return;
-  if ((attempt.gradingAttempts ?? 0) >= MAX_GRADING_ATTEMPTS) {
-    // Dead-lettered: a previous run already left the exhausted trace, so
-    // only log for host-level visibility and stop before spending tokens.
-    console.error("[grading] attempts exhausted", { attemptId });
-    return;
-  }
-
   const examSnap = await examDoc(attempt.examId).get();
   if (!examSnap.exists) return;
   const exam = examSnap.data()!;
 
-  const pending = attempt.answers.filter((a) => a.graded === null && hasAnswer(a.response));
-  if (pending.length === 0) {
+  const initiallyPending = attempt.answers.filter(
+    (a) => a.graded === null && hasAnswer(a.response),
+  );
+  if (initiallyPending.length === 0) {
     // Nothing for the model to do (objective-only or blank essays) — claim
     // and finalize synchronously. This is also the self-heal path for docs
     // submitted before synchronous finalization existed.
     await finalize(attemptId, attempt, exam, [], null);
+    return;
+  }
+
+  const claim = await claimGradingRun(attemptId);
+  if (!claim) return;
+  const pending = claim.attempt.answers.filter(
+    (a) => a.graded === null && hasAnswer(a.response),
+  );
+
+  if (pending.length === 0) {
+    await finalize(attemptId, claim.attempt, exam, [], null, claim.token);
     return;
   }
 
@@ -88,7 +95,7 @@ export async function gradeAttemptWithAi(attemptId: string): Promise<void> {
     console.error("[grading] AI failed", err);
     // Leave the attempt "submitted" for the sweeper retry, but leave a trace
     // so stuck attempts are distinguishable from merely slow ones.
-    await recordGradingFailure(attemptId, pending.length, err);
+    await recordGradingFailure(attemptId, claim.token, pending.length, err);
     throw err;
   }
 
@@ -103,16 +110,23 @@ export async function gradeAttemptWithAi(attemptId: string): Promise<void> {
     );
   } catch (err) {
     console.error("[grading] invalid grade set", err);
-    await recordGradingFailure(attemptId, pending.length, err);
+    await recordGradingFailure(attemptId, claim.token, pending.length, err);
     throw err;
   }
 
-  const claimed = await finalize(attemptId, attempt, exam, output.grades, {
-    overall: output.overallFeedback,
-    strengths: output.strengths,
-    improvements: output.improvements,
-    generatedByModel: modelIds.text(),
-  });
+  const claimed = await finalize(
+    attemptId,
+    claim.attempt,
+    exam,
+    output.grades,
+    {
+      overall: output.overallFeedback,
+      strengths: output.strengths,
+      improvements: output.improvements,
+      generatedByModel: modelIds.text(),
+    },
+    claim.token,
+  );
   // Lost the finalize race (concurrent retry won) — it already billed.
   if (!claimed) return;
 
@@ -156,8 +170,41 @@ export async function gradeAttemptWithAi(attemptId: string): Promise<void> {
  * A larger budget just burns a doomed second attempt before the host kills it.
  */
 const GRADING_CALL_TIMEOUT_MS = 50_000;
+const GRADING_LEASE_MS = GRADING_CALL_TIMEOUT_MS * 2 + 15_000;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function claimGradingRun(
+  attemptId: string,
+): Promise<{ attempt: AttemptDoc; token: string } | null> {
+  const token = randomUUID();
+  return adminDb().runTransaction(async (tx) => {
+    const ref = attemptDoc(attemptId);
+    const snap = await tx.get(ref);
+    if (!snap.exists) return null;
+
+    const current = snap.data()!;
+    const now = Date.now();
+    const leaseActive = (current.gradingLease?.expiresAt.toMillis() ?? 0) > now;
+    if (
+      current.status !== "submitted" ||
+      leaseActive ||
+      (current.gradingAttempts ?? 0) >= MAX_GRADING_ATTEMPTS
+    ) {
+      return null;
+    }
+
+    tx.update(ref, {
+      gradingAttempts: (current.gradingAttempts ?? 0) + 1,
+      gradingLease: {
+        token,
+        expiresAt: Timestamp.fromMillis(now + GRADING_LEASE_MS),
+      },
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    return { attempt: current, token };
+  });
+}
 
 /**
  * One grading call plus a single retry for transient Vertex blips (quota,
@@ -198,7 +245,7 @@ async function generateGrades(
           }),
         }),
         output: Output.object({ schema: essayGradeSchema }),
-        temperature: 0.3,
+        ...temperatureOptions(modelId, 0.3),
         maxOutputTokens: Math.min(12_000, Math.max(2_000, pending.length * 500 + 800)),
         abortSignal: AbortSignal.timeout(GRADING_CALL_TIMEOUT_MS),
         providerOptions: {
@@ -228,30 +275,46 @@ async function generateGrades(
  */
 async function recordGradingFailure(
   attemptId: string,
+  leaseToken: string,
   pendingCount: number,
   err: unknown,
 ): Promise<void> {
-  await attemptDoc(attemptId)
-    .update({
-      gradingAttempts: FieldValue.increment(1),
-      updatedAt: FieldValue.serverTimestamp(),
+  await adminDb()
+    .runTransaction(async (tx) => {
+      const ref = attemptDoc(attemptId);
+      const snap = await tx.get(ref);
+      if (
+        !snap.exists ||
+        snap.data()!.status !== "submitted" ||
+        snap.data()!.gradingLease?.token !== leaseToken
+      ) {
+        return;
+      }
+
+      const failures = snap.data()!.gradingAttempts ?? 1;
+      const exhausted = failures >= MAX_GRADING_ATTEMPTS;
+      const timestamp = FieldValue.serverTimestamp();
+      tx.update(ref, {
+        gradingLease: null,
+        updatedAt: timestamp,
+      });
+      tx.create(auditLogsCol().doc(), {
+        actorId: null,
+        actorRole: null,
+        action: exhausted ? "attempt.grading_exhausted" : "attempt.grading_failed",
+        targetType: "attempt",
+        targetId: attemptId,
+        meta: {
+          pending: pendingCount,
+          failures,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        ip: null,
+        userAgent: null,
+        createdAt: timestamp,
+      });
     })
     .catch(() => undefined);
-  const snap = await attemptDoc(attemptId).get().catch(() => null);
-  const failures = snap?.exists ? (snap.data()!.gradingAttempts ?? 1) : 1;
-  const exhausted = failures >= MAX_GRADING_ATTEMPTS;
-  await writeAudit({
-    actorId: null,
-    actorRole: null,
-    action: exhausted ? "attempt.grading_exhausted" : "attempt.grading_failed",
-    targetType: "attempt",
-    targetId: attemptId,
-    meta: {
-      pending: pendingCount,
-      failures,
-      error: err instanceof Error ? err.message : String(err),
-    },
-  }).catch(() => undefined);
 }
 
 async function notifyStudentOfResults(attemptId: string): Promise<void> {
@@ -306,6 +369,7 @@ async function finalize(
   exam: ExamDoc,
   aiGrades: { questionId: string; earned: number; possible: number; feedback: string }[],
   feedback: Omit<AttemptFeedback, "perQuestion"> | null,
+  leaseToken: string | null = null,
 ): Promise<boolean> {
   // Shared pure helpers: per-question merge (AI `possible` normalized to the
   // paper) plus prose repair for AI-written feedback only.
@@ -343,12 +407,19 @@ async function finalize(
   // returns false, so the loser stops before billing.
   return adminDb().runTransaction(async (tx) => {
     const snap = await tx.get(attemptDoc(attemptId));
-    if (!snap.exists || snap.data()!.status !== "submitted") return false;
+    if (
+      !snap.exists ||
+      snap.data()!.status !== "submitted" ||
+      (leaseToken !== null && snap.data()!.gradingLease?.token !== leaseToken)
+    ) {
+      return false;
+    }
     tx.update(attemptDoc(attemptId), {
       status: "graded",
       answers,
       score,
       feedback: fullFeedback,
+      gradingLease: null,
       gradedAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });

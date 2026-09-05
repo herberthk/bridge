@@ -67,7 +67,7 @@ export default async function StudentExamsPage() {
   const completed = items.filter(
     (i) => i.attempt.status !== "pending" && i.attempt.status !== "in_progress",
   );
-  const scored = completed.filter((i) => i.attempt.score !== null);
+  const scored = completed.filter((i) => i.attempt.score != null);
   const avg =
     scored.length > 0
       ? Math.round(

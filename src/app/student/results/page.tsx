@@ -1,7 +1,6 @@
 export const dynamic = "force-dynamic";
 
 import Link from "next/link";
-import { format } from "date-fns";
 import {
   AlertTriangleIcon,
   ArrowRightIcon,
@@ -26,6 +25,16 @@ import { KpiTile } from "@/components/features/dashboard/kpi-tile";
 
 export const metadata = { title: "Results • Bridge" };
 
+const gradedAtFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Africa/Kampala",
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
 // ─── Small pure helpers (server — zero client JS) ─────────────────────────────
 
 function subjectOf(code: string): string {
@@ -42,6 +51,13 @@ function scoreTone(pct: number): string {
   if (pct >= 80) return "text-emerald-600 dark:text-emerald-400";
   if (pct >= 50) return "text-amber-600 dark:text-amber-400";
   return "text-rose-600 dark:text-rose-400";
+}
+
+function formatGradedAt(value: Date): string {
+  const parts = Object.fromEntries(
+    gradedAtFormatter.formatToParts(value).map(({ type, value: part }) => [type, part]),
+  );
+  return `${parts.day} ${parts.month} ${parts.year}, ${parts.hour}:${parts.minute}`;
 }
 
 /** Pure-SVG score ring — no chart library, no client JS. */
@@ -104,7 +120,7 @@ export default async function StudentResultsPage() {
     (i) => i.attempt.status === "graded" || i.attempt.status === "flagged",
   );
   const awaiting = items.filter((i) => i.attempt.status === "submitted");
-  const scored = graded.filter((i) => i.attempt.score !== null);
+  const scored = graded.filter((i) => i.attempt.score != null);
   const pcts = scored.map((i) => i.attempt.score!.percentage);
   const avg =
     pcts.length > 0 ? Math.round(pcts.reduce((n, p) => n + p, 0) / pcts.length) : null;
@@ -382,7 +398,7 @@ export default async function StudentResultsPage() {
                           ? `${attempt.score.earned}/${attempt.score.possible} marks · `
                           : ""}
                         {gradedWhen
-                          ? format(gradedWhen, "d MMM yyyy, HH:mm")
+                          ? formatGradedAt(gradedWhen)
                           : attempt.status === "flagged"
                             ? "Under review"
                             : "Grading…"}
