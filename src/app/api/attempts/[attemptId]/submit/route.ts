@@ -1,9 +1,17 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { after, NextResponse, type NextRequest } from "next/server";
 
 import { submitAttemptSchema } from "@/lib/schemas/attempt";
 import { apiUser } from "@/server/auth/session";
 import { submitAttempt, AttemptsServiceError } from "@/server/services/attempts";
 import { gradeAttemptWithAi } from "@/server/services/grading";
+
+/**
+ * Covers the synchronous submit plus the `after()` grading window below: one
+ * 50s grading call fits, the retry may not. If the host caps lower (Vercel
+ * Hobby: 60s), a killed grading run is safe: the attempt stays "submitted"
+ * and the sweeper retries via /api/internal/grade-attempt.
+ */
+export const maxDuration = 60;
 
 export async function POST(
   request: NextRequest,
@@ -25,9 +33,14 @@ export async function POST(
     const result = await submitAttempt(actor, attemptId, parsed.data);
 
     // Fire-and-forget AI grading for essays — results appear when ready.
+    // `after()` (not bare `void`) keeps the work alive past the response on
+    // serverless hosts, where a detached promise can be frozen mid-run and
+    // strand the attempt in "submitted" forever.
     if (result.needsAiGrading) {
-      void gradeAttemptWithAi(attemptId).catch((err) =>
-        console.error("[grading] async AI grading failed", err),
+      after(() =>
+        gradeAttemptWithAi(attemptId).catch((err) =>
+          console.error("[grading] async AI grading failed", err),
+        ),
       );
     }
 

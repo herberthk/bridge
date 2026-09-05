@@ -13,6 +13,7 @@ import type { SessionUser } from "@/server/auth/session";
 import type {
   AttemptAnswer,
   AttemptDoc,
+  AttemptScore,
   ExamDoc,
   GradedAnswer,
   ProctoringEventDoc,
@@ -27,6 +28,7 @@ import type {
   SubmitAttemptInput,
 } from "@/lib/schemas/attempt";
 import { normalizeAnswer } from "@/lib/schemas/attempt";
+import { hasResponse as hasAnswer } from "@/lib/exam/review-buckets";
 import { PROCTORING } from "@/lib/constants";
 import { notifyUsers, staffRecipientsForStudent } from "@/server/services/notifications";
 
@@ -194,12 +196,16 @@ export async function submitAttempt(
   const late = now > deadlineMs + 2_000; // 2s network grace
 
   const answers = gradeAnswers(exam.questions, input.answers);
-  const objective = answers.filter((a) => a.graded !== null);
-  const earned = objective.reduce((n, a) => n + (a.graded?.earned ?? 0), 0);
   const possibleTotal = exam.questions.reduce((n, q) => n + q.points, 0);
-  const needsAiGrading = answers.some(
-    (a) => a.graded === null && a.response !== null,
-  );
+  const needsAiGrading = answers.some((a) => a.graded === null && hasAnswer(a.response));
+
+  // Objective-only attempts are fully graded right here: leaving them
+  // "submitted" strands them — the AI service is the sole writer of "graded"
+  // and the submit route only invokes it when needsAiGrading is true, so such
+  // attempts previously kept their score but showed "Grading…" forever (and
+  // silently dropped out of leaderboards and retake eligibility, which all
+  // filter on status).
+  const finalStatus = needsAiGrading ? "submitted" : "graded";
 
   // Transactional write with an in_progress guard: a concurrent proctoring
   // termination (flag) must win over a late manual submit, never the reverse.
@@ -212,7 +218,7 @@ export async function submitAttempt(
     }
     const ts = FieldValue.serverTimestamp();
     tx.update(attemptRef(attemptId), {
-      status: "submitted",
+      status: finalStatus,
       answers,
       submittedAt: ts,
       autoSubmitted: input.autoSubmitted || late,
@@ -221,16 +227,13 @@ export async function submitAttempt(
         Math.round((now - startedMs) / 1000),
       ),
       score:
-        !needsAiGrading && possibleTotal > 0
-          ? {
-              earned,
-              possible: possibleTotal,
-              percentage: Math.round((earned / possibleTotal) * 100),
-            }
-          : null,
+        !needsAiGrading && possibleTotal > 0 ? summarizeScore(answers, exam.questions) : null,
+      // Synchronous finalization carries its own timestamp so downstream
+      // readers never have to infer "graded" from score presence.
+      ...(needsAiGrading ? {} : { gradedAt: ts }),
       updatedAt: ts,
     });
-    return { committed: true, currentStatus: "submitted" };
+    return { committed: true, currentStatus: finalStatus };
   });
 
   if (!result.committed) {
@@ -266,7 +269,76 @@ export async function submitAttempt(
     }
   })();
 
-  return { status: "submitted", needsAiGrading };
+  return { status: finalStatus, needsAiGrading };
+}
+
+/**
+ * A response worth sending to the AI grader.
+ *
+ * Blank essays (`""`, whitespace-only, untouched per-slot arrays) finalize
+ * instantly as skipped (0 marks, no feedback) instead of burning a model
+ * call — the review UI already buckets unanswered responses that way.
+ *
+ * Single-sourced from the client-safe review module so submit bucketing and
+ * review bucketing cannot drift apart.
+ */
+export { hasAnswer };
+
+/**
+ * Attempt totals from graded answers — the single implementation behind both
+ * writers (synchronous submit and AI finalize), so the two paths cannot
+ * drift apart. Skipped/ungraded answers contribute 0 earned but keep their
+ * full weight in `possible`; rounding is half-up via Math.round.
+ */
+export function summarizeScore(
+  answers: AttemptAnswer[],
+  questions: Pick<Question, "points">[],
+): AttemptScore {
+  const earned = answers.reduce((n, a) => n + (a.graded?.earned ?? 0), 0);
+  const possible = questions.reduce((n, q) => n + q.points, 0);
+  return { earned, possible, percentage: possible > 0 ? Math.round((earned / possible) * 100) : 0 };
+}
+
+/** One AI grade as produced by the essay grading schema. */
+export interface AiGrade {
+  questionId: string;
+  earned: number;
+  possible: number;
+  feedback: string;
+}
+
+/**
+ * Merge AI grades into stored answers (pure — unit-tested).
+ *
+ * The model is instructed to grade against each question's marks, but its
+ * echoed `possible` is not trustworthy: normalizing to the paper's points
+ * keeps the per-question badge and the attempt percentage on the same
+ * denominator. `earned` is clamped into range, and grades for unknown
+ * question ids are ignored. `correct` uniformly means full marks — partial
+ * credit lands on the failed side, matching the deterministic grader above.
+ */
+export function applyAiGrades(
+  answers: AttemptAnswer[],
+  aiGrades: AiGrade[],
+  questions: Pick<Question, "id" | "points">[],
+): AttemptAnswer[] {
+  const gradesByQuestion = new Map(aiGrades.map((g) => [g.questionId, g]));
+  const pointsByQuestion = new Map(questions.map((q) => [q.id, q.points]));
+  return answers.map((a) => {
+    const ai = gradesByQuestion.get(a.questionId);
+    if (!ai) return a;
+    const possible = Math.max(0, pointsByQuestion.get(a.questionId) ?? ai.possible);
+    const earned = Math.min(Math.max(0, ai.earned), possible);
+    return {
+      ...a,
+      graded: {
+        earned,
+        possible,
+        correct: possible > 0 ? earned >= possible : null,
+        feedback: ai.feedback,
+      },
+    };
+  });
 }
 
 /** Deterministic grading for objective questions (pure — unit-tested). */
@@ -454,9 +526,17 @@ type AttemptListFields = Pick<
 export type StudentAttemptListItem = WithId<AttemptListFields>;
 
 /** Attempts visible to a student, newest first, with exam metadata joined. */
-export async function listStudentAttempts(actor: SessionUser): Promise<
-  { attempt: StudentAttemptListItem; exam: { id: string; title: string; subject: string; durationMinutes: number; questionCount: number } | null }[]
-> {
+export interface StudentAttemptWithExam {
+  attempt: StudentAttemptListItem;
+  exam: {
+    id: string;
+    title: string;
+    subject: string;
+    durationMinutes: number;
+    questionCount: number;
+  } | null;
+}
+export async function listStudentAttempts(actor: SessionUser): Promise<StudentAttemptWithExam[]> {
   // List views only need metadata — project away the heavy answers/feedback
   // arrays so listing 100 attempts doesn't deserialize megabytes.
   const snap = await attemptsCol()
