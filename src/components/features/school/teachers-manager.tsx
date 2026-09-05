@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useActionState, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { memo, useActionState, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { format } from "date-fns";
 import {
   ClipboardListIcon,
@@ -56,15 +56,10 @@ export function TeachersManager({
   schoolName: string;
 }) {
   const [query, setQuery] = useState("");
-  // Search typing stays responsive on large rosters — filtering runs as a
-  // transition so keystrokes aren't blocked by table re-renders.
-  const [, startSearchTransition] = useTransition();
-
-  const handleQueryChange = (value: string) => {
-    startSearchTransition(() => {
-      setQuery(value);
-    });
-  };
+  // Search typing stays responsive on large rosters — the input updates
+  // synchronously while filtering runs against a deferred value, so keystrokes
+  // aren't blocked by table re-renders.
+  const deferredQuery = useDeferredValue(query);
 
   // Class lookup is stable across rows — build once instead of filtering
   // per teacher on every render.
@@ -83,8 +78,8 @@ export function TeachersManager({
   }, [teachers, classes]);
 
   const filteredTeachers = useMemo(
-    () => filterTeachers(teachers, query),
-    [teachers, query],
+    () => filterTeachers(teachers, deferredQuery),
+    [teachers, deferredQuery],
   );
   const unassignedCount = useMemo(
     () =>
@@ -133,7 +128,7 @@ export function TeachersManager({
                 <SearchIcon className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2" />
                 <Input
                   value={query}
-                  onChange={(e) => handleQueryChange(e.target.value)}
+                  onChange={(e) => setQuery(e.target.value)}
                   placeholder="Search name or email…"
                   aria-label="Search teachers"
                   className="h-8 pl-8 text-xs"
@@ -170,7 +165,8 @@ export function TeachersManager({
           ) : filteredTeachers.length === 0 ? (
             <div className="flex flex-col items-center gap-2 p-10 text-center">
               <SearchIcon className="text-muted-foreground/40 size-8" />
-              <p className="font-medium">No teachers match “{query}”</p>
+              {/* Deferred value — matches the filtered list during the defer window. */}
+              <p className="font-medium">No teachers match “{deferredQuery}”</p>
               <Button variant="outline" size="sm" onClick={() => setQuery("")}>
                 Clear search
               </Button>

@@ -42,12 +42,14 @@ import {
   formatUgx,
   formatUsd,
   reserveForGeneration,
+  STANDARD_EXAM_RESERVE,
   STANDARD_EXAM_TOKEN_ESTIMATE,
   tokensToUsd,
   TOPUP_PACKS,
   usdToUgx,
   voiceMinutesToUsd,
 } from "@/lib/pricing";
+import { isConsumptionTransaction, isCreditTransaction } from "@/lib/admin-ui";
 import type { TransactionCategory, TransactionDoc, WalletDoc } from "@/types/firestore";
 import { AddCreditDialog } from "@/components/features/school/add-credit-dialog";
 import { parseDate, type SerializedWithId } from "@/lib/serialize";
@@ -519,7 +521,10 @@ export function WalletView({
     return { label: "Low Reserve", badge: "bg-rose-500/15 text-rose-700 border-rose-500/30 dark:text-rose-300" };
   }, [balance]);
 
-  // Capacity estimate: one standard grounded exam per STANDARD_EXAM_TOKEN_ESTIMATE.
+  // Capacity estimate is token-cost based (balance / STANDARD_EXAM_TOKEN_ESTIMATE).
+  // Distinct from startability (balance / STANDARD_EXAM_RESERVE) used by the
+  // low-balance banner — a wallet can hold "1 exam worth of tokens" yet still
+  // be below the 3× pre-flight reserve.
   const estimatedExamsPossible = Math.floor(balance / STANDARD_EXAM_TOKEN_ESTIMATE);
 
   // ─── Filtering & Sorting ────────────────────────────────────────────────────
@@ -544,9 +549,11 @@ export function WalletView({
         return false;
       }
 
-      // 3. Direction Filter
-      if (directionFilter === "consumption" && tx.tokensDelta >= 0) return false;
-      if (directionFilter === "topup" && tx.tokensDelta < 0) return false;
+      // 3. Direction Filter — shares predicates with consumptionCount below so
+      // the footer total matches the "Deductions only" list (incl. zero-token
+      // voice sessions, which are type consumption with delta 0).
+      if (directionFilter === "consumption" && !isConsumptionTransaction(tx)) return false;
+      if (directionFilter === "topup" && !isCreditTransaction(tx)) return false;
 
       // 4. Date Filter
       if (dateFilter !== "all") {
@@ -629,9 +636,9 @@ export function WalletView({
   const hasActiveFilters = search || categoryFilter !== "all" || directionFilter !== "all" || dateFilter !== "all";
 
   // Counted once per transaction list — the card footer reads this instead of
-  // filtering on every render.
+  // filtering on every render. Same predicate as the direction filter above.
   const consumptionCount = useMemo(
-    () => transactions.filter((t) => t.tokensDelta < 0).length,
+    () => transactions.filter(isConsumptionTransaction).length,
     [transactions],
   );
 
@@ -728,14 +735,14 @@ export function WalletView({
         )}
 
         {/* ─── Low-balance next step ─── */}
-        {!loadFailed && balance < STANDARD_EXAM_TOKEN_ESTIMATE && (
+        {!loadFailed && balance < STANDARD_EXAM_RESERVE && (
           <div
             role="status"
             className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-300"
           >
             <p className="text-xs sm:text-sm">
               <span className="font-semibold">Low fuel:</span> a standard exam
-              needs ~{formatTokens(STANDARD_EXAM_TOKEN_ESTIMATE)} tokens. Top up to keep generating without interruption.
+              needs ~{formatTokens(STANDARD_EXAM_RESERVE)} tokens held in reserve. Top up to keep generating without interruption.
             </p>
           </div>
         )}
@@ -775,7 +782,7 @@ export function WalletView({
                   Valuation: <strong className="font-semibold">{formatUsd(balanceUsd)}</strong> ({formatUgx(balanceUgx)})
                 </span>
                 <span>
-                  ≈ <strong>{estimatedExamsPossible}</strong> exams capacity
+                  ≈ <strong>{estimatedExamsPossible}</strong> exams worth of tokens
                 </span>
               </div>
             </div>
@@ -833,7 +840,7 @@ export function WalletView({
               </p>
             </CardContent>
             <CardFooter className="border-t bg-muted/20 py-2 text-[11px] text-muted-foreground">
-              {consumptionCount} generative executions recorded
+              {consumptionCount} consumption transactions recorded
             </CardFooter>
           </Card>
         </div>
@@ -1096,7 +1103,8 @@ export function WalletView({
 
               <TableBody>
                 {paginatedTransactions.map((t) => {
-                  const isCredit = t.tokensDelta >= 0;
+                  const isConsumption = isConsumptionTransaction(t);
+                  const isCredit = isCreditTransaction(t);
                   const categoryMeta = CATEGORY_CONFIG[t.category as TransactionCategory] ?? CATEGORY_CONFIG.text_generation;
                   const CategoryIcon = categoryMeta.icon;
                   const parsedDate = t.createdAt ? parseDate(t.createdAt) : null;
@@ -1154,15 +1162,17 @@ export function WalletView({
                           className={`inline-flex items-center gap-1 font-mono text-xs font-semibold ${
                             isCredit
                               ? "text-emerald-600 dark:text-emerald-400"
-                              : "text-rose-600 dark:text-rose-400"
+                              : isConsumption
+                                ? "text-rose-600 dark:text-rose-400"
+                                : "text-muted-foreground"
                           }`}
                         >
                           {isCredit ? (
                             <ArrowUpIcon className="size-3.5" />
-                          ) : (
+                          ) : isConsumption ? (
                             <ArrowDownIcon className="size-3.5" />
-                          )}
-                          {isCredit ? "+" : "-"}
+                          ) : null}
+                          {isCredit ? "+" : isConsumption ? "-" : ""}
                           {Math.abs(t.tokensDelta).toLocaleString()}
                         </span>
                       </TableCell>

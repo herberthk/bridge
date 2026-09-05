@@ -62,6 +62,46 @@ export interface SchoolProfileLike {
   description?: string | null;
 }
 
+/** Minimal actor shape for workspace gating — avoids importing auth types. */
+export interface WorkspaceActorLike {
+  role: string;
+  schoolId?: string | null;
+}
+
+/**
+ * Whether the onboarding card applies. School-admin workspaces (role admin +
+ * schoolId) invite teachers and create classes; standalone instructor
+ * workspaces can't — both server paths 403 without a schoolId.
+ */
+export function isSchoolAdminWorkspace(actor: WorkspaceActorLike): boolean {
+  return actor.role === "admin" && Boolean(actor.schoolId);
+}
+
+export interface LedgerTxLike {
+  type: string;
+  tokensDelta: number;
+}
+
+/**
+ * Consumption for counts + "Deductions only" filter. `type === "consumption"`
+ * is the source of truth so zero-token voice sessions (billed by minutes,
+ * `tokensDelta: 0`) count; `tokensDelta < 0` catches negative adjustments
+ * whose type is "adjustment".
+ */
+export function isConsumptionTransaction(tx: LedgerTxLike): boolean {
+  return tx.type === "consumption" || tx.tokensDelta < 0;
+}
+
+/**
+ * Credits for the "Credits only" filter. Zero-token consumption rows must not
+ * leak into credits: a voice session with `tokensDelta: 0` is consumption,
+ * not a top-up.
+ */
+export function isCreditTransaction(tx: LedgerTxLike): boolean {
+  if (tx.type === "consumption") return false;
+  return tx.type === "topup" || tx.type === "refund" || tx.tokensDelta > 0;
+}
+
 export interface ProfileCompleteness {
   completed: number;
   total: number;

@@ -124,12 +124,25 @@ export function estimateGradingTokens(questionCount: number): number {
 /**
  * Token cost of one "standard" exam (15 questions with grounding documents).
  *
- * Single source of truth for capacity displays and low-balance thresholds:
- * equals `estimateGenerationTokens(15, true)` (15 × 700 + 6000). Dashboard,
- * wallet and voice copy must reference this instead of magic numbers so the
- * figures can't drift apart again.
+ * Single source of truth for capacity displays: equals
+ * `estimateGenerationTokens(15, true)` (15 × 700 + 6000). Dashboard, wallet
+ * and voice copy must reference this instead of magic numbers so the figures
+ * can't drift apart again. This is the *token cost*, not the pre-flight hold —
+ * see STANDARD_EXAM_RESERVE for the amount the server actually demands.
  */
-export const STANDARD_EXAM_TOKEN_ESTIMATE = 16_500;
+export const STANDARD_EXAM_TOKEN_ESTIMATE = estimateGenerationTokens(15, true);
+
+/**
+ * Tokens a wallet must hold to start one standard exam. Same 3× policy the
+ * cost calculator quotes (`reserveForGeneration`) and `assertCanAfford`
+ * enforces, so the low-balance banner can't disagree with either.
+ *
+ * Kept separate from STANDARD_EXAM_TOKEN_ESTIMATE on purpose: capacity
+ * ("≈ N exams worth of tokens") divides by cost, while startability divides
+ * by reserve. Conflating them shows "1 exam capacity" next to a "low fuel"
+ * banner at the same balance.
+ */
+export const STANDARD_EXAM_RESERVE = reserveForGeneration(STANDARD_EXAM_TOKEN_ESTIMATE);
 
 /** Popular top-up packs shown in the wallet UI (tokens). */
 export const TOPUP_PACKS = [

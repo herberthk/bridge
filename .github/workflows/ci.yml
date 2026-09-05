@@ -29,8 +29,8 @@ jobs:
       - name: Lint
         run: bun run lint
 
-      - name: Typecheck
-        run: bun run typecheck
+      - name: Build the app
+        run: bun run build
 
       - name: Unit tests
         run: bun run test

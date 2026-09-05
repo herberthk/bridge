@@ -311,10 +311,10 @@ export async function reviseQuestions(
         items.map((i) => i.type),
       ),
       prompt: questionRevisionPrompt(exam.params, items),
-      // Lower than generation's 0.35. There is nothing to invent here: the question
-      // exists and the instruction says what to do to it, so sampling variety buys
-      // only drift from an original the reviewer wants left alone.
-      // temperature: 0.2,
+      // Sampling is provider-default (no temperature override): there is nothing
+      // to invent here — the question exists and the instruction says what to do
+      // to it, so sampling variety buys only drift from an original the reviewer
+      // wants left alone.
       maxOutputTokens: cap,
       maxRetries: AI_CALL_RETRIES,
       abortSignal: AbortSignal.timeout(REVISION_TIMEOUT_MS),
