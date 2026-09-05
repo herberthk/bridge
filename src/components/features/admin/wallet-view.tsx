@@ -1103,7 +1103,8 @@ export function WalletView({
 
               <TableBody>
                 {paginatedTransactions.map((t) => {
-                  const isCredit = t.tokensDelta >= 0;
+                  const isConsumption = isConsumptionTransaction(t);
+                  const isCredit = isCreditTransaction(t);
                   const categoryMeta = CATEGORY_CONFIG[t.category as TransactionCategory] ?? CATEGORY_CONFIG.text_generation;
                   const CategoryIcon = categoryMeta.icon;
                   const parsedDate = t.createdAt ? parseDate(t.createdAt) : null;
@@ -1161,15 +1162,17 @@ export function WalletView({
                           className={`inline-flex items-center gap-1 font-mono text-xs font-semibold ${
                             isCredit
                               ? "text-emerald-600 dark:text-emerald-400"
-                              : "text-rose-600 dark:text-rose-400"
+                              : isConsumption
+                                ? "text-rose-600 dark:text-rose-400"
+                                : "text-muted-foreground"
                           }`}
                         >
                           {isCredit ? (
                             <ArrowUpIcon className="size-3.5" />
-                          ) : (
+                          ) : isConsumption ? (
                             <ArrowDownIcon className="size-3.5" />
-                          )}
-                          {isCredit ? "+" : "-"}
+                          ) : null}
+                          {isCredit ? "+" : isConsumption ? "-" : ""}
                           {Math.abs(t.tokensDelta).toLocaleString()}
                         </span>
                       </TableCell>
