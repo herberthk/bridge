@@ -293,7 +293,7 @@ function CompletedRow({ attempt, exam }: AttemptWithExam) {
       {exam && (
         <Link
           href={`/student/exams/${exam.id}`}
-          className="relative z-10 hidden shrink-0 items-center gap-1 text-[11px] font-medium text-primary opacity-0 transition-opacity group-hover:opacity-100 hover:underline sm:flex"
+          className="relative z-10 hidden shrink-0 items-center gap-1 text-[11px] font-medium text-primary opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 hover:underline sm:flex"
         >
           <HistoryIcon className="size-3" />
           History
