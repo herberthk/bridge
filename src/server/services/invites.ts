@@ -104,6 +104,9 @@ export async function createTeacherInvite(
     email,
     role: "teacher",
     classIds: input.classIds,
+    // Default-off at the service layer too — never depend on the caller
+    // (or the form schema) to supply the privilege explicitly.
+    canCreateClasses: input.canCreateClasses ?? false,
     status: "pending",
     tokenHash: hashInviteToken(token),
     invitedBy: actor.uid,
@@ -135,7 +138,12 @@ export async function createTeacherInvite(
     action: "invite.created",
     targetType: "invite",
     targetId: ref.id,
-    meta: { email, schoolId: actor.schoolId, classes: input.classIds.length },
+    meta: {
+      email,
+      schoolId: actor.schoolId,
+      classes: input.classIds.length,
+      canCreateClasses: input.canCreateClasses ?? false,
+    },
   });
 
   const saved = await ref.get();
@@ -257,6 +265,9 @@ export async function acceptTeacherInvite(input: {
       secondarySubLevel: null,
       classId: null,
       assignedClassIds: invite.classIds,
+      // Granted at invite time when the admin ticked the box (pre-privilege
+      // invites carry no flag and resolve to denied).
+      canCreateClasses: invite.canCreateClasses === true,
       createdBy: invite.invitedBy,
       banReason: null,
       suspendedUntil: null,

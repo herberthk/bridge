@@ -57,7 +57,7 @@ export const createSelfSchoolSchema = z.object({
 });
 export type CreateSelfSchoolInput = z.infer<typeof createSelfSchoolSchema>;
 
-/** Staff (admin or teacher) creating missing classes for their school. */
+/** Staff creating missing classes — admins always, teachers only with the granted privilege. */
 export const createClassesSchema = z.object({
   classLevels: z
     .array(z.coerce.number().int())
@@ -101,6 +101,12 @@ export const createTeacherInviteSchema = z.object({
     .max(30)
     .default([])
     .describe("Class ids the teacher will manage once they accept."),
+  canCreateClasses: z
+    .boolean()
+    .default(false)
+    .describe(
+      "Grant the teacher the right to create missing classes and claim unassigned ones (off by default; changeable later from the teachers roster).",
+    ),
 });
 export type CreateTeacherInviteInput = z.infer<typeof createTeacherInviteSchema>;
 
@@ -123,6 +129,15 @@ export const acceptInviteSchema = z.object({
     .describe("Password the teacher chooses for their new account."),
 });
 export type AcceptInviteInput = z.infer<typeof acceptInviteSchema>;
+
+/** Admin granting or revoking a teacher's right to create/claim classes. */
+export const setTeacherCanCreateClassesSchema = z.object({
+  teacherId: z.string().min(1).describe("Teacher receiving the permission change."),
+  canCreateClasses: z
+    .boolean()
+    .describe("True lets the teacher create missing classes and claim unassigned ones; false restricts them to admin-assigned classes."),
+});
+export type SetTeacherCanCreateClassesInput = z.infer<typeof setTeacherCanCreateClassesSchema>;
 
 /** Admin assigning (re-assigning) the classes a teacher manages. */
 export const assignTeacherClassesSchema = z.object({

@@ -10,7 +10,7 @@ import {
   XIcon,
 } from "lucide-react";
 
-import { revokeInviteAction } from "@/app/admin/actions";
+import { revokeInviteAction, setTeacherCanCreateClassesAction } from "@/app/admin/actions";
 import type { ActionState } from "@/app/admin/actions";
 import type { ClassDoc, InviteDoc, UserDoc } from "@/types/firestore";
 import type { SerializedWithId } from "@/lib/serialize";
@@ -25,6 +25,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -121,6 +122,8 @@ export function TeachersManager({
               <CardDescription className="text-xs">
                 Teachers see {schoolName} in their dashboard and manage their
                 assigned classes: students, exams, leaderboards and retakes.
+                The New classes switch lets a teacher create missing classes
+                and claim unassigned ones themselves.
               </CardDescription>
             </div>
             {teachers.length > 0 && (
@@ -179,6 +182,7 @@ export function TeachersManager({
                   <TableHead>Teacher</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Classes managed</TableHead>
+                  <TableHead>New classes</TableHead>
                   <TableHead>Joined</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -252,6 +256,10 @@ const TeacherRow = memo(function TeacherRow({
           </div>
         )}
       </TableCell>
+      <TableCell>
+        {/* Absent flag (pre-privilege accounts) counts as allowed — matches the server gate. */}
+        <ClassCreationToggle teacherId={t.id} allowed={t.canCreateClasses !== false} />
+      </TableCell>
       <TableCell className="text-muted-foreground text-sm whitespace-nowrap">
         {t.createdAt ? format(new Date(t.createdAt as unknown as string), "d MMM yyyy") : "–"}
       </TableCell>
@@ -261,6 +269,37 @@ const TeacherRow = memo(function TeacherRow({
     </TableRow>
   );
 });
+
+/** Per-teacher class-creation privilege — flips immediately via server action. */
+function ClassCreationToggle({ teacherId, allowed }: { teacherId: string; allowed: boolean }) {
+  const [state, formAction, pending] = useActionState<ActionState | null, FormData>(
+    setTeacherCanCreateClassesAction,
+    null,
+  );
+  const formRef = useRef<HTMLFormElement>(null);
+  useActionToast(state, undefined, allowed ? "Class creation revoked" : "Class creation allowed");
+  return (
+    <form action={formAction} ref={formRef} className="inline-flex items-center gap-2">
+      <input type="hidden" name="teacherId" value={teacherId} />
+      <input type="hidden" name="canCreateClasses" value={String(!allowed)} />
+      <Switch
+        size="sm"
+        checked={allowed}
+        disabled={pending}
+        onCheckedChange={() => formRef.current?.requestSubmit()}
+        aria-label={allowed ? "Revoke class creation" : "Allow class creation"}
+        title={
+          allowed
+            ? "Can create and claim classes — click to revoke"
+            : "Cannot create classes — click to allow"
+        }
+      />
+      <span className="text-muted-foreground w-14 text-xs">
+        {pending ? "Saving…" : allowed ? "Allowed" : "Off"}
+      </span>
+    </form>
+  );
+}
 
 /** Pending teacher invites with revoke. */
 function PendingInvitesCard({ invites }: { invites: SerializedWithId<InviteDoc>[] }) {
@@ -312,11 +351,18 @@ function PendingInvitesCard({ invites }: { invites: SerializedWithId<InviteDoc>[
                   <TableRow key={invite.id}>
                     <TableCell className="font-medium">{invite.email}</TableCell>
                     <TableCell>
-                      {invite.classIds.length === 0 ? (
-                        <span className="text-muted-foreground text-xs">—</span>
-                      ) : (
-                        <span className="text-xs">{invite.classIds.length} assigned</span>
-                      )}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {invite.classIds.length === 0 ? (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        ) : (
+                          <span className="text-xs">{invite.classIds.length} assigned</span>
+                        )}
+                        {invite.canCreateClasses === true && (
+                          <Badge variant="secondary" className="font-normal">
+                            Can create
+                          </Badge>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground text-sm">
                       {invite.createdAt

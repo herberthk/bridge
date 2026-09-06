@@ -7,6 +7,7 @@ import {
   createClassesSchema,
   createTeacherInviteSchema,
   assignTeacherClassesSchema,
+  setTeacherCanCreateClassesSchema,
   authorizeRetakeSchema,
   updateSchoolProfileSchema,
 } from "@/lib/schemas/school";
@@ -32,6 +33,7 @@ import {
 import {
   createClasses,
   assignTeacherClasses,
+  setTeacherCanCreateClasses,
   ClassesServiceError,
 } from "@/server/services/classes";
 import {
@@ -448,6 +450,7 @@ export async function inviteTeacherAction(
   const parsed = createTeacherInviteSchema.safeParse({
     email: formData.get("email"),
     classIds,
+    canCreateClasses: formData.get("canCreateClasses") === "true",
   });
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
@@ -521,6 +524,39 @@ export async function assignTeacherClassesAction(
         err instanceof ClassesServiceError
           ? err.message
           : "Could not update the assignment. Try again.",
+    };
+  }
+}
+
+/** Admin grants or revokes a teacher's right to create/claim classes. */
+export async function setTeacherCanCreateClassesAction(
+  _prev: ActionState | null,
+  formData: FormData,
+): Promise<ActionState> {
+  const actor = await apiUser("admin", "super_admin");
+  if (!actor) return { ok: false, error: "Not authorized." };
+
+  const parsed = setTeacherCanCreateClassesSchema.safeParse({
+    teacherId: formData.get("teacherId"),
+    // Checkbox/hidden inputs arrive as strings — same conversion as the
+    // invite privilege flag below.
+    canCreateClasses: formData.get("canCreateClasses") === "true",
+  });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  }
+
+  try {
+    await setTeacherCanCreateClasses(actor, parsed.data);
+    revalidateStaffPaths("/admin/teachers", "/teacher/classes");
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error:
+        err instanceof ClassesServiceError
+          ? err.message
+          : "Could not update the permission. Try again.",
     };
   }
 }

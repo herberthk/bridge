@@ -16,6 +16,7 @@ import {
   getAttemptForActor,
   getExamForActor,
   listExams,
+  listRecentExamsForClasses,
 } from "@/server/services/exams/library";
 import { ExamsServiceError } from "@/server/services/exams/errors";
 import type { SessionUser } from "@/server/auth/session";
@@ -151,3 +152,84 @@ describe("teacher exam library scope", () => {
     expect(error.status).toBe(403);
   });
 });
+
+describe("listRecentExamsForClasses scan ceiling", () => {
+  function pagedQuery(pages: Array<Array<{ id: string; data: ExamDoc }>>) {
+    const get = vi.fn();
+    for (const page of pages) {
+      get.mockResolvedValueOnce({
+        docs: page.map(({ id, data }) => examSnapshot(id, data)),
+        size: page.length,
+      });
+    }
+    const query = {
+      where: vi.fn(),
+      orderBy: vi.fn(),
+      limit: vi.fn(),
+      startAfter: vi.fn(),
+      get,
+    };
+    query.where.mockReturnValue(query);
+    query.orderBy.mockReturnValue(query);
+    query.limit.mockReturnValue(query);
+    query.startAfter.mockReturnValue(query);
+    mocks.examsCol.mockReturnValue(query);
+    return query;
+  }
+
+  function otherExam(id: string) {
+    return { id, data: exam("other") };
+  }
+
+  it("stops after five full batches and reports partial", async () => {
+    const pages = Array.from({ length: 6 }, (_, b) =>
+      Array.from({ length: 100 }, (_, i) => otherExam(`other-${b}-${i}`)),
+    );
+    const query = pagedQuery(pages);
+
+    const result = await listRecentExamsForClasses(teacher, ["assigned"], 8);
+
+    expect(result.exams).toEqual([]);
+    expect(result.partial).toBe(true);
+    expect(query.get).toHaveBeenCalledTimes(5);
+  });
+
+  it("is complete when a short page ends the scan", async () => {
+    const fullPage = [
+      ...Array.from({ length: 99 }, (_, i) => otherExam(`o-${i}`)),
+      { id: "mine-1", data: exam("assigned") },
+    ];
+    const query = pagedQuery([fullPage, [{ id: "mine-2", data: exam("assigned") }]]);
+
+    const result = await listRecentExamsForClasses(teacher, ["assigned"], 8);
+
+    expect(result.exams.map((e) => e.id)).toEqual(["mine-1", "mine-2"]);
+    expect(result.partial).toBe(false);
+    expect(query.get).toHaveBeenCalledTimes(2);
+  });
+
+  it("is complete when the limit fills from the first batch", async () => {
+    const page = Array.from({ length: 100 }, (_, i) => ({
+      id: `mine-${i}`,
+      data: exam("assigned"),
+    }));
+    const query = pagedQuery([page]);
+
+    const result = await listRecentExamsForClasses(teacher, ["assigned"], 8);
+
+    expect(result.exams).toHaveLength(8);
+    expect(result.partial).toBe(false);
+    expect(query.get).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns empty without scanning when nothing is in scope", async () => {
+    const query = pagedQuery([]);
+
+    const result = await listRecentExamsForClasses(teacher, ["other"], 8);
+
+    // "other" is not assigned to the teacher, so the wanted set is empty.
+    expect(result).toEqual({ exams: [], partial: false });
+    expect(query.get).not.toHaveBeenCalled();
+  });
+});
+

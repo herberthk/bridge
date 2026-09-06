@@ -79,6 +79,13 @@ export interface UserDoc {
   classId: string | null;
   /** Teachers only: ids of the classes assigned to them for management. */
   assignedClassIds: string[] | null;
+  /**
+   * Teachers only: whether the admin lets them create missing classes and
+   * claim unassigned ones themselves. Explicit `false` denies; `true` allows;
+   * missing/null (legacy docs) allows so pre-flag teachers keep their rights
+   * until the backfill stamps them `true`. New teachers are created `false`.
+   */
+  canCreateClasses?: boolean | null;
   createdBy: string | null;
   banReason: string | null;
   suspendedUntil: Timestamp | null;
@@ -147,6 +154,12 @@ export interface InviteDoc {
   role: InviteRole;
   /** Classes pre-assigned to the teacher on acceptance. */
   classIds: string[];
+  /**
+   * Class-creation privilege granted at invite time (applied to the teacher
+   * doc on acceptance). Absent on pre-privilege invites — the accept path
+   * treats that as denied.
+   */
+  canCreateClasses?: boolean | null;
   status: InviteStatus;
   /** SHA-256 of the raw token — the raw token itself is never stored. */
   tokenHash: string;

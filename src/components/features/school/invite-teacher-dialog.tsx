@@ -127,6 +127,24 @@ export function InviteTeacherDialog({
                     </div>
                   </Field>
                 )}
+                <Field>
+                  <label className="hover:bg-accent/60 flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 text-sm">
+                    <input
+                      type="checkbox"
+                      name="canCreateClasses"
+                      value="true"
+                      className="accent-indigo-600 mt-0.5 size-4 shrink-0"
+                    />
+                    <span className="flex flex-col gap-0.5">
+                      <span className="font-medium">Allow creating classes</span>
+                      <span className="text-muted-foreground text-xs">
+                        Lets this teacher create missing classes and claim
+                        unassigned ones. You can change this later from the
+                        teachers roster.
+                      </span>
+                    </span>
+                  </label>
+                </Field>
                 <DialogFooter>
                   <Button type="button" variant="outline" onClick={() => setOpen(false)}>
                     Cancel

@@ -815,15 +815,6 @@ export function AppShell({
             </Badge>
 
             <ThemeToggle />
-
-            <Button
-              variant="ghost"
-              size="sm"
-              render={<Link href="/" />}
-              className="hidden sm:inline-flex text-xs font-medium text-muted-foreground hover:text-foreground"
-            >
-              Home
-            </Button>
           </div>
         </header>
 

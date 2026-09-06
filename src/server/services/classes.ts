@@ -11,6 +11,7 @@ import {
   usersCol,
 } from "@/server/firebase/collections";
 import { writeAudit } from "@/server/services/audit";
+import { canTeacherCreateClasses } from "@/server/services/users";
 import type { SessionUser } from "@/server/auth/session";
 import type {
   ClassDoc,
@@ -24,7 +25,11 @@ import {
   subLevelForClass,
   type SchoolLevel,
 } from "@/lib/constants";
-import type { CreateClassesInput, AssignTeacherClassesInput } from "@/lib/schemas/school";
+import type {
+  CreateClassesInput,
+  AssignTeacherClassesInput,
+  SetTeacherCanCreateClassesInput,
+} from "@/lib/schemas/school";
 
 export class ClassesServiceError extends Error {
   constructor(
@@ -131,7 +136,11 @@ export async function createClassesForSchool(input: {
   return (await createClassesAtomic(input)).created;
 }
 
-/** Staff (admin or teacher) create missing classes for their school. */
+/**
+ * Staff create missing classes for their school. Admins always may; teachers
+ * need the admin-granted `canCreateClasses` privilege — the same endpoint
+ * also handles claiming unassigned classes, so the gate covers both.
+ */
 export async function createClasses(
   actor: SessionUser,
   input: CreateClassesInput,
@@ -141,6 +150,12 @@ export async function createClasses(
   }
   if (!actor.schoolId) {
     throw new ClassesServiceError("You are not part of a school.", 403);
+  }
+  if (actor.role === "teacher" && !(await canTeacherCreateClasses(actor.uid))) {
+    throw new ClassesServiceError(
+      "Only your school admin can create or claim classes — ask them to grant you access.",
+      403,
+    );
   }
   const schoolSnap = await schoolDoc(actor.schoolId).get();
   if (!schoolSnap.exists) throw new ClassesServiceError("School not found.", 404);
@@ -230,19 +245,46 @@ export async function getClassForActor(
   return cls;
 }
 
+/**
+ * Roster list cap — the tab shows the newest slice and relies on
+ * `countClassStudents` for the exact total. Leaderboard rates are computed
+ * over the listed slice, so in oversized classes they are approximate while
+ * headcounts stay exact.
+ */
+export const CLASS_ROSTER_LIMIT = 500;
+
+/**
+ * Raw class roster read (no auth check) — shared by the management view and
+ * the dashboard bundle so one request issues one roster query instead of
+ * three. Newest first, capped at {@link CLASS_ROSTER_LIMIT}.
+ */
+export async function fetchClassStudents(classId: string): Promise<WithId<UserDoc>[]> {
+  const snap = await usersCol()
+    .where("role", "==", "student")
+    .where("classId", "==", classId)
+    .orderBy("createdAt", "desc")
+    .limit(CLASS_ROSTER_LIMIT)
+    .get();
+  return snap.docs.map((d) => ({ id: d.id, ...d.data()! }));
+}
+
+/**
+ * Exact class headcount via count aggregation — no doc reads, no cap. Used
+ * wherever the capped list length would lie (hero total, drift check, stats).
+ */
+export async function countClassStudents(classId: string): Promise<number> {
+  return countQuery(
+    usersCol().where("role", "==", "student").where("classId", "==", classId),
+  );
+}
+
 /** Students belonging to a class (management view). */
 export async function listStudentsInClass(
   actor: SessionUser,
   classId: string,
 ): Promise<WithId<UserDoc>[]> {
   await getClassForActor(actor, classId);
-  const snap = await usersCol()
-    .where("role", "==", "student")
-    .where("classId", "==", classId)
-    .orderBy("createdAt", "desc")
-    .limit(500)
-    .get();
-  return snap.docs.map((d) => ({ id: d.id, ...d.data()! }));
+  return fetchClassStudents(classId);
 }
 
 export async function countStudentsInClass(
@@ -333,6 +375,45 @@ export async function assignTeacherClasses(
     targetType: "user",
     targetId: input.teacherId,
     meta: { classIds: input.classIds },
+  });
+}
+
+/**
+ * Admin grants or revokes a teacher's right to create missing classes and
+ * claim unassigned ones. Takes effect immediately (checked live against the
+ * teacher doc, not session claims).
+ */
+export async function setTeacherCanCreateClasses(
+  actor: SessionUser,
+  input: SetTeacherCanCreateClassesInput,
+): Promise<void> {
+  if (actor.role !== "admin" && actor.role !== "super_admin") {
+    throw new ClassesServiceError("Only admins can manage class creation rights.", 403);
+  }
+  const snap = await userDoc(input.teacherId).get();
+  if (!snap.exists) throw new ClassesServiceError("Teacher not found.", 404);
+  const teacher = snap.data()!;
+  if (teacher.role !== "teacher") {
+    throw new ClassesServiceError("That user is not a teacher.", 400);
+  }
+  if (actor.role === "admin") {
+    if (!actor.schoolId || teacher.schoolId !== actor.schoolId) {
+      throw new ClassesServiceError("This teacher belongs to another school.", 403);
+    }
+  }
+
+  await userDoc(input.teacherId).update({
+    canCreateClasses: input.canCreateClasses,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  await writeAudit({
+    actorId: actor.uid,
+    actorRole: actor.role,
+    action: "teacher.can_create_classes",
+    targetType: "user",
+    targetId: input.teacherId,
+    meta: { canCreateClasses: input.canCreateClasses },
   });
 }
 
