@@ -87,6 +87,8 @@ export function ClassDashboardView({
   schoolName = null,
   schoolVerification = null,
   teacherNames = [],
+  teachersUnavailable = false,
+  rosterTruncated = false,
   cachedStudentCount = null,
   degraded = [],
   examsPartial = false,
@@ -107,6 +109,10 @@ export function ClassDashboardView({
   schoolVerification?: SchoolVerificationStatus | null;
   /** Display names of teachers assigned to this class. */
   teacherNames?: string[];
+  /** Staff lookup failed — render teacher details as unavailable, never as unassigned. */
+  teachersUnavailable?: boolean;
+  /** Roster list hit its cap — leaderboard rates cover the listed slice only. */
+  rosterTruncated?: boolean;
   /** Denormalized `classes.studentCount` — shows a drift alert when it disagrees with the live roster. */
   cachedStudentCount?: number | null;
   /** Widget scopes that fell back (logged server-side) — rendered as one banner, never silent. */
@@ -163,7 +169,9 @@ export function ClassDashboardView({
                 {classLevelLabel(cls)} · Year {yearLabel(cls)}
                 {teacherNames.length > 0
                   ? ` · Taught by ${teacherNames.join(", ")}`
-                  : " · No teacher assigned yet"}
+                  : teachersUnavailable
+                    ? " · Teacher details unavailable"
+                    : " · No teacher assigned yet"}
               </p>
               <dl className="mt-4 flex flex-wrap gap-2.5 text-sm">
                 <div className="glass flex items-center gap-2 rounded-xl px-3.5 py-2">
@@ -269,6 +277,12 @@ export function ClassDashboardView({
         </TabsContent>
 
         <TabsContent value="leaderboard" className="mt-4">
+          {rosterTruncated && (
+            <p className="text-muted-foreground mb-3 text-xs">
+              Large class — ranks and averages cover the newest {students.length} listed
+              students.
+            </p>
+          )}
           <LeaderboardView entries={leaderboard} stats={stats} />
         </TabsContent>
 

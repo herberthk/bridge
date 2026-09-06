@@ -89,6 +89,8 @@ export interface ClassDashboardBundle {
   students: WithId<UserDoc>[];
   /** Exact headcount — the capped list length would lie for oversized classes. */
   studentCount: number;
+  /** True when the roster list hit its cap and rates cover the slice only. */
+  rosterTruncated: boolean;
   leaderboard: ClassLeaderboardResult | null;
   performance: ClassExamPerformance[];
   /** Widget scopes that fell back — rendered as a banner, never silent. */
@@ -124,8 +126,9 @@ export async function getClassDashboardBundle(
       return null;
     },
   );
+  const rosterTruncated = studentCount > students.length;
   if (!attempts)
-    return { cls, students, studentCount, leaderboard: null, performance: [], degraded };
+    return { cls, students, studentCount, rosterTruncated, leaderboard: null, performance: [], degraded };
 
   const graded = attempts.filter((a) => a.status === "graded" && a.score);
   const performance = await buildExamPerformance(attempts).catch((err: unknown) => {
@@ -137,6 +140,7 @@ export async function getClassDashboardBundle(
     cls,
     students,
     studentCount,
+    rosterTruncated,
     leaderboard: toLeaderboardResult(cls, students, graded, studentCount),
     performance,
     degraded,

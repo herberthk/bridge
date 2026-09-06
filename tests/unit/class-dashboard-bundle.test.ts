@@ -114,6 +114,7 @@ describe("getClassDashboardBundle", () => {
     expect(bundle.degraded).toEqual([]);
     // Under the cap the list length is already exact — no aggregation needed.
     expect(bundle.studentCount).toBe(2);
+    expect(bundle.rosterTruncated).toBe(false);
     expect(countClassStudents).not.toHaveBeenCalled();
   });
 
@@ -131,6 +132,7 @@ describe("getClassDashboardBundle", () => {
     expect(countClassStudents).toHaveBeenCalledTimes(1);
     expect(countClassStudents).toHaveBeenCalledWith("class-1");
     expect(bundle.studentCount).toBe(600);
+    expect(bundle.rosterTruncated).toBe(true);
     expect(bundle.leaderboard?.stats.students).toBe(600);
   });
 

@@ -74,10 +74,12 @@ async function ClassBody({ actor, classId }: { actor: SessionUser; classId: stri
           return null;
         })
       : Promise.resolve(null),
-    listSchoolStaff(actor).catch((err: unknown) => {
-      logDashboardError("listSchoolStaff", actor, classId, err);
-      return { admins: [] as WithId<UserDoc>[], teachers: [] as WithId<UserDoc>[] };
-    }),
+    listSchoolStaff(actor)
+      .then((r) => ({ ...r, failed: false as const }))
+      .catch((err: unknown) => {
+        logDashboardError("listSchoolStaff", actor, classId, err);
+        return { admins: [] as WithId<UserDoc>[], teachers: [] as WithId<UserDoc>[], failed: true as const };
+      }),
     listRecentExamsForClasses(actor, [classId], 8)
       .then((r) => ({ ...r, failed: false as const }))
       .catch((err: unknown) => {
@@ -112,7 +114,13 @@ async function ClassBody({ actor, classId }: { actor: SessionUser; classId: stri
         .filter((t) => (bundle.cls.teacherIds ?? []).includes(t.id))
         .map((t) => t.displayName)}
       cachedStudentCount={bundle.cls.studentCount}
-      degraded={recentExams.failed ? [...bundle.degraded, "Exams"] : bundle.degraded}
+      degraded={[
+        ...bundle.degraded,
+        ...(staff.failed ? ["Teachers"] : []),
+        ...(recentExams.failed ? ["Exams"] : []),
+      ]}
+      teachersUnavailable={staff.failed}
+      rosterTruncated={bundle.rosterTruncated}
       examsPartial={recentExams.partial}
     />
   );
