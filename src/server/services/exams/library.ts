@@ -99,16 +99,31 @@ export async function countExams(actor: SessionUser): Promise<number> {
   return countQuery(examsForActor(actor));
 }
 
+export interface RecentExamsResult {
+  exams: WithId<ExamDoc>[];
+  /** True when the scan hit the batch ceiling before covering the library. */
+  partial: boolean;
+}
+
+/**
+ * Hard ceiling on scan batches: batches run sequentially newest-first, so
+ * without a cap a huge library with few matches in scope could trigger
+ * unbounded round-trips. 5 × 100 covers realistic schools several times over.
+ */
+const RECENT_EXAMS_MAX_BATCHES = 5;
+const RECENT_EXAMS_BATCH_SIZE = 100;
+
 /**
  * Most recent exams for the supplied classes. Pages through the actor-scoped
  * ordered query so busy schools cannot push all matching exams past a fixed
- * initial batch.
+ * initial batch. Because the scan runs newest-first, matches already found
+ * are the most recent ones even when `partial` is true.
  */
 export async function listRecentExamsForClasses(
   actor: SessionUser,
   classIds: string[],
   limit = 5,
-): Promise<WithId<ExamDoc>[]> {
+): Promise<RecentExamsResult> {
   const wanted = new Set(classIds);
   if (actor.role === "teacher") {
     const assigned = await assignedClassIdsForTeacher(actor);
@@ -116,28 +131,31 @@ export async function listRecentExamsForClasses(
       if (!assigned.has(classId)) wanted.delete(classId);
     }
   }
-  if (wanted.size === 0 || limit <= 0) return [];
+  if (wanted.size === 0 || limit <= 0) return { exams: [], partial: false };
 
-  const batchSize = 100;
   const ordered = examsForActor(actor).orderBy("createdAt", "desc");
   const matches: WithId<ExamDoc>[] = [];
   let cursor: FirebaseFirestore.QueryDocumentSnapshot<ExamDoc> | undefined;
+  let partial = false;
 
-  while (matches.length < limit) {
+  for (let batch = 0; batch < RECENT_EXAMS_MAX_BATCHES && matches.length < limit; batch++) {
     const query = cursor
-      ? ordered.startAfter(cursor).limit(batchSize)
-      : ordered.limit(batchSize);
+      ? ordered.startAfter(cursor).limit(RECENT_EXAMS_BATCH_SIZE)
+      : ordered.limit(RECENT_EXAMS_BATCH_SIZE);
     const snap = await query.get();
     for (const doc of snap.docs) {
       const exam = examFromSnapshot(doc);
       if (exam.classId && wanted.has(exam.classId)) matches.push(exam);
       if (matches.length === limit) break;
     }
-    if (snap.size < batchSize) break;
+    if (snap.size < RECENT_EXAMS_BATCH_SIZE) break;
+    if (matches.length < limit && batch === RECENT_EXAMS_MAX_BATCHES - 1) {
+      partial = true;
+    }
     cursor = snap.docs.at(-1);
   }
 
-  return matches;
+  return { exams: matches, partial };
 }
 
 export async function listExams(

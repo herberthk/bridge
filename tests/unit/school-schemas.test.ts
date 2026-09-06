@@ -6,6 +6,7 @@ import {
   createSelfSchoolSchema,
   createTopupSchema,
   createTeacherInviteSchema,
+  setTeacherCanCreateClassesSchema,
   validClassLevelsFor,
 } from "@/lib/schemas/school";
 import { createStudentSchema, createSchoolSchema } from "@/lib/schemas/users";
@@ -73,6 +74,43 @@ describe("createTeacherInviteSchema", () => {
   it("requires a valid email", () => {
     const parsed = createTeacherInviteSchema.safeParse({ email: "nope" });
     expect(parsed.success).toBe(false);
+  });
+});
+
+describe("setTeacherCanCreateClassesSchema", () => {
+  it("accepts an explicit boolean either way", () => {
+    expect(
+      setTeacherCanCreateClassesSchema.parse({ teacherId: "t-1", canCreateClasses: true }),
+    ).toEqual({ teacherId: "t-1", canCreateClasses: true });
+    expect(
+      setTeacherCanCreateClassesSchema.parse({ teacherId: "t-1", canCreateClasses: false }),
+    ).toEqual({ teacherId: "t-1", canCreateClasses: false });
+  });
+
+  it("requires a teacher and a real boolean (the action converts form strings first)", () => {
+    expect(
+      setTeacherCanCreateClassesSchema.safeParse({ teacherId: "", canCreateClasses: true })
+        .success,
+    ).toBe(false);
+    expect(
+      setTeacherCanCreateClassesSchema.safeParse({ teacherId: "t-1", canCreateClasses: "yes" })
+        .success,
+    ).toBe(false);
+  });
+});
+
+describe("createTeacherInviteSchema privilege flag", () => {
+  it("defaults class creation rights to off", () => {
+    const parsed = createTeacherInviteSchema.parse({ email: "t@s.ac.ug" });
+    expect(parsed.canCreateClasses).toBe(false);
+  });
+
+  it("accepts an explicit grant", () => {
+    const parsed = createTeacherInviteSchema.parse({
+      email: "t@s.ac.ug",
+      canCreateClasses: true,
+    });
+    expect(parsed.canCreateClasses).toBe(true);
   });
 });
 

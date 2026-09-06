@@ -5,7 +5,13 @@ import {
   type ClassPerformanceStats,
   type LeaderboardEntry,
 } from "@/lib/leaderboard";
-import { getClassForActor } from "@/server/services/classes";
+import { isMissingIndexError } from "@/lib/firestore-errors";
+import {
+  CLASS_ROSTER_LIMIT,
+  countClassStudents,
+  fetchClassStudents,
+  getClassForActor,
+} from "@/server/services/classes";
 import type { SessionUser } from "@/server/auth/session";
 import type { AttemptDoc, ClassDoc, UserDoc, WithId } from "@/types/firestore";
 
@@ -32,41 +38,113 @@ export interface ClassLeaderboardResult {
   stats: ClassPerformanceStats;
 }
 
-export async function getClassLeaderboard(
+/** Pure ranking build for the bundled reader. */
+function toLeaderboardResult(
+  cls: WithId<ClassDoc>,
+  students: WithId<UserDoc>[],
+  gradedAttempts: WithId<AttemptDoc>[],
+  studentCount: number,
+): ClassLeaderboardResult {
+  const roster = students.map((s) => ({ id: s.id, displayName: s.displayName }));
+  const lean = gradedAttempts.map((a) => ({
+    studentId: a.studentId,
+    status: a.status,
+    score: a.score,
+    submittedAt: a.submittedAt,
+  }));
+  return {
+    classInfo: cls,
+    entries: buildLeaderboard(roster, lean),
+    // Rates reflect the listed slice; the headcount stays exact even when the
+    // roster list hits its cap.
+    stats: {
+      ...buildClassStats(
+        roster,
+        lean.map(({ studentId, status, score }) => ({ studentId, status, score })),
+      ),
+      students: studentCount,
+    },
+  };
+}
+
+function logBundleError(
   actor: SessionUser,
   classId: string,
-): Promise<ClassLeaderboardResult> {
+  scope: string,
+  err: unknown,
+): void {
+  console.error(`[leaderboard] ${scope} failed`, {
+    actorId: actor.uid,
+    actorRole: actor.role,
+    schoolId: actor.schoolId ?? null,
+    classId,
+    missingIndex: isMissingIndexError(err),
+    error: err,
+  });
+}
+
+export interface ClassDashboardBundle {
+  cls: WithId<ClassDoc>;
+  /** Newest roster slice (capped) for the roster tab. */
+  students: WithId<UserDoc>[];
+  /** Exact headcount — the capped list length would lie for oversized classes. */
+  studentCount: number;
+  /** True when the roster list hit its cap and rates cover the slice only. */
+  rosterTruncated: boolean;
+  leaderboard: ClassLeaderboardResult | null;
+  performance: ClassExamPerformance[];
+  /** Widget scopes that fell back — rendered as a banner, never silent. */
+  degraded: string[];
+}
+
+/**
+ * Roster + leaderboard + per-exam performance in one call: a single roster
+ * read and a single attempts fan-out shared by all three (previously three
+ * roster reads and two fan-outs per dashboard load).
+ *
+ * Auth/unknown-class errors throw (callers map `ClassesServiceError` to 404);
+ * a failed roster read throws (callers fail loud — never an empty roster for
+ * a backend failure). Failed attempts degrade leaderboard and performance to
+ * empty with names in `degraded`.
+ */
+export async function getClassDashboardBundle(
+  actor: SessionUser,
+  classId: string,
+): Promise<ClassDashboardBundle> {
   const cls = await getClassForActor(actor, classId);
+  const students = await fetchClassStudents(classId);
+  // Exact total only costs an extra aggregation when the list may be capped;
+  // otherwise the list length is already exact.
+  const studentCount =
+    students.length < CLASS_ROSTER_LIMIT ? students.length : await countClassStudents(classId);
 
-  const studentsSnap = await usersCol()
-    .where("role", "==", "student")
-    .where("classId", "==", classId)
-    .get();
-  const students: WithId<UserDoc>[] = studentsSnap.docs.map((d) => ({
-    id: d.id,
-    ...d.data()!,
-  }));
-
-  const attempts = await listGradedAttemptsForStudents(students.map((s) => s.id));
-  const entries = buildLeaderboard(
-    students.map((s) => ({ id: s.id, displayName: s.displayName })),
-    attempts.map((a) => ({
-      studentId: a.studentId,
-      status: a.status,
-      score: a.score,
-      submittedAt: a.submittedAt,
-    })),
+  const degraded: string[] = [];
+  const attempts = await listAttemptsForStudents(students.map((s) => s.id)).catch(
+    (err: unknown) => {
+      logBundleError(actor, classId, "attempts", err);
+      degraded.push("Leaderboard", "Performance");
+      return null;
+    },
   );
-  const stats = buildClassStats(
-    students.map((s) => ({ id: s.id, displayName: s.displayName })),
-    attempts.map((a) => ({
-      studentId: a.studentId,
-      status: a.status,
-      score: a.score,
-    })),
-  );
+  const rosterTruncated = studentCount > students.length;
+  if (!attempts)
+    return { cls, students, studentCount, rosterTruncated, leaderboard: null, performance: [], degraded };
 
-  return { classInfo: cls, entries, stats };
+  const graded = attempts.filter((a) => a.status === "graded" && a.score);
+  const performance = await buildExamPerformance(attempts).catch((err: unknown) => {
+    logBundleError(actor, classId, "exam-titles", err);
+    if (!degraded.includes("Performance")) degraded.push("Performance");
+    return [] as ClassExamPerformance[];
+  });
+  return {
+    cls,
+    students,
+    studentCount,
+    rosterTruncated,
+    leaderboard: toLeaderboardResult(cls, students, graded, studentCount),
+    performance,
+    degraded,
+  };
 }
 
 export interface StudentClassStanding {
@@ -145,13 +223,6 @@ export async function listAttemptsForStudents(
   return results;
 }
 
-async function listGradedAttemptsForStudents(
-  studentIds: string[],
-): Promise<WithId<AttemptDoc>[]> {
-  const all = await listAttemptsForStudents(studentIds);
-  return all.filter((a) => a.status === "graded" && a.score);
-}
-
 /** Per-exam performance breakdown for a class dashboard. */
 export interface ClassExamPerformance {
   examId: string;
@@ -163,19 +234,10 @@ export interface ClassExamPerformance {
   lowestPercentage: number | null;
 }
 
-export async function getClassExamPerformance(
-  actor: SessionUser,
-  classId: string,
+/** Group attempts per exam with avg/high/low — titles resolve in parallel. */
+async function buildExamPerformance(
+  attempts: WithId<AttemptDoc>[],
 ): Promise<ClassExamPerformance[]> {
-  await getClassForActor(actor, classId);
-  const studentsSnap = await usersCol()
-    .where("role", "==", "student")
-    .where("classId", "==", classId)
-    .select("displayName")
-    .get();
-  const studentIds = studentsSnap.docs.map((d) => d.id);
-
-  const attempts = await listAttemptsForStudents(studentIds);
   const byExam = new Map<string, WithId<AttemptDoc>[]>();
   for (const attempt of attempts) {
     const list = byExam.get(attempt.examId) ?? [];
@@ -183,13 +245,14 @@ export async function getClassExamPerformance(
     byExam.set(attempt.examId, list);
   }
 
-  const performances: ClassExamPerformance[] = [];
-  for (const [examId, examAttempts] of byExam) {
+  const groups = [...byExam.entries()];
+  const titles = await Promise.all(groups.map(([examId]) => examTitle(examId)));
+  const performances = groups.map(([examId, examAttempts], i) => {
     const graded = examAttempts.filter((a) => a.status === "graded" && a.score);
     const percentages = graded.map((a) => a.score!.percentage);
-    performances.push({
+    return {
       examId,
-      title: await examTitle(examId),
+      title: titles[i] ?? "Exam",
       attemptsTaken: examAttempts.length,
       gradedCount: graded.length,
       averagePercentage: percentages.length
@@ -197,8 +260,8 @@ export async function getClassExamPerformance(
         : null,
       highestPercentage: percentages.length ? Math.round(Math.max(...percentages) * 10) / 10 : null,
       lowestPercentage: percentages.length ? Math.round(Math.min(...percentages) * 10) / 10 : null,
-    });
-  }
+    };
+  });
   return performances.sort((a, b) => b.gradedCount - a.gradedCount).slice(0, 20);
 }
 

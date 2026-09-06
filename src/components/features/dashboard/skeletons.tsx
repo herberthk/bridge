@@ -277,3 +277,52 @@ export function ExamCardsSkeleton({ cards = 2 }: { cards?: number }) {
     </div>
   );
 }
+
+/** Class detail — mirrors `ClassDashboardView`: breadcrumb, premium hero
+ *  (monogram + badge + title + KPI glass row + actions), tab bar + table.
+ *  Used by the class `loading.tsx` routes and the dashboard `Suspense`
+ *  fallback so skeleton → content has no layout shift. */
+export function ClassDetailSkeleton() {
+  return (
+    <div className="flex flex-col gap-6" role="status" aria-label="Loading class dashboard">
+      {/* Breadcrumb */}
+      <div className="flex items-center gap-1.5">
+        <Skeleton className="h-4 w-20" />
+        <Skeleton className="size-3.5 rounded-full" />
+        <Skeleton className="h-4 w-32" />
+      </div>
+
+      {/* Premium hero */}
+      <div className="bg-mesh relative overflow-hidden rounded-2xl border">
+        <div aria-hidden className="bg-brand-soft pointer-events-none absolute inset-0" />
+        <div className="relative flex flex-wrap items-start justify-between gap-5 p-6 sm:p-7">
+          <div className="flex min-w-0 flex-1 items-start gap-4">
+            <Skeleton className="size-12 shrink-0 rounded-2xl" />
+            <div className="flex min-w-0 max-w-2xl flex-1 flex-col gap-2">
+              <Skeleton className="h-5 w-44 rounded-full" />
+              <Skeleton className="h-8 w-64 max-w-full" />
+              <Skeleton className="h-4 w-80 max-w-full" />
+              <div className="mt-2 flex flex-wrap gap-2.5">
+                <Skeleton className="h-[2.6rem] w-28 rounded-xl" />
+                <Skeleton className="h-[2.6rem] w-24 rounded-xl" />
+                <Skeleton className="h-[2.6rem] w-32 rounded-xl" />
+                <Skeleton className="hidden h-[2.6rem] w-40 rounded-xl sm:block" />
+              </div>
+            </div>
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <Skeleton className="h-9 w-28 rounded-lg" />
+            <Skeleton className="h-9 w-36 rounded-lg" />
+          </div>
+        </div>
+      </div>
+
+      {/* Tabs + roster table */}
+      <div className="flex flex-col gap-4">
+        <Skeleton className="h-10 w-80 max-w-full rounded-lg" />
+        <TableSkeleton rows={6} />
+      </div>
+      <span className="sr-only">Loading class dashboard…</span>
+    </div>
+  );
+}

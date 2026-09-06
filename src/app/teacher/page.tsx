@@ -92,8 +92,10 @@ export default async function TeacherDashboardPage() {
 
   // Single-pass join: index classes once instead of scanning per exam.
   const classById = new Map(classes.map((c) => [c.id, c]));
+  // A preview strip, so a capped scan is fine — `partial` only matters on
+  // pages that present a complete list.
   const recentExams = await listRecentExamsForClasses(actor, [...classById.keys()]);
-  const classExams = recentExams.map((exam) => ({
+  const classExams = recentExams.exams.map((exam) => ({
     exam,
     class: classById.get(exam.classId!) ?? null,
   }));

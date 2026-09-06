@@ -42,4 +42,4 @@ export {
   listExams,
   listRecentExamsForClasses,
 } from "./library";
-export type { ExamListResult } from "./library";
+export type { ExamListResult, RecentExamsResult } from "./library";

@@ -321,6 +321,18 @@ export async function listTeachers(schoolId: string): Promise<WithId<UserDoc>[]>
   return snap.docs.map((d) => ({ id: d.id, ...d.data()! }));
 }
 
+/**
+ * Whether a teacher may create missing classes and claim unassigned ones.
+ * Only an explicit `false` denies — legacy docs without the flag keep their
+ * rights (the backfill stamps them `true`). Unknown teachers and read
+ * failures fail closed.
+ */
+export async function canTeacherCreateClasses(teacherId: string): Promise<boolean> {
+  const snap = await userDoc(teacherId).get().catch(() => null);
+  if (!snap?.exists) return false;
+  return snap.data()!.canCreateClasses !== false;
+}
+
 export async function getStudent(
   actor: SessionUser,
   studentId: string,
